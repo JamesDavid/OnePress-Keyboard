@@ -195,9 +195,20 @@ function decode(m, keys, locks = {}, beamWidth = 40, nBest = 5) {
         next.push({ score: h.score + step, prev, first, cf, path: h.path.concat(ci) });
       }
     }
-    // dedupe identical recent state (bigram => only prev matters for the future)
+    // Hypotheses with the same state score every future slot the same way, so keep only the
+    // best of each. State: the previous token plus whether the sentence/clause opener is a
+    // question word (all the punctuation heuristic looks at).
     next.sort((a, b) => b.score - a.score);
-    beam = next.slice(0, beamWidth);
+    const qs = f => f === null ? 0 : QUESTION_STARTERS.has(m.words[f]) ? 1 : 2;
+    const states = new Set();
+    beam = [];
+    for (const h of next) {
+      const k = h.prev * 9 + qs(h.first) * 3 + qs(h.cf);
+      if (states.has(k)) continue;
+      states.add(k);
+      beam.push(h);
+      if (beam.length >= beamWidth) break;
+    }
   });
   // collapse to distinct texts
   const out = [], seen = new Set();
