@@ -181,7 +181,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   </div>
 
   <div class="notes">
-    <p>Press each key once per letter. <b>0</b> is a space, <b>1</b> deletes, and <b>*</b> swaps the selected word for the next guess, and holding it finishes the word you're typing. <b>#</b> is punctuation: the model picks . , ! or ?, and between letters it's an apostrophe. Apostrophes are optional, so "dont" also gives "don't".</p>
+    <p>Press each key once per letter. <b>0</b> is a space, <b>1</b> deletes, and <b>*</b> swaps the selected word for the next guess, and holding it finishes the word you're typing. <b>#</b> is punctuation: the model picks . , ! or ?, and between letters it's an apostrophe. Apostrophes are optional, so "dont" also gives "don't". <b>Hold any number key</b> to type that digit (hold 1 for "1", hold 0 for "0").</p>
     <p><b>Hold #</b> for exact spelling, for names and words the model doesn't know. Press a key repeatedly to cycle its letters and then its digit (2 = a, b, c, 2), and pause or press another key to move on. # cycles . , ? ! ' and 0 gives a space, or the digit 0 on a second press. On QWERTY, exact mode types the letter you tap. Hold # again to go back to predictive.</p>
     <p>The word list includes names, places, brands and apps, with their usual capitalization (iPhone, McDonald's, YouTube).</p>
     <p>Tap any word to see other words with the same keys. Picking one locks it, and the rest of the sentence re-decodes around it.</p>
@@ -219,11 +219,11 @@ __DECODER__
   for (const [d, l] of PAD) {
     const b = document.createElement('button');
     b.type = 'button'; b.className = 'k' + (/[*#01]/.test(d) ? ' fn' : ''); b.dataset.key = d;
-    b.setAttribute('aria-label', d + ' ' + l);
+    b.setAttribute('aria-label', d + ' ' + l + (/[0-9]/.test(d) ? '; hold for the digit ' + d : ''));
     b.innerHTML = `<span class="d">${d === '1' ? '⌫' : d}</span><span class="l">${d === '1' ? '1 delete' : l}</span>`;
     if (d === '*') holdable(b, () => press('*'), autocomplete);
     else if (d === '#') holdable(b, () => press('#'), toggleExact);
-    else b.addEventListener('click', () => press(d));
+    else holdable(b, () => press(d), () => pressLiteral(String.fromCharCode(65 + +d)));   // hold: the digit itself ('A'-'J')
     pad.appendChild(b);
   }
 
@@ -262,7 +262,7 @@ __DECODER__
   try { if (localStorage.getItem('kbMode') === 'qwerty') setMode('qwerty'); } catch (e) {}
 
 
-  // ---- Hold "next" to finish the current word ----
+  // ---- Tap vs hold (420 ms): next / finish word, # / exact mode, digit keys / the digit ----
   function holdable(b, onTap, onHold) {
     let timer = null, held = false;
     const start = () => { held = false; clearTimeout(timer); timer = setTimeout(() => { held = true; b.classList.add('down'); onHold(); setTimeout(() => b.classList.remove('down'), 150); }, 420); };

@@ -41,6 +41,7 @@ Keypad: `2 abc · 3 def · 4 ghi · 5 jkl · 6 mno · 7 pqrs · 8 tuv · 9 wxyz`
 | `1` | Delete (UI action, never stored). |
 | `*` | Tap: swap the selected word for the next guess. Hold: autocomplete the current word and add a space. |
 | Hold `#` | Toggle exact (multi-tap) spelling mode. |
+| Hold `0`–`9` | Type that digit (stored as `A`–`J`). Hold `1` gives "1"; a tap still deletes. |
 
 Apostrophes are optional: `3668` also yields "don't". A stripped-apostrophe match gets a `log(0.5)` penalty so "in" beats "I'm" for `46` when context is neutral.
 
@@ -187,7 +188,7 @@ The decoder can change earlier words as more keys arrive, so the keyboard owns a
   
   Case is stored per word ordinal in the composition (`[Int: WordCase]`) and applied at render. Pruned on delete.
 - **Return:** commit, then `insertText("\n")`.
-- **Holds:** next (420 ms) → autocomplete. Punctuation key (420 ms) → toggle exact mode. Delete → repeat every 80 ms after 450 ms.
+- **Holds:** next (420 ms) → autocomplete. Punctuation key (420 ms) → toggle exact mode. Keypad layout digit keys (420 ms) → the digit itself, including `1`. QWERTY delete → repeat every 80 ms after 450 ms.
 - **Suggestion bar** (about 40 pt): mode toggle, alternatives chips for the last slot (or the selected slot), and an "ABC" badge while exact mode is on.
 - **Touch handling:** use a UIKit overlay view with `isMultipleTouchEnabled = true` so fast rollover typing works. Keep per-touch state, and hit-test against **scaled** key rects: the highest scale wins; otherwise pick the nearest key center. Act on touch-up, except holds and repeats.
 - **Height:** about 260 pt total. Pin with a height constraint at priority 999.
