@@ -1,3 +1,5 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Single-Press Keypad</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -46,6 +48,25 @@ body {
 header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 h1 { font-family: var(--f-display); font-weight: 700; font-size: 1.35rem; letter-spacing: -0.01em; margin: 0; text-wrap: balance; }
 .status { font-size: 0.78rem; color: var(--muted); }
+[hidden] { display: none !important; }   /* .pad / .qw / .compare set display, which would beat it */
+
+.model { display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; font-size: 0.82rem; color: var(--muted); }
+.model select {
+  font: inherit; font-size: 0.88rem; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--key-edge); border-radius: 8px; padding: 5px 8px; max-width: 100%; min-width: 0;
+}
+.model .cmp { display: inline-flex; gap: 6px; align-items: center; margin-left: auto; cursor: pointer; user-select: none; }
+.model .cmp input { accent-color: var(--accent); margin: 0; }
+.compare {
+  display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; font-size: 0.9rem;
+  background: var(--surface); border: 1px solid var(--key-edge); border-radius: 12px;
+}
+.compare .r { display: grid; grid-template-columns: 4.6rem 1fr; gap: 10px; align-items: baseline; }
+.compare .n { color: var(--muted); font-family: var(--f-mono); font-size: 0.72rem; letter-spacing: 0.04em; }
+.compare .r.cur .n { color: var(--accent); font-weight: 500; }
+.compare .t { overflow-wrap: anywhere; min-width: 0; }
+.compare .t:empty::before { content: "—"; color: var(--muted); }
+.compare .diff { background: color-mix(in srgb, var(--warn) 20%, transparent); border-radius: 3px; padding: 0 1px; }
 
 .lcd {
   background: var(--lcd); color: var(--lcd-ink); border-radius: 14px; padding: 16px 16px 12px;
@@ -130,10 +151,19 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     <span class="status" id="status">Loading word model…</span>
   </header>
 
+  <div class="model">
+    <label for="modelPick">Model</label>
+    <select id="modelPick"></select>
+    <input type="file" id="modelFile" accept=".bin,application/octet-stream" hidden>
+    <label class="cmp"><input type="checkbox" id="compareToggle"> Compare sizes</label>
+  </div>
+
   <section class="lcd" aria-label="Decoded text">
     <div class="out" id="out" aria-live="polite"></div>
     <div class="keys-line"><span id="keysShown"></span><span id="exampleTag"></span></div>
   </section>
+
+  <div class="compare" id="compare" hidden aria-label="The same keys decoded by each model"></div>
 
   <div class="alts" id="alts" aria-label="Other guesses for the selected word"></div>
 
@@ -156,11 +186,13 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     <p>The word list includes names, places, brands and apps, with their usual capitalization (iPhone, McDonald's, YouTube).</p>
     <p>Tap any word to see other words with the same keys. Picking one locks it, and the rest of the sentence re-decodes around it.</p>
     <p>The QWERTY keyboard sends only each letter's keypad number (shown in the corner), so the model decodes it exactly as if you'd used the keypad. Keys grow and shrink in place with how likely each letter is to come next. A computer keyboard works the same way, and Tab finishes the word.</p>
-    <p>Runs entirely in this page: 45,000 words with word-pair statistics. The Python version uses a full language model and handles harder cases.</p>
+    <p>Runs entirely in this page. <b>Model</b> picks the word model: Phone (45,000 words), ESP32 (20,000) and Radio (5,000) are the same files the C decoder runs on those devices. <b>Load .bin file…</b> opens any model built with <code>model/export_bin.py</code>. <b>Compare sizes</b> shows what each model makes of the same keys, with the words that differ from the selected model highlighted.</p>
   </div>
 </div>
 
-<script type="application/octet-stream" id="model-data">__MODEL__</script>
+<script type="application/octet-stream" id="model-l">__MODEL_L__</script>
+<script type="application/octet-stream" id="model-m">__MODEL_M__</script>
+<script type="application/octet-stream" id="model-s">__MODEL_S__</script>
 <script>
 __DECODER__
 </script>
@@ -321,7 +353,7 @@ __DECODER__
   }
 
   function decodeNow() {
-    result = decode(m, keys, locks, 40, 1);
+    result = decode(m, keys, locks, 8, 1);    // the beam the devices use
     // drop locks for slots that no longer exist
     for (const j in locks) if (+j >= result.slots.length) delete locks[j];
     best = result.hyps[0];
@@ -414,6 +446,109 @@ __DECODER__
     $('exampleTag').textContent = exact ? 'ABC · exact spelling' : (isExample ? 'Example' : (keys ? keys.length + ' presses' : ''));
     renderAlts();
     sizeKeys();
+    renderCompare();
+  }
+
+  // ---- Models: three sizes are embedded; any KPD2 file can be loaded for testing ----
+  const MODELS = [
+    { id: 'l', name: 'Phone', el: 'model-l' },
+    { id: 'm', name: 'ESP32', el: 'model-m' },
+    { id: 's', name: 'Radio', el: 'model-s' },
+  ];
+  const loaded = {};        // id -> { m, size, name }, built on first use
+  let modelId = 'l', comparing = false;
+  const fmtSize = b => b >= 1e6 ? (b / 1e6).toFixed(2) + ' MB' : Math.round(b / 1e3) + ' KB';
+  const embedded = id => {
+    const raw = atob($(MODELS.find(x => x.id === id).el).textContent.trim());
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+    return bytes;
+  };
+  function getModel(id) {
+    if (!loaded[id]) {
+      const bytes = embedded(id);
+      loaded[id] = { m: buildModel(bytes), size: bytes.length, name: MODELS.find(x => x.id === id).name };
+    }
+    return loaded[id];
+  }
+  function describe(e) {
+    return `${e.m.n.toLocaleString()} words · ${e.m.next.length.toLocaleString()} pairs · ${fmtSize(e.size)}`;
+  }
+  function useModel(id) {
+    const e = getModel(id);
+    m = e.m; modelId = id;
+    $('modelPick').value = id;
+    $('status').textContent = describe(e) + ' · runs offline';
+    if (id !== 'custom') try { localStorage.setItem('model', id); } catch (err) {}
+    update();
+  }
+
+  const pick = $('modelPick');
+  for (const spec of MODELS) {
+    // Label from the file header, without building the model yet.
+    const len = $(spec.el).textContent.trim().length, size = Math.floor(len * 3 / 4);
+    const head = atob($(spec.el).textContent.trim().slice(0, 16));
+    const words = head.charCodeAt(8) | head.charCodeAt(9) << 8;
+    pick.append(new Option(`${spec.name} · ${Math.round(words / 1000)}k words · ${fmtSize(size)}`, spec.id));
+  }
+  const fileOpt = new Option('Load .bin file…', 'file');
+  pick.append(fileOpt);
+  pick.addEventListener('change', () => {
+    const v = pick.value;
+    pick.blur();                       // so typed letters go to the keyboard, not the menu
+    if (v === 'file') { pick.value = modelId; $('modelFile').click(); return; }
+    useModel(v);
+  });
+  $('modelFile').addEventListener('change', async e => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    try {
+      const bytes = new Uint8Array(await f.arrayBuffer());
+      const mm = buildModel(bytes);
+      loaded.custom = { m: mm, size: bytes.length, name: 'File' };
+      let o = pick.querySelector('option[value="custom"]');
+      if (!o) { o = new Option('', 'custom'); pick.insertBefore(o, fileOpt); }
+      o.textContent = `${f.name} · ${Math.round(mm.n / 1000)}k words · ${fmtSize(bytes.length)}`;
+      useModel('custom');
+    } catch (err) {
+      $('status').textContent = `Couldn't load ${f.name}: ${err.message}`;
+    }
+  });
+
+  $('compareToggle').addEventListener('change', e => {
+    comparing = e.target.checked;
+    $('compare').hidden = !comparing;
+    try { localStorage.setItem('compare', comparing ? '1' : ''); } catch (err) {}
+    renderCompare();
+  });
+  function renderCompare() {
+    if (!comparing || !m) return;
+    const box = $('compare');
+    box.textContent = '';
+    const mine = keys && best ? plainText() : '';
+    const myWords = mine.split(' ');
+    const ids = MODELS.map(x => x.id).concat(loaded.custom ? ['custom'] : []);
+    for (const id of ids) {
+      const e = getModel(id);
+      let text = mine;                 // the selected model's row matches the display, locks included
+      if (id !== modelId && keys) {
+        const r = decode(e.m, keys, {}, 8, 1);
+        text = r.hyps.length ? render(e.m, r, r.hyps[0]).map(p => p.text).join('') : '';
+      }
+      const row = document.createElement('div');
+      row.className = 'r' + (id === modelId ? ' cur' : '');
+      const n = document.createElement('span'); n.className = 'n'; n.textContent = e.name;
+      const t = document.createElement('span'); t.className = 't';
+      if (text) text.split(' ').forEach((w, i) => {
+        if (i) t.append(' ');
+        if (id !== modelId && w !== myWords[i]) {
+          const d = document.createElement('span'); d.className = 'diff'; d.textContent = w; t.append(d);
+        } else t.append(w);
+      });
+      row.append(n, t);
+      box.append(row);
+    }
   }
 
   function highlightSel() {
@@ -496,11 +631,14 @@ __DECODER__
   }
 
   setTimeout(() => {
-    const b64 = atob($('model-data').textContent.trim());
-    const bytes = new Uint8Array(b64.length);
-    for (let i = 0; i < b64.length; i++) bytes[i] = b64.charCodeAt(i);
-    m = buildModel(bytes);
-    $('status').textContent = 'Word model ready · runs offline';
+    let saved = 'l';
+    try {
+      if (MODELS.some(x => x.id === localStorage.getItem('model'))) saved = localStorage.getItem('model');
+      comparing = localStorage.getItem('compare') === '1';
+    } catch (err) {}
+    $('compareToggle').checked = comparing;
+    $('compare').hidden = !comparing;
+    useModel(saved);
     loadExample();
   }, 20);
   $('out').appendChild(Object.assign(document.createElement('span'), { className: 'placeholder', textContent: 'Loading…' }));

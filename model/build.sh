@@ -23,8 +23,9 @@ fi
 "$PY" - <<'PY'
 import base64
 t = open("../web/page.template.html", encoding="utf-8").read()
-d = open("../web/decoder.js", encoding="utf-8").read()
-m = base64.b64encode(open("onepress.bin", "rb").read()).decode()
-open("../web/keypad.html", "w", encoding="utf-8", newline="\n").write(t.replace("__DECODER__", d).replace("__MODEL__", m))
+t = t.replace("__DECODER__", open("../web/decoder.js", encoding="utf-8").read())
+for tag, f in [("L", "onepress.bin"), ("M", "onepress-m.bin"), ("S", "onepress-s.bin")]:
+    t = t.replace(f"__MODEL_{tag}__", base64.b64encode(open(f, "rb").read()).decode())
+open("../web/keypad.html", "w", encoding="utf-8", newline="\n").write(t)
 PY
 echo "built model.json, onepress{,-m,-s}.bin, web/keypad.html"
