@@ -25,15 +25,7 @@ This file is the hand-off for Claude Code. Read it first, then `web/decoder.js` 
 | Python LLM decoder | `python/keypad_decode.py` | Written, logic tested with a toy LM. **Never run against a real Hugging Face model.** |
 | iOS keyboard extension, container app, Xcode project | — | **Not started.** Needs a Mac. Use the C decoder (the old Swift port was removed). |
 | Android keyboard | — | Not started. Buildable on Windows; would use the C decoder via the NDK. |
-
----|---|---|
-| Web app (working, published) | `web/keypad.html` | Done. Single self-contained page: decoder + model inlined. |
-| Web source | `web/page.template.html`, `web/decoder.js` | Template has `__MODEL__` and `__DECODER__` placeholders; `model/build.sh` inlines them. |
-| Python LLM decoder | `python/keypad_decode.py` | Written, logic tested with a toy LM. **Never run against a real Hugging Face model.** |
-| Word model build pipeline | `model/` | Done. `build.sh` fetches corpora, builds `model.json` and `ios/.../model.bin`. |
-| Swift decoder port | `ios/Keyboard/Decoder.swift` | Written, **never compiled** (no Swift toolchain was available). Mirrors `decoder.js`. |
-| iOS keyboard extension, container app, Xcode project | — | **Not started.** Main job for Claude Code (section 6). |
-| Regression test | `tests/decoder_test.js` | `node tests/decoder_test.js`. Baseline: 17/20 sentences exact, 120/123 words (97.6%). |
+| Regression test | `tests/decoder_test.js` | Small sanity set (16/20); overlaps `messages.txt`, so not a score. |
 
 ---
 
@@ -234,7 +226,9 @@ The decoder can change earlier words as more keys arrive, so the keyboard owns a
 ## 8. Rebuild and test
 
 ```bash
-cd model && ./build.sh            # fetch corpora (first run), rebuild model.json + model.bin + web/keypad.html
-node tests/decoder_test.js        # decoder regression (baseline 17/20 sentences, 97.6% words)
+cd model && ./build.sh            # fetch corpora (first run), rebuild model.json, onepress{,-m,-s}.bin, web/keypad.html
+node tests/eval.js                # held-out accuracy (NUS SMS, US/Canada users)
+gcc -std=c99 -O2 -o build/opdecode c/onepress.c c/opdecode.c && node tests/parity.js   # C matches JS
+node tests/decoder_test.js        # small sanity set
 python3 python/keypad_decode.py --model Qwen/Qwen2.5-7B   # LLM version (needs torch/transformers)
 ```
