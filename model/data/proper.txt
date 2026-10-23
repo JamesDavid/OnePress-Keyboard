@@ -1,0 +1,24 @@
+# Brands, apps, stores, restaurants, tech
+Apple iPhone iPad iPod iMac MacBook AirPods AirTag iCloud iMessage FaceTime Siri iOS macOS
+Google Gmail YouTube Android Chrome Pixel Nest Waze
+Microsoft Windows Xbox Outlook Excel PowerPoint Teams Bing LinkedIn Skype OneDrive Copilot
+Amazon Alexa Kindle Prime Audible Ring Whole Foods
+Facebook Instagram WhatsApp Messenger Meta Quest Threads
+Netflix Hulu Disney Pixar Marvel HBO Max Peacock Paramount Spotify Pandora SiriusXM Twitch Roku
+TikTok Snapchat Twitter Reddit Pinterest Discord Slack Zoom Venmo PayPal Zelle CashApp Uber Lyft Airbnb DoorDash Grubhub Instacart
+Tesla Ford Chevy Chevrolet Toyota Honda Nissan Subaru Hyundai Kia Mazda Jeep Dodge Ram GMC Buick Cadillac Lexus Acura Audi BMW Mercedes Porsche Volkswagen Volvo Rivian
+Walmart Target Costco Kroger Safeway Albertsons Fry's Walgreens CVS Lowe's Home Depot IKEA Macy's Nordstrom Kohl's Sephora Ulta Nike Adidas Lululemon Patagonia REI Etsy eBay Wayfair Chewy PetSmart Petco Trader Joe's Aldi Sprouts Publix Wegmans Staples
+McDonald's Starbucks Chipotle Subway Wendy's Burger King Taco Bell Chick-fil-A Dunkin Domino's Pizza Hut Papa John's Panera Sonic Arby's Popeyes KFC Denny's IHOP Applebee's Chili's Olive Garden Cheesecake Factory Culver's Dutch Bros In-N-Out Shake Shack Panda Express Raising Cane's Jack Whataburger Krispy Kreme Cinnabon Cracker Barrel Outback Red Robin Five Guys Jimmy John's Jersey Mike's Wingstop Qdoba Buffalo Wild Wings
+Coke Pepsi Sprite Gatorade Doritos Cheetos Oreo Lego Barbie Nerf Hasbro Mattel Nintendo Switch PlayStation Sony Samsung Galaxy LG Dell HP Lenovo Intel AMD Nvidia Canon Nikon GoPro Fitbit Garmin Peloton Roomba Dyson Keurig Nespresso Yeti Stanley Crocs Vans Converse
+FedEx UPS USPS DHL Verizon AT&T Comcast Xfinity Cox Spectrum Geico Progressive Allstate Chase Wells Fargo Citi Amex Visa Mastercard Discover Fidelity Vanguard Schwab
+ChatGPT OpenAI Claude Anthropic Gemini Wikipedia Yelp Zillow Redfin Craigslist Etsy Shopify Squarespace Dropbox Notion Canva Figma Adobe Photoshop GitHub Linux Ubuntu Python JavaScript Bluetooth WiFi USB HDMI GPS PDF TV DVD PC Mac
+NFL NBA MLB NHL NCAA ESPN NASA FBI CIA IRS DMV TSA FAA UN EU USA US UK
+# Days, months, holidays
+Monday Tuesday Wednesday Thursday Friday Saturday Sunday
+January February March April May June July August September October November December
+Christmas Easter Thanksgiving Halloween Hanukkah Passover Ramadan Diwali Valentine's Labor Memorial Independence Juneteenth
+# Places
+America American Americans Canada Canadian Mexico Mexican Europe European England English Britain British Ireland Irish Scotland France French Germany German Italy Italian Spain Spanish Portugal Greece Japan Japanese China Chinese Korea Korean India Indian Australia Brazil Russia Israel Egypt Africa Asia Hawaii Alaska
+Alabama Arizona Arkansas California Colorado Connecticut Delaware Florida Georgia Idaho Illinois Indiana Iowa Kansas Kentucky Louisiana Maine Maryland Massachusetts Michigan Minnesota Mississippi Missouri Montana Nebraska Nevada Ohio Oklahoma Oregon Pennsylvania Tennessee Texas Utah Vermont Virginia Washington Wisconsin Wyoming Carolina Dakota Jersey York Hampshire
+Phoenix Tempe Scottsdale Mesa Chandler Gilbert Glendale Tucson Flagstaff Sedona Peoria Surprise Prescott
+Seattle Portland Vegas Denver Dallas Houston Austin Chicago Boston Atlanta Miami Orlando Tampa Nashville Detroit Minneapolis Philadelphia Pittsburgh Baltimore Cleveland Cincinnati Columbus Charlotte Raleigh Sacramento Diego Francisco Angeles Albuquerque Utah Honolulu Anchorage Brooklyn Manhattan Toronto Vancouver London Paris Rome Tokyo Disneyland Disneyworld

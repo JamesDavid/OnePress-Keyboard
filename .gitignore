@@ -1,0 +1,12 @@
+# Downloaded training corpora (re-fetched by model/fetch_corpora.sh)
+model/corpora/
+__pycache__/
+*.pyc
+.DS_Store
+# Xcode / Android build output
+ios/build/
+ios/*.xcodeproj/xcuserdata/
+DerivedData/
+.gradle/
+build/
+local.properties
