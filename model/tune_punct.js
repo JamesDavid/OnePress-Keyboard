@@ -1,11 +1,13 @@
-// Tune the decoder's punctuation adjustments on held-out dev messages and store them in the model.
-//   node model/tune_punct.js model.json corpora/nus/dev.txt
+// Tune the decoder's punctuation adjustments on held-out dev messages.
+//   node model/tune_punct.js onepress.bin model.json corpora/nus/dev.txt
+// Writes the result to model.json as punctParams; rerun export_bin.py to apply it.
 // Coordinate descent on correct tokens (words + punctuation): punctuation also changes the
 // context the next word is scored in, so both count.
 const fs = require('fs'), path = require('path');
 const D = require(path.join(__dirname, '../web/decoder.js'));
-const [modelFile, devFile] = process.argv.slice(2);
-const M = JSON.parse(fs.readFileSync(modelFile));
+const [binFile, jsonFile, devFile] = process.argv.slice(2);
+const m = D.buildModel(fs.readFileSync(binFile));
+const M = JSON.parse(fs.readFileSync(jsonFile));
 const refs = fs.readFileSync(devFile, 'utf8').split('\n').filter(Boolean);
 const enc = s => s.toLowerCase().replace(/'/g, '').replace(/[.,!?]/g, '#').replace(/ /g, '0')
   .replace(/[a-z]/g, c => D.wordKeys(c));
@@ -14,8 +16,7 @@ const toks = s => s.toLowerCase().match(TOK) || [];
 const cases = refs.map(s => ({ keys: enc(s), ref: toks(s) }));
 
 function score(pp) {
-  M.punctParams = pp;
-  const m = D.buildModel(M);
+  for (const k in pp) m.params[k] = Math.round(pp[k] * m.scale);
   let ok = 0, pok = 0;
   for (const c of cases) {
     const r = D.decode(m, c.keys, {}, 8);
@@ -42,5 +43,5 @@ for (const stepSize of [1, 0.5, 0.25]) {
   }
 }
 M.punctParams = pp;
-fs.writeFileSync(modelFile, JSON.stringify(M));
+fs.writeFileSync(jsonFile, JSON.stringify(M));
 console.log('tuned', JSON.stringify(pp));

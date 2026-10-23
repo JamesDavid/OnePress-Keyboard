@@ -9,7 +9,8 @@ One-press-per-letter keypad text entry. A word n-gram model picks the letters.
 - Small regression set: `node tests/decoder_test.js` (16/20). It overlaps `messages.txt`, so it is a
   sanity check, not a score.
 - Rebuild model + web page: `cd model && ./build.sh` (needs `pip install wordfreq`).
-- Generated files (`model/model.json`, `ios/Keyboard/Resources/model.bin`, `web/keypad.html`) are
+- `model/onepress.bin` (KPD2 format, documented in `model/export_bin.py`) is the one model every
+  decoder reads. Generated files (`model/model.json`, `model/onepress.bin`, `web/keypad.html`) are
   rebuilt by `build.sh`; edit `web/page.template.html` and `web/decoder.js`, not `keypad.html`.
 - Targets range from phones down to microcontrollers (Meshtastic nRF52/ESP32 nodes, handheld
   radios such as TIDRADIO TD-H3 and Baofeng DM-32UV). Keep the decoder allocation-light and the

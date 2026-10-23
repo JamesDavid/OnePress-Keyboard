@@ -160,7 +160,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   </div>
 </div>
 
-<script type="application/json" id="model-data">__MODEL__</script>
+<script type="application/octet-stream" id="model-data">__MODEL__</script>
 <script>
 __DECODER__
 </script>
@@ -263,63 +263,9 @@ __DECODER__
 
   // ---- Size QWERTY keys by how likely each letter is to come next ----
   const LETTERS = 'abcdefghijklmnopqrstuvwxyz';
-  let uniFirst = null;
-  function firstLetterBase() {
-    if (uniFirst) return uniFirst;
-    uniFirst = new Float64Array(26);
-    for (let i = 0; i < m.n; i++) {
-      const c = m.words[i].charCodeAt(0) - 97;
-      if (c >= 0 && c < 26) uniFirst[c] += m.uni[i];
-    }
-    return uniFirst;
-  }
-  function prevContext(slotIndex) {
-    // id of the token before the slot being typed, as the model sees it
-    if (slotIndex < 0 || !best) return m.bos;
-    const s = result.slots[slotIndex], c = s.cands[best.path[slotIndex]];
-    if (c.id < 0) return -1;
-    if (c.id >= m.n && c.text !== ',') return m.bos;
-    return c.id;
-  }
-  function nextLetterProbs() {
-    const p = new Float64Array(26);
-    const toks = result ? result.toks : [];
-    const last = toks[toks.length - 1];
-    if (last && last.type === 'word') {
-      // Word in progress: weight every word that starts with these keys by P(word | previous word).
-      const k = last.keys, prev = prevContext(result.slots.length - 2);
-      const a = m.keyed; let lo = 0, hi = a.length;
-      while (lo < hi) { const mid = (lo + hi) >> 1; if (a[mid][0] < k) lo = mid + 1; else hi = mid; }
-      const seen = new Set();
-      for (let i = lo; i < a.length && a[i][0].startsWith(k); i++) {
-        const [key, id] = a[i];
-        if (seen.has(id) || key.length <= k.length) continue;
-        seen.add(id);
-        const text = key.includes('#') ? m.words[id] : m.words[id].replace(/'/g, '');
-        const c = text.charCodeAt(k.length) - 97;
-        if (c >= 0 && c < 26) p[c] += Math.exp(lp(m, prev, id));
-      }
-    } else {
-      // Start of a word: mix the bigram row for the previous word with first-letter frequencies.
-      const prev = prevContext(result ? result.slots.length - 1 : -1);
-      const base = firstLetterBase();
-      const ctxN = m.ctx.get(prev) || 0, row = m.bi.get(prev);
-      const lam = ctxN ? ctxN / (ctxN + 40) : 0;
-      let baseSum = 0; for (const v of base) baseSum += v;
-      for (let c = 0; c < 26; c++) p[c] = (1 - lam) * base[c] / baseSum;
-      if (row) for (const [id, cnt] of row) {
-        if (id >= m.n) continue;
-        const c = m.words[id].charCodeAt(0) - 97;
-        if (c >= 0 && c < 26) p[c] += lam * cnt / ctxN;
-      }
-    }
-    let sum = 0; for (const v of p) sum += v;
-    if (sum > 0) for (let c = 0; c < 26; c++) p[c] /= sum;
-    return sum > 0 ? p : null;
-  }
   function sizeKeys() {
     if (!m || qw.hidden) return;
-    const p = nextLetterProbs();
+    const p = nextLetterProbs(m, result, best);
     let max = 0; if (p) for (const v of p) max = Math.max(max, v);
     for (let c = 0; c < 26; c++) {
       const el = qw.querySelector(`[data-qk="${LETTERS[c]}"]`);
@@ -550,7 +496,10 @@ __DECODER__
   }
 
   setTimeout(() => {
-    m = buildModel(JSON.parse($('model-data').textContent));
+    const b64 = atob($('model-data').textContent.trim());
+    const bytes = new Uint8Array(b64.length);
+    for (let i = 0; i < b64.length; i++) bytes[i] = b64.charCodeAt(i);
+    m = buildModel(bytes);
     $('status').textContent = 'Word model ready · runs offline';
     loadExample();
   }, 20);

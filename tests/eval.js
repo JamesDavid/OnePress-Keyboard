@@ -1,5 +1,5 @@
 // Held-out accuracy on real messages.
-//   node tests/eval.js [test.txt] [--model model.json] [--out decoded.txt] [--hyp decoded.txt] [--limit N]
+//   node tests/eval.js [test.txt] [--model onepress.bin] [--out decoded.txt] [--hyp decoded.txt] [--limit N]
 // Default test set: model/corpora/nus/test_na.txt (built by model/prep_nus.py).
 // --hyp scores another decoder's output (one line per test line) instead of running decoder.js.
 const fs = require('fs'), path = require('path');
@@ -8,13 +8,12 @@ const D = require(path.join(__dirname, '../web/decoder.js'));
 const args = process.argv.slice(2);
 const opt = (k) => { const i = args.indexOf(k); return i >= 0 ? args.splice(i, 2)[1] : null; };
 const outFile = opt('--out'), hypFile = opt('--hyp'), limit = +(opt('--limit') || 0);
-const modelFile = opt('--model') || path.join(__dirname, '../model/model.json');
+const modelFile = opt('--model') || path.join(__dirname, '../model/onepress.bin');
 const testFile = args[0] || path.join(__dirname, '../model/corpora/nus/test_na.txt');
 let refs = fs.readFileSync(testFile, 'utf8').split('\n').filter(Boolean);
 if (limit) refs = refs.slice(0, limit);
 
-const M = JSON.parse(fs.readFileSync(modelFile));
-const m = D.buildModel(M);
+const m = D.buildModel(fs.readFileSync(modelFile));
 const enc = s => s.toLowerCase().replace(/'/g, '').replace(/[.,!?]/g, '#').replace(/ /g, '0')
   .replace(/[a-z]/g, c => D.wordKeys(c));
 const TOK = /[a-z]+(?:'[a-z]+)?|[.,!?]/g;
@@ -39,7 +38,7 @@ refs.forEach((ref, i) => {
     const y = b[j], ok = x === y;
     if (/[.,!?]/.test(x)) { st.pt++; st.p += ok; return; }
     st.wt++; st.w += ok;
-    if ((m.byKey.get(D.wordKeys(x.replace(/'/g, ''))) || []).length > 1) {
+    if (D.exactMatches(m, D.wordKeys(x.replace(/'/g, ''))).length > 1) {
       st.at++; st.a += ok;
       if (!ok) { const k = `${x} -> ${y}`; errs.set(k, (errs.get(k) || 0) + 1); }
     }

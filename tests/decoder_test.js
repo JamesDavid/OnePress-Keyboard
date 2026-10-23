@@ -1,8 +1,7 @@
-// Regression test for the JS decoder: node tests/decoder_test.js [model.json]
+// Regression test for the JS decoder: node tests/decoder_test.js [onepress.bin]
 const path = require('path');
 const D = require(path.join(__dirname, '../web/decoder.js'));
-const M = JSON.parse(require('fs').readFileSync(process.argv[2] || path.join(__dirname, '../model/model.json')));
-const m = D.buildModel(M);
+const m = D.buildModel(require('fs').readFileSync(process.argv[2] || path.join(__dirname, '../model/onepress.bin')));
 const enc = s => s.toLowerCase().replace(/'/g, '').replace(/[.,!?]/g, '#').replace(/ /g, '0')
   .replace(/[a-z]/g, c => D.wordKeys(c));
 const CASES = [
