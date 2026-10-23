@@ -9,7 +9,7 @@
 - **Never use "T9"** in any user-facing name, string, icon or App Store text. It's a registered trademark. "Predictive keypad" or "one press per letter" describe the feature fine. Internal identifiers that still say `t9` should be renamed when touched.
 - **Fallback names** if OnePress collides (it's common for WordPress plugins and print shops): Monotap, Oneshot. Run a trademark check (class 9) and an App Store name check before any public release.
 
-This file is the hand-off for Claude Code. Read it first, then `web/decoder.js` (the reference implementation everything else must match).
+This file is the hand-off for Claude Code. Read it first, then `web/decoder.js` (the reference implementation) and `c/onepress.c` (the portable port that must match it).
 
 ---
 
@@ -17,6 +17,16 @@ This file is the hand-off for Claude Code. Read it first, then `web/decoder.js` 
 
 | Piece | Path | Status |
 |---|---|---|
+| Web app (working) | `web/keypad.html` | Done. Single self-contained page: decoder + base64 model inlined. |
+| Web source | `web/page.template.html`, `web/decoder.js` | Template has `__MODEL__` and `__DECODER__` placeholders; `model/build.sh` inlines them. `decoder.js` is the reference decoder. |
+| C decoder | `c/onepress.h`, `c/onepress.c` | Done. C99, no allocation, reads the model in place. Output identical to `decoder.js` (`tests/parity.js`). For iOS (call from Swift), Android (NDK) and firmware. |
+| Model pipeline | `model/` | Done. `build.sh` builds `model.json` (counts) and three KPD2 models: `onepress.bin` (45k words, phones/web), `onepress-m.bin` (20k, ESP32), `onepress-s.bin` (5k, radios/nRF52). |
+| Held-out evaluation | `tests/eval.js`, `model/prep_nus.py` | NUS SMS corpus split by user into train/dev/test. Tune on dev, report US/Canada test. |
+| Python LLM decoder | `python/keypad_decode.py` | Written, logic tested with a toy LM. **Never run against a real Hugging Face model.** |
+| iOS keyboard extension, container app, Xcode project | — | **Not started.** Needs a Mac. Use the C decoder (the old Swift port was removed). |
+| Android keyboard | — | Not started. Buildable on Windows; would use the C decoder via the NDK. |
+
+---|---|---|
 | Web app (working, published) | `web/keypad.html` | Done. Single self-contained page: decoder + model inlined. |
 | Web source | `web/page.template.html`, `web/decoder.js` | Template has `__MODEL__` and `__DECODER__` placeholders; `model/build.sh` inlines them. |
 | Python LLM decoder | `python/keypad_decode.py` | Written, logic tested with a toy LM. **Never run against a real Hugging Face model.** |
@@ -74,17 +84,9 @@ Word unigram + bigram, about 45,000 words.
 ### Files
 
 - `model.json` (≈3.2 MB): `words`, `display` {idx: string}, `logp`, `punct`, `punctLogp`, `bos`, `ctx` {row: total}, `bi` {prev: [next, count, …]}. Token ids: words `0..n-1`, punctuation `n..n+3`, BOS `n+4`.
-- `model.bin` (≈3.1 MB, little-endian), for iOS:
-  ```
-  "KPD1"
-  u32 nWords, u32 nPunct, u32 bos
-  u32 len, utf8 words joined by '\n'
-  u32 nDisplay, then { u32 idx, u32 len, utf8 }
-  f32 logp[nWords], f32 punctLogp[nPunct], nPunct bytes of punctuation chars
-  u32 rows (= bos+1), u32 rowStart[rows+1]
-  u32 nEntries, u32 nextId[nEntries], u32 count[nEntries]   // CSR, nextId sorted within each row
-  ```
-  Row totals (`ctx`) are recomputed at load.
+- `onepress.bin` / `-m` / `-s`: the KPD2 binary every decoder reads. The layout is documented at
+  the top of `model/export_bin.py`. Log-probs are int16 (1/256 nat) with interpolation and
+  backoff precomputed, so decoding is binary searches and integer adds, and JS and C agree exactly.
 
 ### Known model weaknesses
 
@@ -137,11 +139,11 @@ ios/
   project.yml                 # OnePress app + OnePressKeyboard extension, iOS 16+, BASE_BUNDLE_ID setting
   App/                        # SwiftUI container app: setup steps + a test text field
   Keyboard/
-    Decoder.swift             # exists — compile and fix first
+    (decoder)                 # c/onepress.{h,c} via a bridging header
     KeyboardState.swift       # composition, input handling, suggestions (ObservableObject)
     KeyboardView.swift        # SwiftUI drawing + UIKit multi-touch layer
     KeyboardViewController.swift
-    Resources/model.bin       # exists
+    Resources/onepress.bin    # copy of model/onepress.bin
 ```
 
 Extension Info.plist `NSExtension`:
@@ -201,7 +203,7 @@ The decoder can change earlier words as more keys arrive, so the keyboard owns a
 
 ### Milestones
 
-1. **M1 — Compile.** Generate the project, fix compile errors in `Decoder.swift`, and add a unit test target that decodes the `tests/decoder_test.js` sentences. Results must match the JS output exactly.
+1. **M1 — Compile.** Generate the project, add `c/onepress.c` through a bridging header, and add a unit test target that decodes the `tests/decoder_test.js` sentences. Results must match the JS output exactly.
 2. **M2 — Minimal keyboard.** QWERTY sending digits, space, delete, return, globe, and the composition model working in Notes and Messages.
 3. **M3 — Full UI.** Keypad layout, 123 and #+= pages, shift and caps lock, suggestion chips, next/autocomplete, exact mode, key scaling.
 4. **M4 — Polish.** Key press popups, input clicks (`UIInputViewAudioFeedback`), and a load-time check (model load under 300 ms on device, cached in a static).
