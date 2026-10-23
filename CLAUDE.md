@@ -2,7 +2,9 @@
 
 One-press-per-letter keypad text entry. A word n-gram model picks the letters.
 
-- Read `SPEC.md` first. `web/decoder.js` is the reference decoder every port must match.
+- Read `SPEC.md` first. `web/decoder.js` is the reference decoder; `c/onepress.c` is the portable C
+  decoder for phones and firmware and must match it exactly. Change both together, then run
+  `gcc -std=c99 -O2 -Wall -Wextra -o build/opdecode c/onepress.c c/opdecode.c && node tests/parity.js`.
 - Held-out accuracy: `node tests/eval.js` (NUS SMS, US/Canada users; `model/prep_nus.py` builds the
   splits). Baseline: 93.16% words, 90.81% ambiguous words, 44.07% punctuation. Report it for every
   model or decoder change.
