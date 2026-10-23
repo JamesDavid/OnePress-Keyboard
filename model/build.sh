@@ -13,7 +13,13 @@ if [ ! -f corpora/nus/train.txt ]; then
   "$PY" prep_nus.py "$NUS" model.json corpora/nus
 fi
 "$PY" build_model.py corpora model.json data/messages.txt data/proper.txt corpora/nus/train.txt:3 corpora/nus/train_na.txt:10
-"$PY" export_bin.py model.json onepress.bin
+# Three sizes, cutoffs chosen on the NUS dev split (see CLAUDE.md for accuracy):
+#   onepress.bin    phones, web    45k words
+#   onepress-m.bin  ESP32 nodes    20k words
+#   onepress-s.bin  radios, nRF52   5k words
+"$PY" export_bin.py model.json onepress.bin --ambig-only --min-count 3
+"$PY" export_bin.py model.json onepress-m.bin --vocab 20000 --ambig-only --min-count 5
+"$PY" export_bin.py model.json onepress-s.bin --vocab 5000 --ambig-only --min-count 10
 "$PY" - <<'PY'
 import base64
 t = open("../web/page.template.html", encoding="utf-8").read()
@@ -21,4 +27,4 @@ d = open("../web/decoder.js", encoding="utf-8").read()
 m = base64.b64encode(open("onepress.bin", "rb").read()).decode()
 open("../web/keypad.html", "w", encoding="utf-8", newline="\n").write(t.replace("__DECODER__", d).replace("__MODEL__", m))
 PY
-echo "built model.json, onepress.bin, web/keypad.html"
+echo "built model.json, onepress{,-m,-s}.bin, web/keypad.html"

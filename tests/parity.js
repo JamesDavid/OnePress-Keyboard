@@ -1,5 +1,5 @@
 // The C decoder must produce exactly what web/decoder.js does.
-//   node tests/parity.js [path/to/opdecode] [--beam N] [--fuzz N]
+//   node tests/parity.js [path/to/opdecode] [--beam N] [--fuzz N] [--model onepress.bin]
 // Inputs: every held-out NUS message (if model/corpora/nus exists), the regression sentences,
 // and random key strings that mix predictive keys with exact-mode letters, apostrophes,
 // digits and punctuation.
@@ -9,8 +9,8 @@ const D = require(path.join(__dirname, '../web/decoder.js'));
 const args = process.argv.slice(2);
 const opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args.splice(i, 2)[1] : d; };
 const beam = +opt('--beam', 8), nFuzz = +opt('--fuzz', 5000);
+const modelFile = opt('--model', path.join(__dirname, '../model/onepress.bin'));
 const exe = args[0] || path.join(__dirname, '../build/opdecode' + (process.platform === 'win32' ? '.exe' : ''));
-const modelFile = path.join(__dirname, '../model/onepress.bin');
 const m = D.buildModel(fs.readFileSync(modelFile));
 
 const enc = s => s.toLowerCase().replace(/'/g, '').replace(/[.,!?]/g, '#').replace(/ /g, '0')

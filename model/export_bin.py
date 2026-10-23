@@ -1,6 +1,6 @@
 """Export model.json to the KPD2 binary model read by every decoder (web, C, firmware).
 
-Usage: python export_bin.py model.json onepress.bin
+Usage: python export_bin.py model.json onepress.bin [--vocab N] [--min-count C] [--ambig-only]
 
 Everything is little-endian, every section 4-byte aligned, and the decoder searches the
 file in place (from flash or a memory map), so nothing is parsed or allocated on load.
@@ -15,7 +15,8 @@ Token ids: words 0..nWords-1, punctuation nWords..nWords+nPunct-1, BOS = nWords+
 Scores:    lp(prev, cur) = row entry for cur if present, else bow[prev] + uni[cur].
            A prev with no row (bow 0, no entries) falls back to the unigram.
 """
-import json, math, struct, sys
+import argparse, json, math, struct, sys
+from collections import Counter
 
 SCALE = 256
 SECTIONS = [
@@ -58,9 +59,56 @@ def q(x):
     assert -32768 <= v <= 32767, x
     return v
 
+def reduce(M, vocab=0, min_count=0, ambig_only=False):
+    """Shrink the model for small devices.
+
+    vocab:      keep only the `vocab` most frequent words.
+    min_count:  drop word pairs whose (weighted) count is below this.
+    ambig_only: drop pairs that can't change the decoded text: a pair matters only when one
+                of its words shares its keys with another word, or is punctuation/BOS (the
+                punctuation key is always a choice). Dropped pairs back off to the unigram.
+    """
+    words, n, nP = M["words"], len(M["words"]), len(M["punct"])
+    keep = sorted(sorted(range(n), key=lambda i: (-M["logp"][i], i))[:vocab]) if 0 < vocab < n else list(range(n))
+    new = {old: i for i, old in enumerate(keep)}
+    for p in range(nP + 1):
+        new[n + p] = len(keep) + p
+    groups = Counter()
+    for i in keep:
+        groups[keys(words[i])] += 1
+        if "'" in words[i]:
+            groups[keys(words[i].replace("'", ""))] += 1
+    def ambiguous(i):
+        if i >= n:
+            return True
+        w = words[i]
+        return groups[keys(w)] > 1 or ("'" in w and groups[keys(w.replace("'", ""))] > 1)
+    bi, ctx = {}, {}
+    for k, arr in M["bi"].items():
+        a = int(k)
+        if a not in new:
+            continue
+        row = []
+        for b, c in zip(arr[0::2], arr[1::2]):
+            if b in new and c >= min_count and (not ambig_only or ambiguous(a) or ambiguous(b)):
+                row += [new[b], c]
+        ctx[str(new[a])] = M["ctx"][k]      # the original total, so dropped pairs back off
+        if row:
+            bi[str(new[a])] = row
+    return dict(M, words=[words[i] for i in keep], logp=[M["logp"][i] for i in keep],
+                display={str(new[int(k)]): v for k, v in M.get("display", {}).items() if int(k) in new},
+                bi=bi, ctx=ctx, bos=len(keep) + nP)
+
 def main():
-    M = json.load(open(sys.argv[1], encoding="utf-8"))
-    out = sys.argv[2]
+    ap = argparse.ArgumentParser()
+    ap.add_argument("model_json")
+    ap.add_argument("out")
+    ap.add_argument("--vocab", type=int, default=0)
+    ap.add_argument("--min-count", type=int, default=0)
+    ap.add_argument("--ambig-only", action="store_true")
+    a = ap.parse_args()
+    M = reduce(json.load(open(a.model_json, encoding="utf-8")), a.vocab, a.min_count, a.ambig_only)
+    out = a.out
     words, P, bos = M["words"], M["punct"], M["bos"]
     n = len(words)
     assert bos == n + len(P) and bos < 0xFFFF, "token ids must fit in u16"
@@ -95,11 +143,18 @@ def main():
         c = ctx.get(r, 0)
         arr = bi.get(r, [])
         if c:
+            # Interpolated P(next | r) for the stored pairs; every other next token gets
+            # bow * P(next), with bow chosen so the row still sums to one. Without pruning
+            # that is exactly 1 - lambda.
             lam = c / (c + LAMBDA_K)
+            p_sum = u_sum = 0.0
             for a, cnt in sorted(zip(arr[0::2], arr[1::2])):
+                p = lam * cnt / c + (1 - lam) * uni[a]
+                p_sum += p
+                u_sum += uni[a]
                 nxt.append(a)
-                lps.append(q(math.log(lam * cnt / c + (1 - lam) * uni[a])))
-            bow.append(q(math.log(1 - lam)))
+                lps.append(q(math.log(p)))
+            bow.append(q(math.log(max(1 - p_sum, 1e-12) / (1 - u_sum))))
         else:
             bow.append(0)
         rows.append(len(nxt))
