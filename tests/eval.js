@@ -1,5 +1,5 @@
 // Held-out accuracy on real messages.
-//   node tests/eval.js [test.txt] [--out decoded.txt] [--hyp decoded.txt] [--limit N]
+//   node tests/eval.js [test.txt] [--model model.json] [--out decoded.txt] [--hyp decoded.txt] [--limit N]
 // Default test set: model/corpora/nus/test_na.txt (built by model/prep_nus.py).
 // --hyp scores another decoder's output (one line per test line) instead of running decoder.js.
 const fs = require('fs'), path = require('path');
@@ -8,11 +8,12 @@ const D = require(path.join(__dirname, '../web/decoder.js'));
 const args = process.argv.slice(2);
 const opt = (k) => { const i = args.indexOf(k); return i >= 0 ? args.splice(i, 2)[1] : null; };
 const outFile = opt('--out'), hypFile = opt('--hyp'), limit = +(opt('--limit') || 0);
+const modelFile = opt('--model') || path.join(__dirname, '../model/model.json');
 const testFile = args[0] || path.join(__dirname, '../model/corpora/nus/test_na.txt');
 let refs = fs.readFileSync(testFile, 'utf8').split('\n').filter(Boolean);
 if (limit) refs = refs.slice(0, limit);
 
-const M = JSON.parse(fs.readFileSync(path.join(__dirname, '../model/model.json')));
+const M = JSON.parse(fs.readFileSync(modelFile));
 const m = D.buildModel(M);
 const enc = s => s.toLowerCase().replace(/'/g, '').replace(/[.,!?]/g, '#').replace(/ /g, '0')
   .replace(/[a-z]/g, c => D.wordKeys(c));

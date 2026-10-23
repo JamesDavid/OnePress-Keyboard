@@ -3,9 +3,10 @@
 Usage: python prep_nus.py corpora/nus/smsCorpus_en_2015.03.09_all.xml model.json corpora/nus
 
 Keeps messages whose words are all in the vocabulary, normalizes punctuation so it
-tokenizes like keypad input, and splits by user (about 1 user in 4 goes to test) so no
-one's writing style appears in both halves. Writes train.txt, test.txt and test_na.txt
-(the US/Canada users in test). The output stays under corpora/ and out of git.
+tokenizes like keypad input, and splits by user (1 in 4 to test, 1 in 8 to dev for tuning)
+so no one's writing style appears in two splits. Writes train.txt, train_na.txt, dev.txt,
+test.txt and test_na.txt (the _na files hold the US/Canada users). The output stays under
+corpora/ and out of git.
 """
 import hashlib, json, os, re, sys
 import xml.etree.ElementTree as ET
@@ -23,6 +24,14 @@ for w in words:
         bare = w.replace("'", "")
         if bare not in rank or logp[rank[bare]] < logp[rank[w]] - 2.3:
             fix[bare] = w
+# Texters drop apostrophes; these bare forms almost always mean the contraction. Bare forms
+# that are common words of their own (were, its, ill, well, hell, shell, wed, shed, id) stay.
+for w in ["let's", "i'm", "i've", "that's", "what's", "you're", "they're", "how's", "where's",
+          "there's", "here's", "who's", "isn't", "aren't", "wasn't", "weren't", "don't", "doesn't",
+          "didn't", "can't", "won't", "wouldn't", "shouldn't", "couldn't", "haven't", "hasn't",
+          "hadn't", "you'll", "you've", "you'd", "they'll", "they've", "we've", "she's", "he's"]:
+    if w in rank:
+        fix[w.replace("'", "")] = w
 
 NA = {"united states", "usa", "us", "canada"}
 TOK = re.compile(r"[a-z]+(?:'[a-z]+)?|[.,!?]")
@@ -57,12 +66,13 @@ def clean(text):
         s += x if x in ".,!?" or not s else " " + x
     return s
 
-def is_test(uid):
-    return hashlib.md5(uid.encode()).digest()[0] < 64
+def split_of(uid):
+    b = hashlib.md5(uid.encode()).digest()[0]
+    return "test" if b < 64 else "dev" if b < 96 else "train"
 
 root = ET.parse(XML).getroot()
 seen = set()
-train, test, test_na = [], [], []
+train, train_na, dev, test, test_na = [], [], [], [], []
 total = 0
 for m in root.iter("message"):
     total += 1
@@ -72,14 +82,18 @@ for m in root.iter("message"):
     seen.add(s)
     p = m.find("source/userProfile")
     uid = p.findtext("userID") or ""
-    if is_test(uid):
-        test.append(s)
-        if (p.findtext("country") or "").strip().lower() in NA:
-            test_na.append(s)
+    split = split_of(uid)
+    na = (p.findtext("country") or "").strip().lower() in NA
+    if split == "test":
+        (test_na if na else test).append(s)
+    elif split == "dev":
+        dev.append(s)
     else:
-        train.append(s)
+        (train_na if na else train).append(s)
 
 os.makedirs(OUT, exist_ok=True)
-for name, rows in [("train.txt", train), ("test.txt", test), ("test_na.txt", test_na)]:
-    open(os.path.join(OUT, name), "w", encoding="utf-8").write("\n".join(rows) + "\n")
-print(f"{total} messages -> train {len(train)}, test {len(test)} (US/Canada {len(test_na)})")
+# test.txt is every test user; test_na.txt is the US/Canada subset. train.txt excludes train_na.txt.
+test = test + test_na
+for name, rows in [("train.txt", train), ("train_na.txt", train_na), ("dev.txt", dev), ("test.txt", test), ("test_na.txt", test_na)]:
+    open(os.path.join(OUT, name), "w", encoding="utf-8", newline="\n").write("\n".join(rows) + "\n")
+print(f"{total} messages -> train {len(train)} + {len(train_na)} US/Canada, dev {len(dev)}, test {len(test)} (US/Canada {len(test_na)})")

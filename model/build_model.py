@@ -66,6 +66,14 @@ for sub in ["pos", "neg"]:
 for line in open(sys.argv[3], encoding="utf-8"):
     if line.strip():
         streams.append((line, 25))
+# Extra one-message-per-line corpora given as path:weight (e.g. corpora/nus/train.txt:3).
+for spec in sys.argv[5:]:
+    p, wt = spec.rsplit(":", 1)
+    if not os.path.exists(p):
+        print("skipping missing corpus", p); continue
+    for line in open(p, encoding="utf-8"):
+        if line.strip():
+            streams.append((line, int(wt)))
 
 vset = {w: i for i, w in enumerate(vocab)}
 P0 = len(vocab)  # punctuation ids follow words
@@ -76,6 +84,7 @@ BOS = P0 + len(PUNCT)
 
 uni = Counter()
 bi = Counter()
+seen = Counter()   # times each pair was actually seen; hand-written messages always count as kept
 for text, wt in streams:
     for toks in sentences_from_text(text):
         prev = BOS
@@ -87,11 +96,13 @@ for text, wt in streams:
             uni[cur] += wt
             if prev >= 0:
                 bi[(prev, cur)] += wt
+                seen[(prev, cur)] += 2 if wt >= 25 else 1
                 uni[("ctx", prev)] += wt
             prev = BOS if t in (".", "!", "?") else cur
 
-# prune
-bigrams = {k: c for k, c in bi.items() if c >= 2}
+# Prune pairs seen only once. Weighting must not rescue them: one message weighted x3
+# shouldn't outvote a pair seen in many places.
+bigrams = {k: c for k, c in bi.items() if seen[k] >= 2}
 ctx = {}
 for (a, b), c in bigrams.items():
     ctx[a] = ctx.get(a, 0) + c
@@ -152,5 +163,5 @@ model = {
     "bi": {str(k): v for k, v in packed.items()},
 }
 s = json.dumps(model, separators=(",", ":"))
-open(OUT, "w").write(s)
+open(OUT, "w", encoding="utf-8", newline="\n").write(s)
 print(f"vocab {len(vocab)}, bigrams {len(bigrams)}, bytes {len(s):,}")

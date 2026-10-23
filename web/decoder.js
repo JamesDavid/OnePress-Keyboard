@@ -39,8 +39,14 @@ function buildModel(M) {
   const fullKeys = words.map(wordKeys);
   const display = new Array(n);
   for (const k in (M.display || {})) display[+k] = M.display[k];
-  return { words, display, fullKeys, n, uni, byKey, keyed, bi, ctx, punct: M.punct, bos: M.bos };
+  const pp = Object.assign({}, PUNCT_PARAMS, M.punctParams || {});
+  return { words, display, fullKeys, n, uni, byKey, keyed, bi, ctx, punct: M.punct, bos: M.bos, pp };
 }
+
+// Punctuation adjustments (log-prob), tuned per model on held-out messages (model/tune_punct.js).
+// qQ/qN: '?' when the sentence or clause opens with a question word / doesn't. dQ: '.' after a
+// question opener. cF: ',' as the last slot. dB/cB/eB: flat bias for '.', ',' and '!'.
+const PUNCT_PARAMS = { qQ: 2.5, qN: -1.5, dQ: -1.5, cF: -3, dB: 0, cB: 0, eB: 0 };
 
 // log P(cur | prev), interpolated (Witten-Bell style weight)
 function lp(m, prev, cur) {
@@ -183,9 +189,11 @@ function decode(m, keys, locks = {}, beamWidth = 40, nBest = 5) {
           // Punctuation: a word-pair model can't see how the sentence began,
           // so use the sentence's first word to judge question vs statement.
           const q = [first, cf].some(f => f !== null && QUESTION_STARTERS.has(m.words[f]));
-          if (c.text === '?') step += q ? 2.5 : -1.5;
-          else if (c.text === '.' && q) step -= 1.5;
-          else if (c.text === ',' && isFinal) step -= 3;
+          const pp = m.pp;
+          if (c.text === '?') step += q ? pp.qQ : pp.qN;
+          else if (c.text === '.') step += pp.dB + (q ? pp.dQ : 0);
+          else if (c.text === ',') step += pp.cB + (isFinal ? pp.cF : 0);
+          else if (c.text === '!') step += pp.eB;
           if (c.text !== ',') { prev = m.bos; first = null; }
           cf = null;
         } else {
