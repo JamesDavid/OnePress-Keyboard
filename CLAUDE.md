@@ -4,7 +4,8 @@ One-press-per-letter keypad text entry. A word n-gram model picks the letters.
 
 - Read `SPEC.md` first. `web/decoder.js` is the reference decoder; `c/onepress.c` is the portable C
   decoder for phones and firmware and must match it exactly. Change both together, then run
-  `gcc -std=c99 -O2 -Wall -Wextra -o build/opdecode c/onepress.c c/opdecode.c && node tests/parity.js`.
+  `gcc -std=c99 -O2 -Wall -Wextra -o build/opdecode c/onepress.c c/opdecode.c && node tests/parity.js`,
+  plus `node tests/parity.js --learn` for anything touching learning.
 - Held-out accuracy: `node tests/eval.js` (NUS SMS, US/Canada users; `model/prep_nus.py` builds the
   splits; tune on `dev.txt`, report on test). Report it for every model or decoder change. Current:
 
@@ -15,7 +16,10 @@ One-press-per-letter keypad text entry. A word n-gram model picks the letters.
   | `onepress-s.bin` | 5k | 238 KB | 88.19% | 90.93% | radios, nRF52 |
 
   Punctuation is ~44% everywhere: people punctuate texts inconsistently, so a global tuning
-  didn't transfer between users; plan to learn it per user.
+  didn't transfer between users; learning per user is what helps.
+- Learning from the user (SPEC.md §3): `node tests/learn_eval.js [users_test.tsv]` replays each
+  NUS user's messages in order. Tune on `users_dev.tsv`. Current, test users: predicted words
+  90.04% → 92.98%, punctuation 57.5% → 65.5% (US/Canada: 93.76% → 94.97%, 44.9% → 60.2%).
 - Small regression set: `node tests/decoder_test.js` (16/20). It overlaps `messages.txt`, so it is a
   sanity check, not a score.
 - Rebuild model + web page: `cd model && ./build.sh` (needs `pip install wordfreq`).

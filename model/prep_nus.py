@@ -5,8 +5,9 @@ Usage: python prep_nus.py corpora/nus/smsCorpus_en_2015.03.09_all.xml model.json
 Keeps messages whose words are all in the vocabulary, normalizes punctuation so it
 tokenizes like keypad input, and splits by user (1 in 4 to test, 1 in 8 to dev for tuning)
 so no one's writing style appears in two splits. Writes train.txt, train_na.txt, dev.txt,
-test.txt and test_na.txt (the _na files hold the US/Canada users). The output stays under
-corpora/ and out of git.
+test.txt and test_na.txt (the _na files hold the US/Canada users), plus users_dev.tsv,
+users_test.tsv and users_test_na.tsv: "user<TAB>message" in corpus order, keeping words outside the vocabulary,
+for tests/learn_eval.js. The output stays under corpora/ and out of git.
 """
 import hashlib, json, os, re, sys
 import xml.etree.ElementTree as ET
@@ -36,7 +37,7 @@ for w in ["let's", "i'm", "i've", "that's", "what's", "you're", "they're", "how'
 NA = {"united states", "usa", "us", "canada"}
 TOK = re.compile(r"[a-z]+(?:'[a-z]+)?|[.,!?]")
 
-def clean(text):
+def clean(text, oov=False):
     t = text.replace("’", "'").replace("‘", "'")
     t = re.sub(r"\s+", " ", t).strip()
     if re.search(r"[^A-Za-z' .,!?]", t):
@@ -58,7 +59,7 @@ def clean(text):
         if x in ".,!?":
             out.append(x); continue
         x = fix.get(x, x)
-        if x not in rank:
+        if x not in rank and not oov:
             return None
         out.append(x)
     s = ""
@@ -73,17 +74,25 @@ def split_of(uid):
 root = ET.parse(XML).getroot()
 seen = set()
 train, train_na, dev, test, test_na = [], [], [], [], []
+users_dev, users_test, users_test_na = [], [], []
 total = 0
 for m in root.iter("message"):
     total += 1
-    s = clean(m.findtext("text") or "")
-    if not s or s in seen:
-        continue
-    seen.add(s)
     p = m.find("source/userProfile")
     uid = p.findtext("userID") or ""
     split = split_of(uid)
     na = (p.findtext("country") or "").strip().lower() in NA
+    if split != "train":
+        s = clean(m.findtext("text") or "", oov=True)
+        if s:
+            row = uid + "	" + s
+            (users_dev if split == "dev" else users_test).append(row)
+            if split == "test" and na:
+                users_test_na.append(row)
+    s = clean(m.findtext("text") or "")
+    if not s or s in seen:
+        continue
+    seen.add(s)
     if split == "test":
         (test_na if na else test).append(s)
     elif split == "dev":
@@ -94,6 +103,8 @@ for m in root.iter("message"):
 os.makedirs(OUT, exist_ok=True)
 # test.txt is every test user; test_na.txt is the US/Canada subset. train.txt excludes train_na.txt.
 test = test + test_na
-for name, rows in [("train.txt", train), ("train_na.txt", train_na), ("dev.txt", dev), ("test.txt", test), ("test_na.txt", test_na)]:
+for name, rows in [("train.txt", train), ("train_na.txt", train_na), ("dev.txt", dev), ("test.txt", test), ("test_na.txt", test_na),
+                   ("users_dev.tsv", users_dev), ("users_test.tsv", users_test),
+                   ("users_test_na.tsv", users_test_na)]:
     open(os.path.join(OUT, name), "w", encoding="utf-8", newline="\n").write("\n".join(rows) + "\n")
 print(f"{total} messages -> train {len(train)} + {len(train_na)} US/Canada, dev {len(dev)}, test {len(test)} (US/Canada {len(test_na)})")

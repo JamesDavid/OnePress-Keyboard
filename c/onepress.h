@@ -36,7 +36,15 @@
 #endif
 #define OP_MAX_EXACT 40         /* dictionary words considered per slot */
 #define OP_MAX_COMPLETIONS 12   /* extra prefix completions for the word being typed */
-#define OP_MAX_CANDS (OP_MAX_EXACT + OP_MAX_COMPLETIONS)
+#ifndef OP_USER_WORDS
+#define OP_USER_WORDS 256       /* words a person can teach it (op_user) */
+#endif
+#ifndef OP_USER_PAIRS
+#define OP_USER_PAIRS 1024      /* token and token-pair counts kept for a person */
+#endif
+#define OP_USER_WORD_LEN 23     /* longest learned word */
+#define OP_MAX_USER_CANDS 4     /* learned words considered per slot, and again as completions */
+#define OP_MAX_CANDS (OP_MAX_EXACT + OP_MAX_COMPLETIONS + 2 * OP_MAX_USER_CANDS)
 
 #define OP_NONE 0xFFFF          /* token id of an unknown word (decoder.js uses -1) */
 
@@ -68,10 +76,27 @@ typedef struct {
     uint16_t time_id[2];        /* "am", "pm" (OP_NONE if absent) */
 } op_model;
 
+/* What one person types, learned by op_learn and read by op_decode: words the dictionary
+ * lacks (spelled once in exact mode, predicted after that; learned word k has id bos + 1 + k)
+ * and counts of each token and token pair they used. Plain data with no pointers, so it can be
+ * saved to flash as bytes and loaded back; it belongs to the model it was made for (bos).
+ * About 12 KB with the defaults; -DOP_USER_WORDS=64 -DOP_USER_PAIRS=256 gives ~3 KB. */
+typedef struct {
+    uint16_t prev, cur;         /* cur's own count uses prev 0xFFFD */
+    uint8_t count;
+} op_user_pair;
+
+typedef struct {
+    uint16_t bos, n_words, n_pairs;
+    char word[OP_USER_WORDS][OP_USER_WORD_LEN + 1];     /* NUL-terminated */
+    op_user_pair pair[OP_USER_PAIRS];                   /* sorted by (prev, cur) */
+} op_user;
+
 /* Context before the composition, from the text already in the field. */
 typedef struct {
     uint16_t prev;      /* previous token id: model->bos at a sentence start, OP_NONE if unknown */
     uint8_t cap;        /* capitalize the first word */
+    const op_user *user;    /* what this person has typed, or NULL */
 } op_start;
 
 /* Force slot `slot` to word `id` (as decoder.js locks do). Ignored if that word isn't a candidate. */
@@ -103,6 +128,7 @@ typedef struct {
     uint16_t slot_tok[OP_MAX_SLOTS];
     op_choice choice[OP_MAX_SLOTS];
     int32_t score;
+    const op_user *user;    /* start->user, if it matches the model */
     /* Working memory. */
     char keys[OP_MAX_KEYS], lits[OP_MAX_KEYS];
     struct { uint16_t id; uint8_t parent, kind; } bp[OP_MAX_SLOTS][OP_MAX_BEAM];
@@ -121,5 +147,13 @@ int op_render(const op_decoder *d, const op_model *m, const op_start *start, cha
 
 /* Word text of token `id` (not NUL-terminated); returns its length. */
 int op_word(const op_model *m, uint16_t id, const char **text);
+
+/* Start an empty op_user for model m. */
+void op_user_init(op_user *u, const op_model *m);
+
+/* Learn from the last op_decode once the person accepts the text (sends it). Pass the same
+ * start as op_decode. Completions still being typed and unmatched keys are skipped; a word
+ * spelled exactly that the dictionary lacks becomes a learned word. */
+int op_learn(op_user *u, const op_decoder *d, const op_model *m, const op_start *start);
 
 #endif

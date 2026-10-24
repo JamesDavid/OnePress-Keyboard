@@ -55,7 +55,7 @@ function buildModel(bytes) {
 // unigram; right after a number, "am" and "pm" get a bonus.
 function lp(m, prev, cur) {
   if (prev === AFTER_NUMBER) return m.uni[cur] + (m.timeIds.includes(cur) ? TIME_BONUS * m.scale : 0);
-  if (prev < 0) return m.uni[cur];
+  if (prev < 0 || prev > m.bos) return m.uni[cur];     // > bos: a word the user taught it
   let lo = m.rowStart[prev], hi = m.rowStart[prev + 1];
   while (lo < hi) {
     const mid = (lo + hi) >> 1, x = m.next[mid];
@@ -178,8 +178,9 @@ function formatNumber(keys, time) {
 }
 
 // Does dictionary word `id` (matched through key string `key`) agree with the exact letters?
-function litMatch(m, tok, id, key) {
-  const text = key.includes('#') ? m.words[id] : m.words[id].replace(/'/g, '');
+function litMatch(m, tok, id, key) { return litMatchText(tok, m.words[id], key); }
+function litMatchText(tok, word, key) {
+  const text = key.includes('#') ? word : word.replace(/'/g, '');
   for (let i = 0; i < tok.lit.length; i++) {
     if (tok.lit[i] !== null && text[i] !== tok.lit[i]) return false;
   }
@@ -187,7 +188,7 @@ function litMatch(m, tok, id, key) {
 }
 
 // Candidates for each slot: [{text, id, partial, penalty}]
-function slotCandidates(m, tok, isLast) {
+function slotCandidates(m, tok, isLast, u) {
   const P = m.params;
   if (tok.type === 'number') return [{ text: formatNumber(tok.keys), id: -1, number: true }];
   if (tok.type === 'punct') {
@@ -201,6 +202,24 @@ function slotCandidates(m, tok, isLast) {
   if (hasLit) ids = ids.filter(id => litMatch(m, tok, id, tok.keys));
   const exact = ids.slice(0, MAX_EXACT).map(id =>
     ({ text: m.words[id], id, penalty: m.fullKeys[id] === tok.keys ? 0 : P.apostrophe }));
+  // Words this person taught it: exact matches first, completions after the dictionary's.
+  const userExact = [], userPartial = [];
+  if (u) {
+    u.words.forEach((w, k) => {
+      const full = wordKeys(w), strip = full.replace(/#/g, '');
+      const id = m.bos + 1 + k;
+      if (full === tok.keys || (strip !== full && strip === tok.keys)) {
+        const key = full === tok.keys ? full : strip;
+        if (userExact.length < MAX_USER_CANDS && (!hasLit || litMatchText(tok, w, key)))
+          userExact.push({ text: w, id, penalty: full === tok.keys ? 0 : P.apostrophe });
+      } else if (isLast && !allLit && userPartial.length < MAX_USER_CANDS) {
+        const key = full.startsWith(tok.keys) ? full : strip.startsWith(tok.keys) ? strip : null;
+        if (key && (!hasLit || litMatchText(tok, w, key)))
+          userPartial.push({ text: w.slice(0, tok.keys.length), id, partial: w, penalty: P.completion });
+      }
+    });
+  }
+  exact.push(...userExact);
   if (isLast && !allLit) {
     // While still typing, also offer completions (shown truncated to what's typed).
     const seen = new Set(exact.map(c => c.id));
@@ -209,6 +228,7 @@ function slotCandidates(m, tok, isLast) {
       if (seen.has(id)) continue;
       exact.push({ text: m.words[id].slice(0, tok.keys.length), id, partial: m.words[id], penalty: P.completion });
     }
+    exact.push(...userPartial);
   }
   if (allLit) {
     // Spelled out exactly: always offer it as typed, even if it isn't in the word list.
@@ -224,16 +244,18 @@ function slotCandidates(m, tok, isLast) {
   return exact;
 }
 
-// start: { prev: token id before the composition (default BOS, -1 for an unknown word) }
+// start: { prev: token id before the composition (default BOS, -1 for an unknown word),
+//          user: what this person has typed (newUser / learn), optional }
 function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
   const P = m.params;
+  const u = start.user && start.user.bos === m.bos ? start.user : null;
   const toks = tokenize(keys);
   const slots = [];
   toks.forEach((t, i) => { if (t.type !== 'space') slots.push({ tok: t, tokIndex: i }); });
   const lastTokIsWord = toks.length && toks[toks.length - 1].type === 'word';
   slots.forEach((s, j) => {
     const isLast = j === slots.length - 1 && lastTokIsWord;
-    let c = slotCandidates(m, s.tok, isLast);
+    let c = slotCandidates(m, s.tok, isLast, u);
     s.all = c;
     const lock = locks[j];
     if (lock && lock.keys === s.tok.keys) {
@@ -251,10 +273,10 @@ function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
     for (const h of beam) {
       for (let ci = 0; ci < s.cands.length; ci++) {
         const c = s.cands[ci];
-        let step = c.id < 0 ? (c.number ? 0 : c.literal ? P.literal : P.unknown) : lp(m, h.prev, c.id) + (c.penalty || 0);
+        let step = c.id < 0 ? (c.number ? 0 : c.literal ? P.literal : P.unknown) : tokenScore(m, u, h.prev, c.id) + (c.penalty || 0);
         let prev = c.number ? AFTER_NUMBER : c.id < 0 ? -1 : c.id;
         let first = h.first, cf = h.cf;
-        if (c.id >= m.n) {
+        if (c.id >= m.n && c.id < m.bos) {
           // Punctuation: a word-pair model can't see how the sentence began,
           // so use the sentence's first word to judge question vs statement.
           const q = [first, cf].some(f => f !== null && m.qStart.has(f));
@@ -342,7 +364,7 @@ function nextLetterProbs(m, result, hyp, start = {}) {
   const prevContext = slotIndex => {
     if (slotIndex < 0 || !hyp) return startPrev;
     const s = result.slots[slotIndex], c = s.cands[hyp.path[slotIndex]];
-    if (c.id < 0) return -1;
+    if (c.id < 0 || c.id > m.bos) return -1;
     if (c.id >= m.n && c.text !== ',') return m.bos;
     return c.id;
   };
@@ -390,4 +412,94 @@ function nextLetterProbs(m, result, hyp, start = {}) {
   return sum > 0 ? p : null;
 }
 
-if (typeof module !== 'undefined') module.exports = { buildModel, decode, render, nextLetterProbs, exactMatches, wordKeys, tokenize, formatNumber };
+// ---- Learning from the user ----
+// A small fixed-size table of what this person types, read by decode() (start.user) and
+// updated by learn(): words the dictionary lacks (spelled once in exact mode, predicted from
+// then on) and counts of each token and token pair they used, which add a bonus to those
+// choices. Mirrors op_user in c/onepress.c: same sizes, same integer tables, same eviction.
+// Ids: learned word k is bos + 1 + k. It belongs to one model (u.bos must match).
+const USER_WORDS = 256, USER_WORD_LEN = 23, USER_PAIRS = 1024, MAX_USER_CANDS = 4;
+const USER_ANY = 0xFFFD;           // pair prev for a token's own count
+// Bonus by count (capped at 15), in model units (1/256 nat): round(256 * a * ln(1 + count)),
+// a = 4 for a token, 3 for a pair; tuned on the NUS dev users (tests/learn_eval.js).
+const USER_UNI = [0, 710, 1125, 1420, 1648, 1835, 1993, 2129, 2250, 2358, 2455, 2545, 2627, 2702, 2773, 2839];
+const USER_PAIR = [0, 532, 844, 1065, 1236, 1376, 1494, 1597, 1687, 1768, 1842, 1908, 1970, 2027, 2080, 2129];
+let USER_WORD_BASE = -2560;        // log P of a learned word before its bonuses (-10 nats)
+// For tuning only: replace the tables with a = uni, pair and the base (nats).
+function userParams(uni, pair, base) {
+  for (let c = 0; c < 16; c++) {
+    USER_UNI[c] = Math.round(uni * 256 * Math.log(1 + c));
+    USER_PAIR[c] = Math.round(pair * 256 * Math.log(1 + c));
+  }
+  USER_WORD_BASE = Math.round(base * 256);
+}
+
+function newUser(m) { return { bos: m.bos, words: [], pairs: [] }; }   // pairs: [prev, cur, count], sorted
+
+// Index of pair (prev, cur), or -(insertion point) - 1.
+function userFind(u, prev, cur) {
+  let lo = 0, hi = u.pairs.length;
+  const k = prev * 65536 + cur;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1, e = u.pairs[mid], x = e[0] * 65536 + e[1];
+    if (x === k) return mid;
+    if (x < k) lo = mid + 1; else hi = mid;
+  }
+  return -lo - 1;
+}
+function userCount(u, prev, cur) { const i = userFind(u, prev, cur); return i >= 0 ? u.pairs[i][2] : 0; }
+
+function tokenScore(m, u, prev, id) {
+  let s = id > m.bos ? USER_WORD_BASE : lp(m, prev, id);
+  if (u) {
+    s += USER_UNI[Math.min(userCount(u, USER_ANY, id), 15)];
+    if (prev >= 0) s += USER_PAIR[Math.min(userCount(u, prev, id), 15)];
+  }
+  return s;
+}
+
+function userBump(u, prev, cur) {
+  let i = userFind(u, prev, cur);
+  if (i >= 0) { u.pairs[i][2] = Math.min(255, u.pairs[i][2] + 1); return; }
+  // Full: halve every count and drop the ones that reach zero, until there is room.
+  while (u.pairs.length >= USER_PAIRS) u.pairs = u.pairs.filter(e => (e[2] >>= 1) > 0);
+  i = -userFind(u, prev, cur) - 1;
+  u.pairs.splice(i, 0, [prev, cur, 1]);
+}
+
+// Id of learned word w, adding it (replacing the least used one when full).
+function userWord(m, u, w) {
+  let k = u.words.indexOf(w);
+  if (k < 0 && u.words.length < USER_WORDS) { u.words.push(w); k = u.words.length - 1; }
+  else if (k < 0) {
+    k = 0;
+    for (let j = 1; j < u.words.length; j++) {
+      if (userCount(u, USER_ANY, m.bos + 1 + j) < userCount(u, USER_ANY, m.bos + 1 + k)) k = j;
+    }
+    const id = m.bos + 1 + k;
+    u.pairs = u.pairs.filter(e => e[0] !== id && e[1] !== id);
+    u.words[k] = w;
+  }
+  return m.bos + 1 + k;
+}
+
+// Learn from text the person accepted (sent, copied): hyp as decoded, with their corrections.
+// Words still being completed and unmatched key strings are skipped; a word spelled exactly
+// that the dictionary lacks (letters and apostrophes only) becomes a learned word.
+function learn(m, u, result, hyp, start = {}) {
+  if (!u || u.bos !== m.bos || !hyp) return;
+  let prev = start.prev === undefined ? m.bos : start.prev;
+  result.slots.forEach((s, j) => {
+    const c = s.cands[hyp.path[j]];
+    let id = c.id;
+    if (c.number) { prev = AFTER_NUMBER; return; }
+    if (c.literal && /^[a-z']+$/.test(c.text) && c.text.length <= USER_WORD_LEN) id = userWord(m, u, c.text);
+    else if (c.partial || id < 0) { prev = -1; return; }
+    userBump(u, USER_ANY, id);
+    if (prev >= 0) userBump(u, prev, id);
+    prev = id >= m.n && id < m.bos && c.text !== ',' ? m.bos : id;
+  });
+}
+
+if (typeof module !== 'undefined') module.exports = { buildModel, decode, render, nextLetterProbs, exactMatches, wordKeys, tokenize, formatNumber,
+  newUser, learn, USER_UNI, USER_PAIR, userParams };

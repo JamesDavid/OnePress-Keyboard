@@ -90,6 +90,16 @@ Word unigram + bigram, about 45,000 words.
 
 The model only sees the previous word, so some keypad collisions need more context than that. Examples: "keys"/"jews" (fixed via messages.txt), "cat"/"act", "Tempe"/"tense", "Good morning. How" vs ", how". Improving the model is milestone M5.
 
+### Learning from the user
+
+Each person gets a small fixed-size table (`newUser` / `learn` in decoder.js, `op_user` / `op_learn` in C) that decode reads through `start.user`. It is updated from text the person accepts (sent), not from every keystroke.
+
+- **Learned words:** a word spelled exactly (letters and apostrophes, up to 23) that the dictionary lacks is added. From then on it is matched from its keys like a dictionary word, as an exact candidate and as a completion (up to 4 of each per slot). Learned word k has id `bos + 1 + k`, with base log-prob −10 nats and no bigram row. When the table is full (256 words), the least used word is replaced and its pairs dropped.
+- **Counts:** for every accepted token (dictionary word, learned word or punctuation) its own count and the count of the (previous token, token) pair, with the same context rules as decoding (BOS after `. ! ?`; numbers, unknown words and unfinished completions break the chain). Up to 1024 entries, sorted for binary search. When full, every count is halved and zeros dropped.
+- **Scoring:** the model score plus `4·ln(1+c)` nats for the token's count and `3·ln(1+c)` for the pair's count (c capped at 15), as integer tables shared by both decoders. Tuned on the NUS dev users.
+- **Storage:** the C struct is plain data (about 12 KB by default, about 3 KB with `-DOP_USER_WORDS=64 -DOP_USER_PAIRS=256`), so a device can save it to flash as bytes. It belongs to one model; a table made for a different model (other `bos`) is ignored.
+- **Effect** (`tests/learn_eval.js`, each user's messages replayed in order, unknown words spelled exactly the first time, learning each message as sent): NUS test users, predicted words 90.04% → 92.98% and punctuation 57.5% → 65.5%; US/Canada test users 93.76% → 94.97% and punctuation 44.9% → 60.2%.
+
 ---
 
 ## 4. Web app behavior (reference UI)
@@ -103,6 +113,7 @@ The model only sees the previous word, so some keypad collisions need more conte
   - **QWERTY:** letters send their digit. Rows end with next (`*`) and the punctuation key on the Z row, and space plus delete on the bottom row. Letter keys **scale** (0.78×–1.38×) around their own center by next-letter probability, with z-order by scale. Sizes come from summing `P(word|prev)` over words matching the current keys, or from the bigram row mixed with first-letter frequencies at a word start.
 - **Computer keyboard:** letters map to digits, space → 0, punctuation → #, Backspace deletes, Tab autocompletes. In exact mode, letters and digits are typed literally.
 - **Exact mode indicator:** accent outline on the display plus the tag "ABC · exact spelling".
+- **Send** copies the text, learns from it (not from an untouched example) and clears. What it learned is kept in localStorage per model (`user-l`, `user-m`, `user-s`; a loaded file's isn't saved). A line under the model picker shows it, with **Forget** to clear it.
 
 ---
 
@@ -234,7 +245,9 @@ The decoder can change earlier words as more keys arrive, so the keyboard owns a
 ```bash
 cd model && ./build.sh            # fetch corpora (first run), rebuild model.json, onepress{,-m,-s}.bin, web/keypad.html
 node tests/eval.js                # held-out accuracy (NUS SMS, US/Canada users)
+node tests/learn_eval.js model/corpora/nus/users_test.tsv   # learning from the user
 gcc -std=c99 -O2 -o build/opdecode c/onepress.c c/opdecode.c && node tests/parity.js   # C matches JS
+node tests/parity.js --learn      # C matches JS while learning
 node tests/decoder_test.js        # small sanity set
 python3 python/keypad_decode.py --model Qwen/Qwen2.5-7B   # LLM version (needs torch/transformers)
 ```

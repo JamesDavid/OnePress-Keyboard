@@ -14,6 +14,12 @@ static const char FIRST_LETTER[8] = "adgjmptw";     /* first letter of keys 2-9 
 static const char *const TIME_BEFORE[] = { "at", "by", "until", "til", "till", "around", "before", "after", "from", "since" };
 static const char *const TIME_AFTER[] = { "am", "pm" };
 
+#define USER_ANY 0xFFFD         /* op_user_pair prev for a token's own count */
+/* Learning bonus by count (capped at 15), as decoder.js USER_UNI / USER_PAIR. */
+static const int16_t USER_UNI[16] = { 0, 710, 1125, 1420, 1648, 1835, 1993, 2129, 2250, 2358, 2455, 2545, 2627, 2702, 2773, 2839 };
+static const int16_t USER_PAIR[16] = { 0, 532, 844, 1065, 1236, 1376, 1494, 1597, 1687, 1768, 1842, 1908, 1970, 2027, 2080, 2129 };
+#define USER_WORD_BASE (-2560)  /* log P of a learned word before its bonuses (-10 nats) */
+
 static int find_word(const op_model *m, const char *w);
 
 /* ---- model ---- */
@@ -72,7 +78,7 @@ int op_word(const op_model *m, uint16_t id, const char **text) {
 static int32_t lp(const op_model *m, uint16_t prev, uint16_t cur) {
     if (prev == AFTER_NUMBER)
         return m->uni[cur] + (cur == m->time_id[0] || cur == m->time_id[1] ? TIME_BONUS * m->scale : 0);
-    if (prev == OP_NONE) return m->uni[cur];
+    if (prev > m->bos) return m->uni[cur];      /* unknown, or a learned word */
     uint32_t lo = m->row_start[prev], hi = m->row_start[prev + 1];
     while (lo < hi) {
         uint32_t mid = (lo + hi) / 2;
@@ -138,10 +144,9 @@ static int find_word(const op_model *m, const char *w) {
     return OP_NONE;
 }
 
-/* Does word `id` (apostrophes dropped if strip) agree with the exact letters in lit[0..n)? */
-static int lit_match(const op_model *m, uint16_t id, int strip, const char *lit, int n) {
-    const char *w;
-    int wn = op_word(m, id, &w), t = 0;
+/* Does word w (apostrophes dropped if strip) agree with the exact letters in lit[0..n)? */
+static int lit_match_text(const char *w, int wn, int strip, const char *lit, int n) {
+    int t = 0;
     for (int i = 0; i < wn && t < n; i++) {
         if (strip && w[i] == '\'') continue;
         if (lit[t] && lit[t] != w[i]) return 0;
@@ -149,6 +154,52 @@ static int lit_match(const op_model *m, uint16_t id, int strip, const char *lit,
     }
     for (; t < n; t++) if (lit[t]) return 0;    /* word shorter than the exact letters */
     return 1;
+}
+static int lit_match(const op_model *m, uint16_t id, int strip, const char *lit, int n) {
+    const char *w;
+    int wn = op_word(m, id, &w);
+    return lit_match_text(w, wn, strip, lit, n);
+}
+
+/* ---- learned words ---- */
+
+/* Text of a dictionary or learned word. */
+static int tok_text(const op_model *m, const op_user *u, uint16_t id, const char **text) {
+    if (id > m->bos) {
+        *text = u->word[id - m->bos - 1];
+        return (int)strlen(*text);
+    }
+    return op_word(m, id, text);
+}
+
+/* Index of pair (prev, cur), or -(insertion point) - 1. */
+static int user_find(const op_user *u, uint16_t prev, uint16_t cur) {
+    uint32_t k = (uint32_t)prev << 16 | cur;
+    int lo = 0, hi = u->n_pairs;
+    while (lo < hi) {
+        int mid = (lo + hi) / 2;
+        uint32_t x = (uint32_t)u->pair[mid].prev << 16 | u->pair[mid].cur;
+        if (x == k) return mid;
+        if (x < k) lo = mid + 1; else hi = mid;
+    }
+    return -lo - 1;
+}
+static int user_count(const op_user *u, uint16_t prev, uint16_t cur) {
+    int i = user_find(u, prev, cur);
+    return i >= 0 ? u->pair[i].count : 0;
+}
+
+static int32_t token_score(const op_model *m, const op_user *u, uint16_t prev, uint16_t id) {
+    int32_t s = id > m->bos ? USER_WORD_BASE : lp(m, prev, id);
+    if (u) {
+        int c = user_count(u, USER_ANY, id);
+        s += USER_UNI[c < 15 ? c : 15];
+        if (prev != OP_NONE && prev != AFTER_NUMBER) {
+            c = user_count(u, prev, id);
+            s += USER_PAIR[c < 15 ? c : 15];
+        }
+    }
+    return s;
 }
 
 /* Are a and b the same once apostrophes are dropped? */
@@ -280,12 +331,40 @@ static int format_number(const char *k, int kn, int time, char *out, int cap) {
 
 typedef struct { uint16_t id; uint8_t kind; int16_t pen; } cand;
 
+/* Learned words matching a word token: exact ones into out (up to OP_MAX_USER_CANDS), and
+ * with `partial` completions into part. Mirrors the user loop in decoder.js slotCandidates. */
+static void user_cands(const op_model *m, const op_user *u, const char *k, const char *lit, int kn,
+                       int has_lit, int partial, cand *out, int *n_out, cand *part, int *n_part) {
+    for (int w = 0; w < u->n_words; w++) {
+        const char *t = u->word[w];
+        char full[OP_USER_WORD_LEN], strip[OP_USER_WORD_LEN];
+        int fn = 0, sn = 0;
+        for (; t[fn]; fn++) {
+            full[fn] = t[fn] == 39 ? '#' : KEY_OF[t[fn] - 'a'];
+            if (t[fn] != 39) strip[sn++] = full[fn];
+        }
+        uint16_t id = (uint16_t)(m->bos + 1 + w);
+        int full_eq = fn == kn && memcmp(full, k, (size_t)kn) == 0;
+        int strip_eq = sn != fn && sn == kn && memcmp(strip, k, (size_t)kn) == 0;
+        if (full_eq || strip_eq) {
+            if (*n_out < OP_MAX_USER_CANDS && (!has_lit || lit_match_text(t, fn, !full_eq, lit, kn)))
+                out[(*n_out)++] = (cand){ id, OP_WORD, (int16_t)(full_eq ? 0 : m->param[OP_P_APOSTROPHE]) };
+        } else if (partial && *n_part < OP_MAX_USER_CANDS) {
+            int fs = fn >= kn && memcmp(full, k, (size_t)kn) == 0;
+            int ss = !fs && sn >= kn && memcmp(strip, k, (size_t)kn) == 0;
+            if ((fs || ss) && (!has_lit || lit_match_text(t, fn, ss, lit, kn)))
+                part[(*n_part)++] = (cand){ id, OP_PARTIAL, m->param[OP_P_COMPLETION] };
+        }
+    }
+}
+
 static int punct_index(const op_model *m, char ch) {
     for (int i = 0; i < m->n_punct; i++) if (m->punct[i] == ch) return i;
     return 0;
 }
 
 static int slot_cands(const op_decoder *d, const op_model *m, const op_tok *t, int is_last, cand *out) {
+    const op_user *u = d->user;
     if (t->type == TOK_NUM) { out[0] = (cand){ OP_NONE, OP_NUMBER, 0 }; return 1; }
     if (t->type == TOK_PUNCT) {
         if (t->lit) { out[0] = (cand){ (uint16_t)(m->n_words + punct_index(m, t->lit)), OP_PUNCT, 0 }; return 1; }
@@ -310,6 +389,13 @@ static int slot_cands(const op_decoder *d, const op_model *m, const op_tok *t, i
         uint16_t id = from_strip ? m->strip_idx[b++] : m->key_idx[a++];
         if (has_lit && !lit_match(m, id, !has_hash, lit, kn)) continue;
         out[n++] = (cand){ id, OP_WORD, from_strip ? m->param[OP_P_APOSTROPHE] : 0 };
+    }
+    cand upart[OP_MAX_USER_CANDS];
+    int n_upart = 0;
+    if (u) {
+        int n_uexact = 0;
+        user_cands(m, u, k, lit, kn, has_lit, is_last && !all_lit, out + n, &n_uexact, upart, &n_upart);
+        n += n_uexact;
     }
     int n_exact = n;
     if (is_last && !all_lit) {
@@ -340,13 +426,14 @@ static int slot_cands(const op_decoder *d, const op_model *m, const op_tok *t, i
             for (int e = 0; e < n_exact; e++) if (out[e].id == best[j]) seen = 1;
             if (!seen) out[n++] = (cand){ best[j], OP_PARTIAL, m->param[OP_P_COMPLETION] };
         }
+        for (int j = 0; j < n_upart; j++) out[n++] = upart[j];
     }
     if (all_lit) {
         /* Spelled out exactly: keep only words spelled exactly that way, else the text as typed. */
         int kept = 0;
         for (int e = 0; e < n; e++) {
             const char *w;
-            int wn = op_word(m, out[e].id, &w);
+            int wn = tok_text(m, u, out[e].id, &w);
             if (wn == kn && same_letters(w, wn, lit, kn)) out[kept++] = out[e];
         }
         if (kept) return kept;
@@ -375,6 +462,7 @@ int op_decode(op_decoder *d, const op_model *m, const char *keys, int beam,
     if (!d || !m || !keys || beam < 1 || beam > OP_MAX_BEAM) return OP_ERR_ARG;
     int r = tokenize(d, keys);
     if (r) return r;
+    d->user = start && start->user && start->user->bos == m->bos ? start->user : NULL;
     d->n_slots = 0;
     for (int i = 0; i < d->n_toks; i++) {
         if (d->toks[i].type == TOK_SPACE) continue;
@@ -413,10 +501,10 @@ int op_decode(op_decoder *d, const op_model *m, const char *keys, int beam,
                     step = c[ci].kind == OP_NUMBER ? 0 : c[ci].kind == OP_LITERAL ? P[OP_P_LITERAL] : P[OP_P_UNKNOWN];
                     p = c[ci].kind == OP_NUMBER ? AFTER_NUMBER : OP_NONE;
                 } else {
-                    step = lp(m, prev[h], id) + c[ci].pen;
+                    step = token_score(m, d->user, prev[h], id) + c[ci].pen;
                     p = id;
                 }
-                if (id != OP_NONE && id >= m->n_words) {
+                if (id != OP_NONE && id >= m->n_words && id < m->bos) {
                     /* Punctuation: a word-pair model can't see how the sentence began,
                      * so use the sentence's first word to judge question vs statement. */
                     int q = f == 1 || g == 1;
@@ -533,7 +621,7 @@ int op_render(const op_decoder *d, const op_model *m, const op_start *start, cha
         int s = n, len;
         if (ch.kind == OP_WORD || ch.kind == OP_PARTIAL) {
             const char *w, *shown, *src;
-            int wn = op_word(m, ch.id, &w), dn = display(m, ch.id, &shown);
+            int wn = tok_text(m, d->user, ch.id, &w), dn = display(m, ch.id, &shown);
             len = wn;
             if (ch.kind == OP_PARTIAL && len > t->len) len = t->len;   /* only what's typed so far */
             if (dn >= 0) {
@@ -565,4 +653,82 @@ int op_render(const op_decoder *d, const op_model *m, const op_start *start, cha
     if (n >= cap) return OP_ERR_SPACE;
     out[n] = 0;
     return n;
+}
+
+/* ---- learning ---- */
+
+void op_user_init(op_user *u, const op_model *m) {
+    memset(u, 0, sizeof *u);
+    u->bos = m->bos;
+}
+
+static void user_bump(op_user *u, uint16_t prev, uint16_t cur) {
+    int i = user_find(u, prev, cur);
+    if (i >= 0) {
+        if (u->pair[i].count < 255) u->pair[i].count++;
+        return;
+    }
+    /* Full: halve every count and drop the ones that reach zero, until there is room. */
+    while (u->n_pairs >= OP_USER_PAIRS) {
+        int k = 0;
+        for (int j = 0; j < u->n_pairs; j++) {
+            u->pair[j].count >>= 1;
+            if (u->pair[j].count) u->pair[k++] = u->pair[j];
+        }
+        u->n_pairs = (uint16_t)k;
+    }
+    i = -user_find(u, prev, cur) - 1;
+    memmove(&u->pair[i + 1], &u->pair[i], (size_t)(u->n_pairs - i) * sizeof *u->pair);
+    u->pair[i].prev = prev;
+    u->pair[i].cur = cur;
+    u->pair[i].count = 1;
+    u->n_pairs++;
+}
+
+/* Id of learned word w[0..wn), adding it (replacing the least used one when full). */
+static uint16_t user_word(op_user *u, const op_model *m, const char *w, int wn) {
+    int k = -1;
+    for (int j = 0; j < u->n_words && k < 0; j++)
+        if ((int)strlen(u->word[j]) == wn && memcmp(u->word[j], w, (size_t)wn) == 0) k = j;
+    if (k < 0 && u->n_words < OP_USER_WORDS) {
+        k = u->n_words++;
+    } else if (k < 0) {
+        k = 0;
+        for (int j = 1; j < u->n_words; j++)
+            if (user_count(u, USER_ANY, (uint16_t)(m->bos + 1 + j)) < user_count(u, USER_ANY, (uint16_t)(m->bos + 1 + k))) k = j;
+        uint16_t id = (uint16_t)(m->bos + 1 + k);
+        int kept = 0;
+        for (int j = 0; j < u->n_pairs; j++)
+            if (u->pair[j].prev != id && u->pair[j].cur != id) u->pair[kept++] = u->pair[j];
+        u->n_pairs = (uint16_t)kept;
+    }
+    memcpy(u->word[k], w, (size_t)wn);
+    u->word[k][wn] = 0;
+    return (uint16_t)(m->bos + 1 + k);
+}
+
+/* Mirrors decoder.js learn. */
+int op_learn(op_user *u, const op_decoder *d, const op_model *m, const op_start *start) {
+    if (!u || !d || !m || u->bos != m->bos) return OP_ERR_ARG;
+    uint16_t prev = start ? start->prev : m->bos;
+    for (int j = 0; j < d->n_slots; j++) {
+        op_choice ch = d->choice[j];
+        const op_tok *t = &d->toks[d->slot_tok[j]];
+        uint16_t id = ch.id;
+        if (ch.kind == OP_NUMBER) { prev = AFTER_NUMBER; continue; }
+        if (ch.kind == OP_LITERAL) {
+            const char *lit = d->lits + t->off;
+            int ok = t->len <= OP_USER_WORD_LEN;
+            for (int k = 0; k < t->len; k++) if (!((lit[k] >= 'a' && lit[k] <= 'z') || lit[k] == 39)) ok = 0;
+            if (!ok) { prev = OP_NONE; continue; }
+            id = user_word(u, m, lit, t->len);
+        } else if (ch.kind == OP_PARTIAL || id == OP_NONE) {
+            prev = OP_NONE;
+            continue;
+        }
+        user_bump(u, USER_ANY, id);
+        if (prev != OP_NONE && prev != AFTER_NUMBER) user_bump(u, prev, id);
+        prev = id >= m->n_words && id < m->bos && m->punct[id - m->n_words] != ',' ? m->bos : id;
+    }
+    return OP_OK;
 }

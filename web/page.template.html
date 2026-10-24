@@ -57,6 +57,9 @@ h1 { font-family: var(--f-display); font-weight: 700; font-size: 1.35rem; letter
 }
 .model .cmp { display: inline-flex; gap: 6px; align-items: center; margin-left: auto; cursor: pointer; user-select: none; }
 .model .cmp input { accent-color: var(--accent); margin: 0; }
+.learned { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; color: var(--muted); }
+.learned button { font: inherit; color: var(--accent); background: none; border: 0; padding: 2px 0; cursor: pointer; text-decoration: underline; }
+.learned button:disabled { color: var(--muted); cursor: default; text-decoration: none; }
 .compare {
   display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; font-size: 0.9rem;
   background: var(--surface); border: 1px solid var(--key-edge); border-radius: 12px;
@@ -157,6 +160,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     <input type="file" id="modelFile" accept=".bin,application/octet-stream" hidden>
     <label class="cmp"><input type="checkbox" id="compareToggle"> Compare sizes</label>
   </div>
+  <div class="learned"><span id="learned"></span><button type="button" id="forget">Forget</button></div>
 
   <section class="lcd" aria-label="Decoded text">
     <div class="out" id="out" aria-live="polite"></div>
@@ -177,13 +181,14 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   <div class="row">
     <button class="act" id="clear" type="button">Clear</button>
     <button class="act" id="example" type="button">Example</button>
-    <button class="act primary" id="copy" type="button">Copy text</button>
+    <button class="act primary" id="copy" type="button">Send</button>
   </div>
 
   <div class="notes">
     <p>Press each key once per letter. <b>0</b> is a space, <b>1</b> deletes, and <b>*</b> swaps the selected word for the next guess, and holding it finishes the word you're typing. <b>#</b> is punctuation: the model picks . , ! or ?, and between letters it's an apostrophe. Apostrophes are optional, so "dont" also gives "don't". <b>Hold any number key</b> to type that digit (hold 1 for "1", hold 0 for "0"). Digits end the word, so hold 4 then type 3837 for "4ever". <b>#</b> next to digits makes money and decimals: # 6 # 000 # 00 gives "$6,000.00". For call signs, spell the letters in exact mode (ke7aqa).</p>
     <p><b>Hold #</b> for exact spelling, for names and words the model doesn't know. Press a key repeatedly to cycle its letters and then its digit (2 = a, b, c, 2), and pause or press another key to move on. # cycles . , ? ! ' and 0 gives a space, or the digit 0 on a second press. On QWERTY, exact mode types the letter you tap. Hold # again to go back to predictive.</p>
     <p>The word list includes names, places, brands and apps, with their usual capitalization (iPhone, McDonald's, YouTube).</p>
+    <p><b>Send</b> copies the text, clears it and learns from it: the words you use and the words you use together get more likely, and a word you spelled exactly is guessed from its keys next time. That covers punctuation too. What it learns stays in this browser, kept for each model separately. <b>Forget</b> clears it.</p>
     <p>Tap any word to see other words with the same keys. Picking one locks it, and the rest of the sentence re-decodes around it.</p>
     <p>The QWERTY keyboard sends only each letter's keypad number (shown in the corner), so the model decodes it exactly as if you'd used the keypad. Keys grow and shrink in place with how likely each letter is to come next. A computer keyboard works the same way, and Tab finishes the word.</p>
     <p>Runs entirely in this page. <b>Model</b> picks the word model: Phone (45,000 words), ESP32 (20,000) and Radio (5,000) are the same files the C decoder runs on those devices. <b>Load .bin file…</b> opens any model built with <code>model/export_bin.py</code>. <b>Compare sizes</b> shows what each model makes of the same keys, with the words that differ from the selected model highlighted.</p>
@@ -353,7 +358,7 @@ __DECODER__
   }
 
   function decodeNow() {
-    result = decode(m, keys, locks, 8, 1);    // the beam the devices use
+    result = decode(m, keys, locks, 8, 1, { user: getUser(modelId) });    // the beam the devices use
     // drop locks for slots that no longer exist
     for (const j in locks) if (+j >= result.slots.length) delete locks[j];
     best = result.hyps[0];
@@ -372,7 +377,7 @@ __DECODER__
     for (const c of s.all.slice(0, 30)) {
       const label = c.partial || c.text;
       if (seen.has(label) || c.unknown) continue;
-      const r = decode(m, keys, Object.assign({}, locks, { [j]: { keys: s.tok.keys, text: label } }), 20, 1);
+      const r = decode(m, keys, Object.assign({}, locks, { [j]: { keys: s.tok.keys, text: label } }), 20, 1, { user: getUser(modelId) });
       if (!r.hyps.length) continue;
       seen.set(label, { label, score: r.hyps[0].score, completion: c.partial ? c.partial : null });
     }
@@ -417,6 +422,7 @@ __DECODER__
 
   function update() {
     decodeNow();
+    showLearned();
     const out = $('out');
     out.textContent = '';
     if (!keys) {
@@ -456,6 +462,38 @@ __DECODER__
     { id: 's', name: 'Radio', el: 'model-s' },
   ];
   const loaded = {};        // id -> { m, size, name }, built on first use
+  // What this person has sent, per model (word ids differ between models). Kept in this
+  // browser only; a loaded file's table isn't saved.
+  const users = {};
+  function getUser(id) {
+    if (!users[id]) {
+      const mm = getModel(id).m;
+      let u = null;
+      try {
+        const saved = id !== 'custom' && JSON.parse(localStorage.getItem('user-' + id) || 'null');
+        if (saved && saved.bos === mm.bos && Array.isArray(saved.words) && Array.isArray(saved.pairs)) u = saved;
+      } catch (err) {}
+      users[id] = u || newUser(mm);
+    }
+    return users[id];
+  }
+  function saveUser(id) {
+    if (id === 'custom') return;
+    try { localStorage.setItem('user-' + id, JSON.stringify(users[id])); } catch (err) {}
+  }
+  function showLearned() {
+    const u = getUser(modelId), n = u.words.length;
+    const sent = u.pairs.length;
+    $('learned').textContent = sent
+      ? `Learned from you: ${u.pairs.length.toLocaleString()} word counts${n ? `, ${n} new word${n > 1 ? 's' : ''} (${u.words.slice(-3).join(', ')})` : ''}`
+      : 'Learns from what you send';
+    $('forget').disabled = !sent;
+  }
+  $('forget').addEventListener('click', () => {
+    users[modelId] = newUser(m);
+    saveUser(modelId);
+    update();
+  });
   let modelId = 'l', comparing = false;
   const fmtSize = b => b >= 1e6 ? (b / 1e6).toFixed(2) + ' MB' : Math.round(b / 1e3) + ' KB';
   const embedded = id => {
@@ -533,7 +571,7 @@ __DECODER__
       const e = getModel(id);
       let text = mine;                 // the selected model's row matches the display, locks included
       if (id !== modelId && keys) {
-        const r = decode(e.m, keys, {}, 8, 1);
+        const r = decode(e.m, keys, {}, 8, 1, { user: getUser(id) });
         text = r.hyps.length ? render(e.m, r, r.hyps[0]).map(p => p.text).join('') : '';
       }
       const row = document.createElement('div');
@@ -592,18 +630,16 @@ __DECODER__
 
   $('clear').addEventListener('click', () => { keys = ''; locks = {}; sel = null; isExample = false; update(); });
   $('example').addEventListener('click', loadExample);
+  // Send: copy the text, learn from it (unless it's an untouched example) and clear.
   $('copy').addEventListener('click', () => {
     const t = plainText(); const btn = $('copy');
-    const done = () => { btn.textContent = 'Copied'; setTimeout(() => btn.textContent = 'Copy text', 1400); };
+    if (!t) return;
+    if (!isExample) { learn(m, getUser(modelId), result, best); saveUser(modelId); }
+    const done = () => { btn.textContent = 'Sent and copied'; setTimeout(() => btn.textContent = 'Send', 1400); };
     try {
-      navigator.clipboard.writeText(t).then(done, fallback);
-    } catch (e) { fallback(); }
-    function fallback() {
-      const r = document.createRange(); r.selectNodeContents($('out'));
-      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
-      btn.textContent = 'Selected — copy it';
-      setTimeout(() => btn.textContent = 'Copy text', 1800);
-    }
+      navigator.clipboard.writeText(t).then(done, () => { btn.textContent = 'Sent'; setTimeout(() => btn.textContent = 'Send', 1400); });
+    } catch (e) { btn.textContent = 'Sent'; setTimeout(() => btn.textContent = 'Send', 1400); }
+    keys = ''; locks = {}; sel = null; isExample = false; update();
   });
 
   document.addEventListener('keydown', e => {
