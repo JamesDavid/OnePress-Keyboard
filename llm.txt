@@ -15,7 +15,12 @@ embedded project. Read it top to bottom before writing code. Repository layout:
   (`model/export_bin.py` documents it). Every decoder reads the same files.
 - `model/onepress-nn.bin`: the optional neural word model for phones and the web (KPN1,
   documented in `model/export_nn.py`).
-- `DATA.md`: the model files are CC BY-SA 4.0 (the code is MIT); ship the attribution in it.
+- `LICENSE`: the code is PolyForm Noncommercial 1.0.0. Personal, hobby, research, educational and
+  noncommercial-organization use is free; a commercial product (paid or ad-supported app, device
+  firmware sold commercially) needs a separate license from the author. Tell the user this before
+  integrating it into a commercial project, and keep the `Required Notice:` line and the license
+  terms (or their URL) with any copy you distribute.
+- `DATA.md`: the model files are CC BY-SA 4.0; ship the attribution in it.
 - `c/opdecode.c`: a small command-line program that shows the whole C API in use.
 - `web/keypad.html`: the reference user interface. Copy its behavior (SPEC.md section 4).
 - `SPEC.md`: the full specification.

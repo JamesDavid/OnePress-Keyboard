@@ -125,7 +125,11 @@ cd model && ./build.sh            # rebuild the word models and the demo page (p
 
 ## License
 
-The code is [MIT](LICENSE). The model files are
-[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/), because their word frequencies come
-from [wordfreq](https://github.com/rspeer/wordfreq); you can use them in any app, with credit.
-[DATA.md](DATA.md) lists every source, its terms, and the attribution to include.
+The code is under the [PolyForm Noncommercial License 1.0.0](LICENSE): free for personal use,
+hobby projects, research, education, and noncommercial organizations. **Commercial use**, such as
+a paid or ad-supported keyboard app or a product that ships the decoder, **needs a separate
+license**; contact the author through [GitHub](https://github.com/JamesDavid).
+
+The model files are [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/), because their
+word frequencies come from [wordfreq](https://github.com/rspeer/wordfreq). [DATA.md](DATA.md) lists
+every source, its terms, and the attribution to include.

@@ -28,7 +28,8 @@ neural network helps on phones and the web.
 - Rebuild model + web page: `cd model && ./build.sh` (needs `pip install wordfreq`; downloads the
   corpora on first run). The network: `model/train_nn.py` then `model/export_nn.py` (needs PyTorch;
   a CUDA GPU makes training take minutes instead of hours).
-- Data terms: `DATA.md`. Code is MIT; model files are CC BY-SA 4.0 (wordfreq). Don't add corpora
+- Data terms: `DATA.md`. Code is PolyForm Noncommercial 1.0.0 (commercial use needs a separate license); model files
+  are CC BY-SA 4.0 (wordfreq). Don't add corpora
   with non-commercial or unclear terms; never add anything containing NUS messages (the UCI SMS
   Spam Collection does) since NUS is the test set.
 - `model/onepress.bin` (KPD2, documented in `model/export_bin.py`) is the word model every decoder

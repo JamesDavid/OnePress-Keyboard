@@ -1,6 +1,7 @@
 # Data and licenses
 
-The code in this repository is under the [MIT License](LICENSE).
+The code in this repository is under the [PolyForm Noncommercial License 1.0.0](LICENSE):
+noncommercial use only; commercial use needs a separate license from the author.
 
 The model files (`model/onepress.bin`, `model/onepress-m.bin`, `model/onepress-s.bin`, and the
 neural model `model/onepress-nn.bin`) contain statistics derived from the datasets below: word
@@ -9,7 +10,8 @@ contain no text from the datasets. Because the word frequencies come from wordfr
 is licensed CC BY-SA 4.0, **the model files are licensed
 [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/)**. You may use them in any app,
 including a commercial one, as long as you credit the sources below and share changes to the
-model files themselves under the same license. Your own code that loads them is not affected.
+model files themselves under the same license. Your own code that loads them is not affected
+(the decoders that read them are covered by the code license above).
 
 The corpora are not stored here; `model/fetch_corpora.sh` downloads them.
 
@@ -23,7 +25,7 @@ The corpora are not stored here; `model/fetch_corpora.sh` downloads them.
 | Project Gutenberg selections (via NLTK) | word pairs and triples, casing, neural model | Public domain |
 | Movie Review Data, Bo Pang and Lillian Lee (via NLTK) | word pairs and triples, neural model | CC BY 4.0 |
 | Names Corpus v1.3, Mark Kantrowitz, additions by Bill Ross (via NLTK) | first names in the vocabulary | Free to use with credit; names from it are in the model's vocabulary, so its README is included as [`model/data/NAMES-README.txt`](model/data/NAMES-README.txt) |
-| `model/data/messages.txt`, `model/data/proper.txt` | everyday messages, brand and place names | Written for this project; MIT |
+| `model/data/messages.txt`, `model/data/proper.txt` | everyday messages, brand and place names | Written for this project; same license as the code |
 
 Earlier versions also used the NLTK Brown corpus and webtext. They were removed: NLTK lists
 Brown as non-commercial, and webtext has no stated license.
