@@ -65,6 +65,7 @@ typedef struct {
     uint32_t n_q;
     const char *punct;
     int16_t param[OP_N_PARAMS];
+    uint16_t time_id[2];        /* "am", "pm" (OP_NONE if absent) */
 } op_model;
 
 /* Context before the composition, from the text already in the field. */

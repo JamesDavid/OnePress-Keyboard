@@ -44,7 +44,7 @@ for (let i = 0; i < nFuzz; i++) {
       for (let j = 1 + rnd(5); j > 0; j--) k += pick("abcdefghijklmnopqrstuvwxyz'"); // spelled exactly
     } else if (r === 8) {
       k += pick(['#', '.', ',', '?', '!', '##', 'A', 'BC', '2A3', '#0#', '#G#AAA#AA', 'BJC#BGI#B#B',
-        'D.BE', 'B,FAA', 'E3837', 'keHaqa', 'CeAabc', "JA's", '#B#', 'F##B', 'G#', '53H252']);
+        'D.BE', 'B,FAA', 'E3837', 'keHaqa', 'CeAabc', "JA's", '#B#', 'F##B', 'G#', '53H252', '280F#DA', '290BA#BF076', 'F#DA76', 'C#BE26', 'CG#FF']);
     } else {
       k += pick('23456789') + pick(['', 'a', '#', "'"]) + pick('23456789');
     }

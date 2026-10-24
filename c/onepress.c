@@ -9,6 +9,12 @@ enum { N_SECTIONS = 15 };
 
 static const char KEY_OF[26] = "22233344455566677778889999";
 static const char FIRST_LETTER[8] = "adgjmptw";     /* first letter of keys 2-9 */
+#define AFTER_NUMBER 0xFFFE     /* beam state after a number (the model has no number token) */
+#define TIME_BONUS 6            /* nats for "am"/"pm" right after a number */
+static const char *const TIME_BEFORE[] = { "at", "by", "until", "til", "till", "around", "before", "after", "from", "since" };
+static const char *const TIME_AFTER[] = { "am", "pm" };
+
+static int find_word(const op_model *m, const char *w);
 
 /* ---- model ---- */
 
@@ -52,6 +58,7 @@ int op_model_open(op_model *m, const void *data, size_t size) {
         len[1] != 4u * (m->n_words + 1u) || len[2] != 2u * m->n_words || len[8] != 4u * (m->bos + 2u))
         return OP_ERR_MODEL;
     for (int i = 0; i < OP_N_PARAMS; i++) m->param[i] = (int16_t)rd16((const uint8_t *)sec[14] + 2 * i);
+    for (int i = 0; i < 2; i++) m->time_id[i] = (uint16_t)find_word(m, TIME_AFTER[i]);
     return OP_OK;
 }
 
@@ -60,8 +67,11 @@ int op_word(const op_model *m, uint16_t id, const char **text) {
     return (int)(m->word_off[id + 1] - m->word_off[id]);
 }
 
-/* log P(cur | prev) in model units; prev OP_NONE (unknown word) falls back to the unigram. */
+/* log P(cur | prev) in model units; prev OP_NONE (unknown word) or AFTER_NUMBER falls back to
+ * the unigram, and right after a number "am" and "pm" get a bonus. */
 static int32_t lp(const op_model *m, uint16_t prev, uint16_t cur) {
+    if (prev == AFTER_NUMBER)
+        return m->uni[cur] + (cur == m->time_id[0] || cur == m->time_id[1] ? TIME_BONUS * m->scale : 0);
     if (prev == OP_NONE) return m->uni[cur];
     uint32_t lo = m->row_start[prev], hi = m->row_start[prev + 1];
     while (lo < hi) {
@@ -112,6 +122,20 @@ static uint32_t lower_bound(const op_model *m, const uint16_t *ix, uint32_t n, i
         if (key_cmp(m, ix[mid], strip, q, qn, &starts) < 0) lo = mid + 1; else hi = mid;
     }
     return lo;
+}
+
+/* Id of dictionary word w, or OP_NONE. */
+static int find_word(const op_model *m, const char *w) {
+    char k[32];
+    int kn = 0, starts;
+    for (; w[kn] && kn < 32; kn++) k[kn] = w[kn] == 39 ? '#' : KEY_OF[w[kn] - 'a'];
+    for (uint32_t i = lower_bound(m, m->key_idx, m->n_words, 0, k, kn);
+         i < m->n_words && key_cmp(m, m->key_idx[i], 0, k, kn, &starts) == 0; i++) {
+        const char *t;
+        int tn = op_word(m, m->key_idx[i], &t);
+        if (tn == kn && memcmp(t, w, (size_t)kn) == 0) return m->key_idx[i];
+    }
+    return OP_NONE;
 }
 
 /* Does word `id` (apostrophes dropped if strip) agree with the exact letters in lit[0..n)? */
@@ -220,9 +244,15 @@ static int tokenize(op_decoder *d, const char *keys) {
 }
 
 /* Write a number's text (see decoder.js formatNumber): each 's' is ',' when the groups read
- * as thousands, else '.'. Returns its length, or OP_ERR_SPACE. */
-static int format_number(const char *k, int kn, char *out, int cap) {
+ * as thousands, else '.'; with `time`, H s MM is H:MM. Returns its length, or OP_ERR_SPACE. */
+static int format_number(const char *k, int kn, int time, char *out, int cap) {
     int commas = 1, group = 0, glen = 0, n = 0;
+    if (time && (kn == 4 || kn == 5) && k[kn - 3] == 's') {
+        int ok = 1, h = 0;
+        for (int i = 0; i < kn; i++) if (i != kn - 3 && (k[i] < '0' || k[i] > '9')) ok = 0;
+        for (int i = 0; ok && i < kn - 3; i++) h = h * 10 + (k[i] - '0');
+        if (ok && h <= 24 && (k[kn - 2] - '0') * 10 + (k[kn - 1] - '0') <= 59) time = 2;
+    }
     for (int i = 0; i < kn; i++) {
         char c = k[i];
         if (c >= '0' && c <= '9') glen++;
@@ -234,7 +264,8 @@ static int format_number(const char *k, int kn, char *out, int cap) {
     if (group == 0 && glen > 3) commas = 0;
     for (int i = 0; i < kn; i++) {
         char c = k[i];
-        if (c == 's') {
+        if (c == 's' && time == 2) c = ':';
+        else if (c == 's') {
             int next = 0;
             for (int j = i + 1; j < kn && k[j] >= '0' && k[j] <= '9'; j++) next++;
             c = commas && next == 3 ? ',' : '.';
@@ -380,7 +411,7 @@ int op_decode(op_decoder *d, const op_model *m, const char *keys, int beam,
                 int32_t step;
                 if (id == OP_NONE) {
                     step = c[ci].kind == OP_NUMBER ? 0 : c[ci].kind == OP_LITERAL ? P[OP_P_LITERAL] : P[OP_P_UNKNOWN];
-                    p = OP_NONE;
+                    p = c[ci].kind == OP_NUMBER ? AFTER_NUMBER : OP_NONE;
                 } else {
                     step = lp(m, prev[h], id) + c[ci].pen;
                     p = id;
@@ -461,8 +492,17 @@ static int display(const op_model *m, uint16_t id, const char **text) {
     return -1;
 }
 
+static int is_one_of(const op_model *m, op_choice ch, const char *const *list, int n) {
+    if (ch.kind != OP_WORD || ch.id >= m->n_words) return 0;
+    const char *w;
+    int wn = op_word(m, ch.id, &w);
+    for (int i = 0; i < n; i++) if ((int)strlen(list[i]) == wn && memcmp(list[i], w, (size_t)wn) == 0) return 1;
+    return 0;
+}
+
 int op_render(const op_decoder *d, const op_model *m, const op_start *start, char *out, int cap) {
     int n = 0, cap_next = start ? start->cap : 1;
+    op_choice before = { OP_NONE, OP_UNKNOWN };     /* choice of the last non-space token */
     for (int i = 0, j = 0; i < d->n_toks; i++) {
         const op_tok *t = &d->toks[i];
         if (t->type == TOK_SPACE) {
@@ -470,7 +510,8 @@ int op_render(const op_decoder *d, const op_model *m, const op_start *start, cha
             out[n++] = ' ';
             continue;
         }
-        op_choice ch = d->choice[j++];
+        op_choice ch = d->choice[j++], prior = before;
+        before = t->type == TOK_WORD ? ch : (op_choice){ OP_NONE, OP_UNKNOWN };
         if (t->type == TOK_PUNCT) {
             if (n + 1 >= cap) return OP_ERR_SPACE;
             out[n++] = m->punct[ch.id - m->n_words];
@@ -478,7 +519,12 @@ int op_render(const op_decoder *d, const op_model *m, const op_start *start, cha
             continue;
         }
         if (t->type == TOK_NUM) {
-            int len = format_number(d->keys + t->off, t->len, out + n, cap - n);
+            /* A time when the words around it say so: "at 5:30", "5:30 pm". */
+            int time = is_one_of(m, prior, TIME_BEFORE, (int)(sizeof TIME_BEFORE / sizeof *TIME_BEFORE));
+            int k = i + 1;
+            while (k < d->n_toks && d->toks[k].type == TOK_SPACE) k++;
+            if (k < d->n_toks && d->toks[k].type == TOK_WORD) time |= is_one_of(m, d->choice[j], TIME_AFTER, 2);
+            int len = format_number(d->keys + t->off, t->len, time, out + n, cap - n);
             if (len < 0) return len;
             n += len;
             cap_next = 0;

@@ -8,6 +8,8 @@ const SECTIONS = ['wordText', 'wordOff', 'keyIdx', 'stripIdx', 'dispId', 'dispOf
   'rowStart', 'bow', 'next', 'lp', 'qStart', 'punct', 'params'];
 const PARAMS = ['qQ', 'qN', 'dQ', 'cF', 'dB', 'cB', 'eB', 'apostrophe', 'completion', 'literal', 'unknown'];
 const MAX_EXACT = 40, MAX_COMPLETIONS = 12;
+const AFTER_NUMBER = -2;           // beam state after a number (the model has no number token)
+const TIME_BONUS = 6;              // nats for "am"/"pm" right after a number
 
 function wordKeys(w) { let s = ''; for (const c of w) s += KEYMAP[c]; return s; }
 
@@ -36,6 +38,7 @@ function buildModel(bytes) {
   PARAMS.forEach((k, i) => { params[k] = raw[i]; });
   return {
     words, display, fullKeys, n, bos, scale, params,
+    timeIds: ['am', 'pm'].map(w => words.indexOf(w)).filter(i => i >= 0),
     punct: utf8.decode(at('punct', Uint8Array)).split(''),
     uni: at('uni', Int16Array), rowStart: at('rowStart', Uint32Array), bow: at('bow', Int16Array),
     next: at('next', Uint16Array), lp: at('lp', Int16Array), qStart: new Set(at('qStart', Uint16Array)),
@@ -48,8 +51,10 @@ function buildModel(bytes) {
   };
 }
 
-// log P(cur | prev) in model units. prev < 0 (an unknown word) falls back to the unigram.
+// log P(cur | prev) in model units. prev < 0 (an unknown word or a number) falls back to the
+// unigram; right after a number, "am" and "pm" get a bonus.
 function lp(m, prev, cur) {
+  if (prev === AFTER_NUMBER) return m.uni[cur] + (m.timeIds.includes(cur) ? TIME_BONUS * m.scale : 0);
   if (prev < 0) return m.uni[cur];
   let lo = m.rowStart[prev], hi = m.rowStart[prev + 1];
   while (lo < hi) {
@@ -156,7 +161,11 @@ function tokenize(keys) {
 // A number's text. Each 's' separator becomes ',' when the groups read as thousands (a first
 // group of 1-3 digits, then groups of 3, with an optional last group of another length after
 // a '.'), otherwise '.': 6s000s00 -> 6,000.00, 1s500 -> 1,500, 3s14 -> 3.14, 10s0s0s1 -> 10.0.0.1.
-function formatNumber(keys) {
+// time: the words around it say it's a time (render decides), so H s MM is H:MM.
+function formatNumber(keys, time) {
+  if (time && /^[0-9]{1,2}s[0-9]{2}$/.test(keys) && +keys.slice(0, -3) <= 24 && +keys.slice(-2) <= 59) {
+    return keys.replace('s', ':');
+  }
   const g = keys.replace('$', '').split(/[s.,]/).map(x => x.length);
   let commas = g[0] <= 3;
   for (let k = 1; k < g.length - 1; k++) if (g[k] !== 3) commas = false;
@@ -243,7 +252,7 @@ function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
       for (let ci = 0; ci < s.cands.length; ci++) {
         const c = s.cands[ci];
         let step = c.id < 0 ? (c.number ? 0 : c.literal ? P.literal : P.unknown) : lp(m, h.prev, c.id) + (c.penalty || 0);
-        let prev = c.id < 0 ? -1 : c.id;
+        let prev = c.number ? AFTER_NUMBER : c.id < 0 ? -1 : c.id;
         let first = h.first, cf = h.cf;
         if (c.id >= m.n) {
           // Punctuation: a word-pair model can't see how the sentence began,
@@ -283,10 +292,23 @@ function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
 
 // Render a hypothesis to display text with sentence capitalization.
 // start.cap: capitalize the first word (default true; false mid-sentence).
+const TIME_BEFORE = new Set(['at', 'by', 'until', 'til', 'till', 'around', 'before', 'after', 'from', 'since']);
+const TIME_AFTER = new Set(['am', 'pm']);
+
 function render(m, result, hyp, start = {}) {
   const { toks, slots } = result;
   const bySlotTok = new Map();
   slots.forEach((s, j) => bySlotTok.set(s.tokIndex, j));
+  // The dictionary word chosen for the nearest token before/after toks[i] (spaces skipped).
+  const wordNear = (i, dir) => {
+    for (let k = i + dir; k >= 0 && k < toks.length; k += dir) {
+      if (toks[k].type === 'space') continue;
+      if (toks[k].type !== 'word') return null;
+      const j = bySlotTok.get(k), c = slots[j].cands[hyp.path[j]];
+      return c.id >= 0 && c.id < m.n && !c.partial ? m.words[c.id] : null;
+    }
+    return null;
+  };
   let capNext = start.cap === undefined ? true : start.cap;
   const pieces = [];
   toks.forEach((t, i) => {
@@ -295,6 +317,7 @@ function render(m, result, hyp, start = {}) {
     const c = slots[j].cands[hyp.path[j]];
     let text = c.text;
     if (t.type === 'number') {
+      text = formatNumber(t.keys, TIME_BEFORE.has(wordNear(i, -1)) || TIME_AFTER.has(wordNear(i, 1)));
       capNext = false;
     } else if (t.type === 'word') {
       const shown = c.id >= 0 && m.display[c.id];

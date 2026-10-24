@@ -59,7 +59,8 @@ Tokenizer rules (`tokenize` in decoder.js):
 - Digits (`A`–`J`) end a word and start a **number** token, so "4" + `3837` is "4ever" and the letters are decoded on their own. A number continues through more digits and through `#`, `.` or `,` followed by a digit. A predictive `#` right before a number (at the start, after a space or after punctuation) is `$`.
 - A predictive separator `#` inside a number becomes `,` when the groups read as thousands (first group 1–3 digits, then groups of 3, optionally a last group of another length), else `.`: `#6#000#00` → "$6,000.00", `1#500` → "1,500", `3#14` → "3.14", `192#168#1#1` → "192.168.1.1". Literal `.` and `,` stay as typed.
 - Digits stay inside a word when they follow an exactly spelled letter, and pure digits followed by an exactly spelled letter become one word, so call signs typed in exact mode work: `ke7aqa`, `2e0abc`, "90's".
-- A number has one candidate and scores 0; the next word is scored as after an unknown word (unigram).
+- A number has one candidate and scores 0. The next word is scored by its unigram, plus 6 nats for "am"/"pm".
+- At render time a number `H#MM` (H ≤ 24, MM ≤ 59) is a time, "H:MM", when the word before it is at, by, until, til, till, around, before, after, from or since, or the word after it is am or pm: "at 5:30", "9:45 pm", "5:30pm".
 
 ### Exact (multi-tap) mode
 
