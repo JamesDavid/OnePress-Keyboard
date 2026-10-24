@@ -38,10 +38,21 @@ int main(int argc, char **argv) {
     }
 
     op_user_init(&user, &model);
-    op_start start = { model.bos, 1, learn ? &user : NULL };
-    char line[OP_MAX_KEYS + 8], out[4 * OP_MAX_KEYS + 64];
+    op_start start = { model.bos, 1, learn ? &user : NULL, NULL, NULL };
+    static char line[4 * OP_MAX_KEYS + 4096];
+    char out[4 * OP_MAX_KEYS + 64];
     while (fgets(line, sizeof line, stdin)) {
         line[strcspn(line, "\r\n")] = 0;
+        /* keys<TAB>before<TAB>hint: the text before ('|' for a line break), the QWERTY letters */
+        char *before = strchr(line, '\t'), *hint = NULL;
+        if (before) {
+            *before++ = 0;
+            hint = strchr(before, '\t');
+            if (hint) *hint++ = 0;
+            for (char *c = before; *c; c++) if (*c == '|') *c = '\n';
+        }
+        start.before = before;
+        start.hint = hint;
         int r = op_decode(&dec, &model, line, beam, &start, NULL, 0);
         if (r == OP_OK) r = op_render(&dec, &model, &start, out, sizeof out);
         if (r >= 0 && learn) op_learn(&user, &dec, &model, &start);

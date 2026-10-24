@@ -1,6 +1,7 @@
 """Export model.json to the KPD2 binary model read by every decoder (web, C, firmware).
 
 Usage: python export_bin.py model.json onepress.bin [--vocab N] [--min-count C] [--ambig-only]
+                           [--tri-min C] [--tri-contexts N] [--no-context-case]
 
 Everything is little-endian, every section 4-byte aligned, and the decoder searches the
 file in place (from flash or a memory map), so nothing is parsed or allocated on load.
@@ -14,8 +15,11 @@ Header (16 bytes + section table):
 Token ids: words 0..nWords-1, punctuation nWords..nWords+nPunct-1, BOS = nWords+nPunct.
 Scores:    lp(prev, cur) = row entry for cur if present, else bow[prev] + uni[cur].
            A prev with no row (bow 0, no entries) falls back to the unigram.
+           With three-word context (p2, p1): if (p2, p1) is a triKey context, the triple's entry
+           for cur if present, else triBow[context] + lp(p1, cur); otherwise lp(p1, cur).
+Sections after "params" are optional (older files stop there and decoders treat them as empty).
 """
-import argparse, json, math, struct, sys
+import argparse, bisect, json, math, struct, sys
 from collections import Counter
 
 SCALE = 256
@@ -35,6 +39,19 @@ SECTIONS = [
     "qStart",     # u16[] question-opener word ids, ascending
     "punct",      # nPunct ASCII punctuation characters
     "params",     # i16[] decoder constants, see PARAMS
+    "qSkip",      # u16[] words skipped when finding a sentence's opener (hello, so, ok), ascending
+    "triKey",     # u32[nT] three-word contexts p2 << 16 | p1, ascending
+    "triStart",   # u32[nT+1] first entry of each context
+    "triBow",     # i16[nT] backoff weight of each context
+    "triNext",    # u16[] next-token ids, ascending within each context
+    "triLp",      # i16[] log P(next | p2, p1) of each entry
+    "capKey",     # u32[] prev << 16 | word: the word takes its other casing after prev (in May)
+    "altId",      # u16[] ids with an other casing, ascending
+    "altOff",     # u32[len(altId)+1] into altText
+    "altText",    # utf8
+    "capNextKey", # u32[] word << 16 | next: the word takes its other casing before next (Will Smith)
+    "capKeepKey", # u32[] word << 16 | next: the word keeps its usual casing before next, whatever
+                  #       the previous word says ("like apple pie")
 ]
 # Decoder constants, all in log-prob units. The punctuation ones come from model.json
 # punctParams when present (see tune_punct.js).
@@ -46,7 +63,12 @@ QUESTION_STARTERS = ['what', 'where', 'when', 'why', 'who', 'whom', 'whose', 'wh
     "isn't", "aren't", "don't", "doesn't", "didn't", "can't", "won't", "wouldn't", "shouldn't", "couldn't",
     'have', 'has', 'may', 'might', 'want', 'wanna', 'need', 'got', 'any', 'anyone', 'anybody', 'anything',
     'ready', 'free', 'you', 'u']
+# Greetings and fillers before the real opener: "hello how are you" is still a question.
+QUESTION_SKIP = ['hello', 'hi', 'hey', 'hiya', 'yo', 'ok', 'okay', 'oh', 'well', 'so', 'and', 'but',
+    'also', 'anyway', 'btw', 'dear', 'dude', 'babe', 'guys', 'lol', 'haha', 'hmm', 'um', 'uh', 'ah',
+    'yeah', 'sorry', 'thanks', 'wow']
 LAMBDA_K = 40   # lambda = c / (c + LAMBDA_K), Witten-Bell style
+TRI_K = int(__import__("os").environ.get("TRI_K", 40))      # the same for three-word contexts
 
 KEYMAP = {c: k for k, letters in {"2": "abc", "3": "def", "4": "ghi", "5": "jkl", "6": "mno",
           "7": "pqrs", "8": "tuv", "9": "wxyz", "#": "'"}.items() for c in letters}
@@ -59,7 +81,7 @@ def q(x):
     assert -32768 <= v <= 32767, x
     return v
 
-def reduce(M, vocab=0, min_count=0, ambig_only=False):
+def reduce(M, vocab=0, min_count=0, ambig_only=False, tri_min=0, tri_contexts=65000):
     """Shrink the model for small devices.
 
     vocab:      keep only the `vocab` most frequent words.
@@ -67,6 +89,8 @@ def reduce(M, vocab=0, min_count=0, ambig_only=False):
     ambig_only: drop pairs that can't change the decoded text: a pair matters only when one
                 of its words shares its keys with another word, or is punctuation/BOS (the
                 punctuation key is always a choice). Dropped pairs back off to the unigram.
+    tri_min:    keep word triples with at least this (weighted) count; 0 drops three-word context.
+    tri_contexts: at most this many three-word contexts (ids must fit the decoders' u16 state).
     """
     words, n, nP = M["words"], len(M["words"]), len(M["punct"])
     keep = sorted(sorted(range(n), key=lambda i: (-M["logp"][i], i))[:vocab]) if 0 < vocab < n else list(range(n))
@@ -95,9 +119,29 @@ def reduce(M, vocab=0, min_count=0, ambig_only=False):
         ctx[str(new[a])] = M["ctx"][k]      # the original total, so dropped pairs back off
         if row:
             bi[str(new[a])] = row
+    tri, tctx = {}, {}
+    for k, arr in M.get("tri", {}).items():
+        a, b = map(int, k.split(","))
+        if a not in new or b not in new:
+            continue
+        row = []
+        for c, cnt in zip(arr[0::2], arr[1::2]):
+            if c in new and cnt >= tri_min and (not ambig_only or ambiguous(a) or ambiguous(b) or ambiguous(c)):
+                row += [new[c], cnt]
+        if row:
+            nk = f"{new[a]},{new[b]}"
+            tri[nk] = row
+            tctx[nk] = M["tctx"][k]
+    if tri_contexts and len(tri) > tri_contexts:      # keep the most used contexts
+        top = sorted(tri, key=lambda k: -tctx[k])[:tri_contexts]
+        tri = {k: tri[k] for k in top}
     return dict(M, words=[words[i] for i in keep], logp=[M["logp"][i] for i in keep],
                 display={str(new[int(k)]): v for k, v in M.get("display", {}).items() if int(k) in new},
-                bi=bi, ctx=ctx, bos=len(keep) + nP)
+                alt={str(new[int(k)]): v for k, v in M.get("alt", {}).items() if int(k) in new},
+                capFlip=[[new[a], new[b]] for a, b in M.get("capFlip", []) if a in new and b in new],
+                capNext=[[new[a], new[b]] for a, b in M.get("capNext", []) if a in new and b in new],
+                capKeep=[[new[a], new[b]] for a, b in M.get("capKeep", []) if a in new and b in new],
+                bi=bi, ctx=ctx, tri=tri if tri_min else {}, tctx=tctx, bos=len(keep) + nP)
 
 def main():
     ap = argparse.ArgumentParser()
@@ -106,8 +150,14 @@ def main():
     ap.add_argument("--vocab", type=int, default=0)
     ap.add_argument("--min-count", type=int, default=0)
     ap.add_argument("--ambig-only", action="store_true")
+    ap.add_argument("--tri-min", type=int, default=0)
+    ap.add_argument("--tri-contexts", type=int, default=65000)
+    ap.add_argument("--no-context-case", action="store_true", help="leave out the context casing tables (in May)")
     a = ap.parse_args()
-    M = reduce(json.load(open(a.model_json, encoding="utf-8")), a.vocab, a.min_count, a.ambig_only)
+    M = reduce(json.load(open(a.model_json, encoding="utf-8")), a.vocab, a.min_count, a.ambig_only,
+               a.tri_min, min(a.tri_contexts, 65000))
+    if a.no_context_case:
+        M = dict(M, capFlip=[], capNext=[], capKeep=[], alt={})
     out = a.out
     words, P, bos = M["words"], M["punct"], M["bos"]
     n = len(words)
@@ -158,6 +208,47 @@ def main():
         else:
             bow.append(0)
         rows.append(len(nxt))
+    # Three-word contexts mix their counts with the stored pair model, as decoded (quantized).
+    S = SCALE
+    uq = [q(math.log(p)) for p in uni]
+    def p2(b, c):
+        lo, hi = rows[b], rows[b + 1]
+        j = bisect.bisect_left(nxt, c, lo, hi)
+        return math.exp((lps[j] if j < hi and nxt[j] == c else bow[b] + uq[c]) / S)
+    tri = sorted(((tuple(map(int, k.split(","))), v) for k, v in M.get("tri", {}).items()))
+    tkey, tstart, tbow, tnext, tlp = [], [0], [], [], []
+    for (a, b), arr in tri:
+        c_ab = M["tctx"][f"{a},{b}"]
+        lam = c_ab / (c_ab + TRI_K)
+        p_sum = b_sum = 0.0
+        for c, cnt in sorted(zip(arr[0::2], arr[1::2])):
+            pb = p2(b, c)
+            pt = lam * cnt / c_ab + (1 - lam) * pb
+            p_sum += pt
+            b_sum += pb
+            tnext.append(c)
+            tlp.append(q(math.log(pt)))
+        tkey.append(a << 16 | b)
+        tbow.append(q(math.log(max(1 - p_sum, 1e-9) / max(1 - b_sum, 1e-9))))
+        tstart.append(len(tnext))
+    sec["qSkip"] = u16(sorted(rank[w] for w in QUESTION_SKIP if w in rank))
+    sec["triKey"] = struct.pack(f"<{len(tkey)}I", *tkey)
+    sec["triStart"] = struct.pack(f"<{len(tstart)}I", *tstart)
+    sec["triBow"] = i16(tbow)
+    sec["triNext"] = u16(tnext)
+    sec["triLp"] = i16(tlp)
+    sec["capKey"] = struct.pack(f"<{len(M.get('capFlip', []))}I", *sorted(a << 16 | b for a, b in M.get("capFlip", [])))
+    sec["capNextKey"] = struct.pack(f"<{len(M.get('capNext', []))}I", *sorted(a << 16 | b for a, b in M.get("capNext", [])))
+    sec["capKeepKey"] = struct.pack(f"<{len(M.get('capKeep', []))}I", *sorted(a << 16 | b for a, b in M.get("capKeep", [])))
+    alts = sorted((int(k), v) for k, v in M.get("alt", {}).items())
+    atext = [v.encode() for _, v in alts]
+    aoff = [0]
+    for t in atext:
+        aoff.append(aoff[-1] + len(t))
+    sec["altId"] = u16([i for i, _ in alts])
+    sec["altOff"] = struct.pack(f"<{len(alts) + 1}I", *aoff)
+    sec["altText"] = b"".join(atext)
+
     sec["rowStart"] = struct.pack(f"<{len(rows)}I", *rows)
     sec["bow"] = i16(bow)
     sec["next"] = u16(nxt)
@@ -176,7 +267,7 @@ def main():
         body += sec[name]
     data = head + table + body
     open(out, "wb").write(data)
-    print(f"KPD2: {n} words, {len(nxt)} pairs, {len(data):,} bytes")
+    print(f"KPD2: {n} words, {len(nxt)} pairs, {len(tnext)} triples in {len(tkey)} contexts, {len(data):,} bytes")
 
 def u16(xs):
     return struct.pack(f"<{len(xs)}H", *xs)

@@ -222,7 +222,7 @@ kbd {
 
   <div class="notes">
     <p>Press each key once per letter. <b>0</b> is a space, <b>1</b> deletes, and <b>*</b> swaps the selected word for the next guess, and holding it finishes the word you're typing. <b>#</b> is punctuation: the model picks . , ! or ?, and between letters it's an apostrophe. Apostrophes are optional, so "dont" also gives "don't". <b>Hold any number key</b> to type that digit (hold 1 for "1", hold 0 for "0"). Digits end the word, so hold 4 then type 3837 for "4ever". <b>#</b> next to digits makes money and decimals: # 6 # 000 # 00 gives "$6,000.00". For call signs, spell them once in exact mode (ke7aqa) and send: after that one press per character works, 5 3 7 2 7 2, with the 7 tapped or held.</p>
-    <p><b>Hold #</b> for exact spelling, for names and words the model doesn't know. Press a key repeatedly to cycle its letters and then its digit (2 = a, b, c, 2), and pause or press another key to move on. # cycles . , ? ! ' and 0 gives a space, or the digit 0 on a second press. On QWERTY, exact mode types the letter you tap. Hold # again to go back to predictive.</p>
+    <p><b>Hold #</b> for exact spelling, for names and words the model doesn't know. Press a key repeatedly to cycle its letters and then its digit (2 = a, b, c, 2), and pause or press another key to move on. # cycles . , ? ! ' : and 0 gives a space, or the digit 0 on a second press. On QWERTY, exact mode types the letter you tap. Hold # again to go back to predictive.</p>
     <p>The word list includes names, places, brands and apps, with their usual capitalization (iPhone, McDonald's, YouTube).</p>
     <p><b>Send</b> copies the text, clears it and learns from it: the words you use and the words you use together get more likely, and a word you spelled exactly is guessed from its keys next time. That covers punctuation too. What it learns stays in this browser, kept for each model separately. <b>Forget</b> clears it.</p>
     <p><b>Tutorial</b> (next to the title) walks through all of this in a few steps.</p>
@@ -355,7 +355,7 @@ __DECODER__
   // Exact (multi-tap) mode: repeated presses of one key cycle through its letters, then its digit.
   // Letters are stored as themselves, digits 0-9 as 'A'-'J', space as '0'.
   const CYCLE = { '2': 'abcC', '3': 'defD', '4': 'ghiE', '5': 'jklF', '6': 'mnoG', '7': 'pqrsH',
-                  '8': 'tuvI', '9': 'wxyzJ', '0': '0A', '#': ".,?!'" };
+                  '8': 'tuvI', '9': 'wxyzJ', '0': '0A', '#': ".,?!':" };
   const TAP_GAP = 900;
   function press(d) {
     if (!m) return;

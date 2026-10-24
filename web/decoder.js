@@ -5,11 +5,20 @@ const KEYMAP = { a:'2',b:'2',c:'2',d:'3',e:'3',f:'3',g:'4',h:'4',i:'4',j:'5',k:'
   m:'6',n:'6',o:'6',p:'7',q:'7',r:'7',s:'7',t:'8',u:'8',v:'8',w:'9',x:'9',y:'9',z:'9',"'":'#' };
 const KEY_LETTERS = { '#':"'", '2':'abc','3':'def','4':'ghi','5':'jkl','6':'mno','7':'pqrs','8':'tuv','9':'wxyz' };
 const SECTIONS = ['wordText', 'wordOff', 'keyIdx', 'stripIdx', 'dispId', 'dispOff', 'dispText', 'uni',
-  'rowStart', 'bow', 'next', 'lp', 'qStart', 'punct', 'params'];
+  'rowStart', 'bow', 'next', 'lp', 'qStart', 'punct', 'params',
+  // optional (older files stop at params):
+  'qSkip', 'triKey', 'triStart', 'triBow', 'triNext', 'triLp', 'capKey', 'altId', 'altOff', 'altText', 'capNextKey', 'capKeepKey'];
 const PARAMS = ['qQ', 'qN', 'dQ', 'cF', 'dB', 'cB', 'eB', 'apostrophe', 'completion', 'literal', 'unknown'];
 const MAX_EXACT = 40, MAX_COMPLETIONS = 12;
 const AFTER_NUMBER = -2;           // beam state after a number (the model has no number token)
-const TIME_BONUS = 6;              // nats for "am"/"pm" right after a number
+const AFTER_DECIMAL = -3;          // after a number that could have been a time but was read as 5.30
+const TIME_BONUS = 8;              // nats for "am"/"pm" right after a number or a time
+// A number that reads as H:MM (5#30) has two candidates, 5.30 and 5:30. The time gets
+// TIME_PREV nats after at/by/until/..., else costs TIME_ALONE; with "am"/"pm" after it the
+// TIME_BONUS outweighs that, so "5#30pm" is 5:30pm. An exactly typed '.' makes the time an
+// alternative only (TIME_LITERAL); an exactly typed ':' makes it a time.
+const TIME_PREV = 2, TIME_ALONE = 2, TIME_LITERAL = 14;
+const TIME_BEFORE = ['at', 'by', 'until', 'til', 'till', 'around', 'before', 'after', 'from', 'since'];
 
 function wordKeys(w) { let s = ''; for (const c of w) s += KEYMAP[c]; return s; }
 
@@ -24,7 +33,8 @@ function buildModel(bytes) {
   SECTIONS.forEach((name, i) => {
     if (i < nSec) sec[name] = [dv.getUint32(16 + 8 * i, true), dv.getUint32(20 + 8 * i, true)];
   });
-  const at = (name, T) => new T(bytes.buffer, bytes.byteOffset + sec[name][0], sec[name][1] / T.BYTES_PER_ELEMENT);
+  const at = (name, T) => sec[name] ? new T(bytes.buffer, bytes.byteOffset + sec[name][0], sec[name][1] / T.BYTES_PER_ELEMENT)
+    : name === 'triStart' || name === 'altOff' ? new T(1) : new T(0);
   const utf8 = new TextDecoder();
   const wordText = at('wordText', Uint8Array), wordOff = at('wordOff', Uint32Array);
   const words = new Array(n);
@@ -32,6 +42,9 @@ function buildModel(bytes) {
   const dispId = at('dispId', Uint16Array), dispOff = at('dispOff', Uint32Array), dispText = at('dispText', Uint8Array);
   const display = new Array(n);
   dispId.forEach((id, i) => { display[id] = utf8.decode(dispText.subarray(dispOff[i], dispOff[i + 1])); });
+  const altId = at('altId', Uint16Array), altOff = at('altOff', Uint32Array), altText = at('altText', Uint8Array);
+  const alt = new Array(n);
+  altId.forEach((id, i) => { alt[id] = utf8.decode(altText.subarray(altOff[i], altOff[i + 1])); });
   const keyIdx = at('keyIdx', Uint16Array), stripIdx = at('stripIdx', Uint16Array);
   const fullKeys = words.map(wordKeys);
   const raw = at('params', Int16Array), params = {};
@@ -39,6 +52,12 @@ function buildModel(bytes) {
   return {
     words, display, fullKeys, n, bos, scale, params,
     timeIds: ['am', 'pm'].map(w => words.indexOf(w)).filter(i => i >= 0),
+    timeBefore: new Set(TIME_BEFORE.map(w => words.indexOf(w)).filter(i => i >= 0)),
+    qSkip: new Set(at('qSkip', Uint16Array)),
+    triKey: at('triKey', Uint32Array), triStart: at('triStart', Uint32Array), triBow: at('triBow', Int16Array),
+    triNext: at('triNext', Uint16Array), triLp: at('triLp', Int16Array),
+    capKey: at('capKey', Uint32Array), capNextKey: at('capNextKey', Uint32Array),
+    capKeepKey: at('capKeepKey', Uint32Array), alt,
     punct: utf8.decode(at('punct', Uint8Array)).split(''),
     uni: at('uni', Int16Array), rowStart: at('rowStart', Uint32Array), bow: at('bow', Int16Array),
     next: at('next', Uint16Array), lp: at('lp', Int16Array), qStart: new Set(at('qStart', Uint16Array)),
@@ -63,6 +82,27 @@ function lp(m, prev, cur) {
     if (x < cur) lo = mid + 1; else hi = mid;
   }
   return m.bow[prev] + m.uni[cur];
+}
+
+// Three-word context: the index of context (p2, p1) in triKey, or -1 (also for numbers,
+// unknown and learned words, which no context includes).
+function triFind(m, p2, p1) {
+  if (p2 < 0 || p1 < 0 || p2 > m.bos || p1 > m.bos) return -1;
+  const k = p2 * 65536 + p1;
+  let lo = 0, hi = m.triKey.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (m.triKey[mid] < k) lo = mid + 1; else hi = mid; }
+  return lo < m.triKey.length && m.triKey[lo] === k ? lo : -1;
+}
+// log P(cur | context t, prev): the triple if stored, else the context's backoff + the pair.
+function lp3(m, t, prev, cur) {
+  if (t < 0) return lp(m, prev, cur);
+  let lo = m.triStart[t], hi = m.triStart[t + 1];
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1, x = m.triNext[mid];
+    if (x === cur) return m.triLp[mid];
+    if (x < cur) lo = mid + 1; else hi = mid;
+  }
+  return m.triBow[t] + lp(m, prev, cur);
 }
 
 // First entry in an index whose key is >= k.
@@ -115,31 +155,33 @@ function litOf(ch) {               // the exact character, or null for a predict
   return null;
 }
 
-// Split the key string into tokens: {type:'word', keys, lit[]}, {type:'punct', lit?},
-// {type:'space'}, {type:'number', keys}.
+// Split the key string into tokens: {type:'word', keys, lit[], hint[]}, {type:'punct', lit?},
+// {type:'space'}, {type:'number', keys}. hint: for each press, the letter tapped on a QWERTY
+// keyboard (which sends only its keypad digit), used when no word matches.
 // Digits end a word: "4" + 3837 is "4" then "ever". A number runs on through further digits
 // and through '#', '.' or ',' between digits; a '#' just before a number is '$', so
 // #6#000#00 is "$6,000.00" (see formatNumber). Digits next to exactly spelled letters stay in
 // the word, for call signs like ke7aqa.
-function tokenize(keys) {
+function tokenize(keys, hint = '') {
   const toks = [];
+  const hintAt = i => /[a-z]/.test(hint[i] || '') ? hint[i] : null;
   for (let i = 0; i < keys.length; i++) {
     const ch = keys[i], nxt = keys[i + 1] || '';
     const last = toks[toks.length - 1];
     if (ch === '0') toks.push({ type: 'space' });
-    else if ((ch === '#' || ch === '.' || ch === ',') && last && last.type === 'number' &&
+    else if ((ch === '#' || ch === '.' || ch === ',' || ch === ':') && last && last.type === 'number' &&
              /[0-9]$/.test(last.keys) && isDigitLit(nxt)) {
       last.keys += ch === '#' ? 's' : ch;       // 's': a separator for formatNumber to choose
     } else if (ch === '#') {
       // A predictive '#' between two letters is an apostrophe; otherwise punctuation.
-      if (last && last.type === 'word' && isLetterKey(nxt)) { last.keys += '#'; last.lit.push(null); }
+      if (last && last.type === 'word' && isLetterKey(nxt)) { last.keys += '#'; last.lit.push(null); last.hint.push(null); }
       else toks.push({ type: 'punct' });
-    } else if (LIT_PUNCT.has(ch)) {
+    } else if (LIT_PUNCT.has(ch) || ch === ':') {
       toks.push({ type: 'punct', lit: ch });
     } else if (isDigitLit(ch)) {
       const d = litOf(ch), before = toks[toks.length - 2];
       if (last && last.type === 'number') last.keys += d;
-      else if (last && last.type === 'word' && last.lit[last.lit.length - 1] !== null) { last.keys += ch; last.lit.push(d); }
+      else if (last && last.type === 'word' && last.lit[last.lit.length - 1] !== null) { last.keys += ch; last.lit.push(d); last.hint.push(null); }
       else if (last && last.type === 'punct' && !last.lit && keys[i - 1] === '#' &&
                !(before && (before.type === 'word' || before.type === 'number'))) {
         toks[toks.length - 1] = { type: 'number', keys: '$' + d };
@@ -148,11 +190,11 @@ function tokenize(keys) {
       if (last && last.type === 'number' && litOf(ch) !== null && /^[0-9]+$/.test(last.keys)) {
         // Digits followed by an exactly spelled letter are one word (2e0abc, 90's).
         toks[toks.length - 1] = { type: 'word', keys: [...last.keys].map(c => String.fromCharCode(65 + +c)).join(''),
-          lit: [...last.keys] };
+          lit: [...last.keys], hint: [...last.keys].map(() => null) };
       }
       const cur = toks[toks.length - 1];
-      if (cur && cur.type === 'word') { cur.keys += keyOf(ch); cur.lit.push(litOf(ch)); }
-      else toks.push({ type: 'word', keys: keyOf(ch), lit: [litOf(ch)] });
+      if (cur && cur.type === 'word') { cur.keys += keyOf(ch); cur.lit.push(litOf(ch)); cur.hint.push(hintAt(i)); }
+      else toks.push({ type: 'word', keys: keyOf(ch), lit: [litOf(ch)], hint: [hintAt(i)] });
     }
   }
   return toks;
@@ -161,20 +203,23 @@ function tokenize(keys) {
 // A number's text. Each 's' separator becomes ',' when the groups read as thousands (a first
 // group of 1-3 digits, then groups of 3, with an optional last group of another length after
 // a '.'), otherwise '.': 6s000s00 -> 6,000.00, 1s500 -> 1,500, 3s14 -> 3.14, 10s0s0s1 -> 10.0.0.1.
-// time: the words around it say it's a time (render decides), so H s MM is H:MM.
+// time: H s MM (or H.MM, H:MM) as H:MM, if timeKind says it can be one.
 function formatNumber(keys, time) {
-  if (time && /^[0-9]{1,2}s[0-9]{2}$/.test(keys) && +keys.slice(0, -3) <= 24 && +keys.slice(-2) <= 59) {
-    return keys.replace('s', ':');
-  }
-  const g = keys.replace('$', '').split(/[s.,]/).map(x => x.length);
+  if (time && timeKind(keys)) return keys.replace(/[s.:]/, ':');
+  const g = keys.replace('$', '').split(/[s.,:]/).map(x => x.length);
   let commas = g[0] <= 3;
   for (let k = 1; k < g.length - 1; k++) if (g[k] !== 3) commas = false;
   let out = '', k = 0;
   for (const ch of keys) {
     if (ch === 's') { k++; out += commas && g[k] === 3 ? ',' : '.'; }
-    else { if (ch === '.' || ch === ',') k++; out += ch; }
+    else { if (ch === '.' || ch === ',' || ch === ':') k++; out += ch; }
   }
   return out;
+}
+// Can number keys be a time H:MM (H <= 24, MM <= 59)? The separator ('s', '.' or ':'), else null.
+function timeKind(keys) {
+  const t = /^([0-9]{1,2})([s.:])([0-9]{2})$/.exec(keys);
+  return t && +t[1] <= 24 && +t[3] <= 59 ? t[2] : null;
 }
 
 // Does dictionary word `id` (matched through key string `key`) agree with the exact letters?
@@ -225,6 +270,7 @@ function joinLearned(toks, u) {
         type: 'word',
         keys: run.map(t => t.type === 'word' ? t.keys : [...t.keys].map(d => String.fromCharCode(65 + +d)).join('')).join(''),
         lit: [].concat(...run.map(t => t.type === 'word' ? t.lit : [...t.keys])),
+        hint: [].concat(...run.map(t => t.type === 'word' ? t.hint : [...t.keys].map(() => null))),
       };
       const keys = userTyped(tok.keys);
       if (u.words.some(w => userMatch(w, tok, keys, j === toks.length))) { out.push(tok); i = j; continue; }
@@ -238,8 +284,14 @@ function joinLearned(toks, u) {
 // Candidates for each slot: [{text, id, partial, penalty}]
 function slotCandidates(m, tok, isLast, u) {
   const P = m.params;
-  if (tok.type === 'number') return [{ text: formatNumber(tok.keys), id: -1, number: true }];
+  if (tok.type === 'number') {
+    const t = timeKind(tok.keys), time = { text: formatNumber(tok.keys, true), id: -1, number: true, time: true };
+    if (t === ':') return [time];
+    const plain = { text: formatNumber(tok.keys), id: -1, number: true, timeable: !!t };
+    return t ? [plain, time] : [plain];
+  }
   if (tok.type === 'punct') {
+    if (tok.lit && !m.punct.includes(tok.lit)) return [{ text: tok.lit, id: -1, literal: true }];   // ':'
     if (tok.lit) return [{ text: tok.lit, id: m.n + m.punct.indexOf(tok.lit), exact: true }];
     return m.punct.map((p, i) => ({ text: p, id: m.n + i }));
   }
@@ -282,18 +334,58 @@ function slotCandidates(m, tok, isLast, u) {
     return [{ text: typed, id: -1, literal: true }];
   }
   if (!exact.length) {
-    const raw = [...tok.keys].map((k, i) => tok.lit[i] || (KEY_LETTERS[k] || '?')[0]).join('');
-    exact.push({ text: raw, id: -1, unknown: true });
+    // No word fits: the exact letters, else the QWERTY letters tapped, else each key's first.
+    const raw = [...tok.keys].map((k, i) => tok.lit[i] || tok.hint[i] || (KEY_LETTERS[k] || '?')[0]).join('');
+    const typed = tok.lit.every((l, i) => l !== null || tok.hint[i] !== null || tok.keys[i] === '#');
+    exact.push({ text: raw, id: -1, unknown: true, typed });
   }
   return exact;
 }
 
-// start: { prev: token id before the composition (default BOS, -1 for an unknown word),
-//          user: what this person has typed (newUser / learn), optional }
+// The context a composition starts in. start.before is the text before it (what's already in
+// the field, or the conversation so far): its last words give the word-pair and three-word
+// context, whether to capitalize, and the opener of an unfinished sentence (for ? vs .); words
+// used in its last RECENT_WORDS words get RECENT_BONUS, if not among the most common words.
+// Without start.before: start.prev (default BOS) and start.cap (default true).
+const RECENT_WORDS = 32;
+let RECENT_BONUS = 3, RECENT_MAX_UNI = -9;      // nats; for tuning only: recentParams()
+function recentParams(bonus, maxUni) { RECENT_BONUS = bonus; RECENT_MAX_UNI = maxUni; }
+function wordId(m, u, w) {
+  if (!m.wordIndex) m.wordIndex = new Map(m.words.map((x, i) => [x, i]));
+  if (m.wordIndex.has(w)) return m.wordIndex.get(w);
+  const k = u ? u.words.findIndex(x => x.toLowerCase() === w) : -1;
+  return k >= 0 ? m.bos + 1 + k : -1;
+}
+function context(m, u, start) {
+  const ctx = { prev2: -1, prev: start.prev === undefined ? m.bos : start.prev,
+    cap: start.cap === undefined ? true : start.cap, first: null, cf: null, recent: new Set() };
+  if (typeof start.before !== 'string') return ctx;
+  const toks = start.before.toLowerCase().replace(/[\u2018\u2019]/g, "'").match(/[a-z0-9']+|[.,!?\n]/g) || [];
+  let p2 = -1, p1 = m.bos, first = null, cf = null, cap = true;
+  const recent = [];
+  for (const t of toks) {
+    // A line break ends a sentence too: messages are often sent without a final mark.
+    if (t === '.' || t === '!' || t === '?' || t === '\n') { p2 = -1; p1 = m.bos; first = cf = null; cap = true; continue; }
+    cap = false;
+    if (t === ',') { p2 = p1; p1 = m.n + m.punct.indexOf(','); cf = null; continue; }
+    if (/^[0-9]+$/.test(t)) { p2 = -1; p1 = AFTER_NUMBER; continue; }
+    const id = wordId(m, u, t);
+    p2 = p1; p1 = id;
+    if (first === null && !m.qSkip.has(id)) first = id;
+    if (cf === null && !m.qSkip.has(id)) cf = id;
+    if (id >= 0) recent.push(id);
+  }
+  return { prev2: p2, prev: p1, cap, first, cf, recent: new Set(recent.slice(-RECENT_WORDS)) };
+}
+
+// start: { before: text before the composition (see context), or prev / cap,
+//          user: what this person has typed (newUser / learn), optional,
+//          hint: the letters tapped on a QWERTY keyboard, one per key press (see tokenize) }
 function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
   const P = m.params;
   const u = start.user && start.user.bos === m.bos ? start.user : null;
-  const toks = joinLearned(tokenize(keys), u);
+  const ctx = context(m, u, start);
+  const toks = joinLearned(tokenize(keys, start.hint || ''), u);
   const slots = [];
   toks.forEach((t, i) => { if (t.type !== 'space') slots.push({ tok: t, tokIndex: i }); });
   const lastTokIsWord = toks.length && toks[toks.length - 1].type === 'word';
@@ -309,16 +401,17 @@ function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
     s.cands = c;
   });
 
-  const startPrev = start.prev === undefined ? m.bos : start.prev;
-  let beam = [{ score: 0, prev: startPrev, first: null, cf: null, path: [] }];
+  let beam = [{ score: 0, prev: ctx.prev, t: triFind(m, ctx.prev2, ctx.prev), first: ctx.first, cf: ctx.cf, path: [] }];
   slots.forEach((s, j) => {
     const isFinal = j === slots.length - 1;
-    const next = [];
+    let next = [];
     for (const h of beam) {
       for (let ci = 0; ci < s.cands.length; ci++) {
         const c = s.cands[ci];
-        let step = c.id < 0 ? (c.number ? 0 : c.literal ? P.literal : P.unknown) : tokenScore(m, u, h.prev, c.id) + (c.penalty || 0);
-        let prev = c.number ? AFTER_NUMBER : c.id < 0 ? -1 : c.id;
+        let step = c.id < 0 ? (c.number ? 0 : c.literal ? P.literal : P.unknown) : tokenScore(m, u, h.prev, c.id, h.t) + (c.penalty || 0) +
+          (ctx.recent.has(c.id) && (c.id > m.bos || m.uni[c.id] < RECENT_MAX_UNI * m.scale) ? Math.round(RECENT_BONUS * m.scale) : 0);
+        if (c.time) step += m.scale * ((m.timeBefore.has(h.prev) ? TIME_PREV : -TIME_ALONE) - (timeKind(s.tok.keys) === '.' ? TIME_LITERAL : 0));
+        let prev = c.timeable ? AFTER_DECIMAL : c.number ? AFTER_NUMBER : c.id < 0 ? -1 : c.id;
         let first = h.first, cf = h.cf;
         if (c.id >= m.n && c.id < m.bos) {
           // Punctuation: a word-pair model can't see how the sentence began,
@@ -331,71 +424,101 @@ function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
           if (c.text !== ',') { prev = m.bos; first = null; }
           cf = null;
         } else {
-          if (first === null) first = c.id;
-          if (cf === null) cf = c.id;
+          if (first === null && !m.qSkip.has(c.id)) first = c.id;
+          if (cf === null && !m.qSkip.has(c.id)) cf = c.id;
         }
-        next.push({ score: h.score + step, prev, first, cf, path: h.path.concat(ci) });
+        const t = prev === m.bos ? -1 : triFind(m, h.prev, prev);
+        next.push({ score: h.score + step, prev, t, first, cf, path: h.path.concat(ci), from: h });
       }
     }
+    // Finished sentences are frozen: at a punctuation slot with more typed after it, take what
+    // decoding showed when the keys stopped here (the comma's end-of-message penalty included).
+    // If that ended the sentence (. ! ?), its words are kept: only the mark itself stays open,
+    // so a later word can still make it a comma.
+    if (s.tok.type === 'punct' && !isFinal) {
+      let top = null, topScore = -Infinity;
+      for (const h of next) {
+        const sc = h.score + (s.cands[h.path[j]].text === ',' ? P.cF : 0);
+        if (sc > topScore) { top = h; topScore = sc; }
+      }
+      if (top && /^[.!?]$/.test(s.cands[top.path[j]].text)) next = next.filter(h => h.from === top.from);
+    }
     // Hypotheses with the same state score every future slot the same way, so keep only the
-    // best of each. State: the previous token plus whether the sentence/clause opener is a
-    // question word (all the punctuation heuristic looks at). The sort is stable, so ties
+    // best of each. State: the previous token, its three-word context if it has one, and
+    // whether the sentence/clause opener is a question word (all the punctuation heuristic
+    // looks at). The sort is stable, so ties
     // keep generation order; the C decoder relies on the same rule.
     next.sort((a, b) => b.score - a.score);
     const qs = f => f === null ? 0 : m.qStart.has(f) ? 1 : 2;
     const states = new Set();
     beam = [];
     for (const h of next) {
-      const k = h.prev * 9 + qs(h.first) * 3 + qs(h.cf);
+      const k = ((h.t + 1) * 70000 + h.prev + 3) * 9 + qs(h.first) * 3 + qs(h.cf);
       if (states.has(k)) continue;
       states.add(k);
       beam.push(h);
       if (beam.length >= beamWidth) break;
     }
   });
-  return { toks, slots, hyps: beam.slice(0, nBest) };
+  return { toks, slots, hyps: beam.slice(0, nBest), ctx };
 }
 
-// Render a hypothesis to display text with sentence capitalization.
+// Render a hypothesis to display text with automatic capitalization: sentence starts, I, each
+// word's usual casing (iPhone, Friday), the other casing after words that call for it
+// ("in May" / "I may"), and call signs in capitals (KE7AQA).
 // start.cap: capitalize the first word (default true; false mid-sentence).
-const TIME_BEFORE = new Set(['at', 'by', 'until', 'til', 'till', 'around', 'before', 'after', 'from', 'since']);
-const TIME_AFTER = new Set(['am', 'pm']);
+const CALL_SIGN = /^(?:[a-z]{1,2}[0-9][a-z]{1,4}|[0-9][a-z][0-9][a-z]{1,3})$/;
+function inSorted(a, k) {
+  let lo = 0, hi = a.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (a[mid] < k) lo = mid + 1; else hi = mid; }
+  return lo < a.length && a[lo] === k;
+}
+// Does word id take its other casing between prev and next ("in May", "Will Smith")? A next
+// word that keeps its usual casing wins ("like apple pie").
+function capFlip(m, prev, id, next) {
+  if (id < 0 || id >= m.n) return false;
+  if (next >= 0 && next < m.n && inSorted(m.capKeepKey, id * 65536 + next)) return false;
+  return (prev >= 0 && prev <= m.bos && inSorted(m.capKey, prev * 65536 + id)) ||
+    (next >= 0 && next < m.n && inSorted(m.capNextKey, id * 65536 + next));
+}
 
 function render(m, result, hyp, start = {}) {
   const { toks, slots } = result;
   const bySlotTok = new Map();
   slots.forEach((s, j) => bySlotTok.set(s.tokIndex, j));
-  // The dictionary word chosen for the nearest token before/after toks[i] (spaces skipped).
-  const wordNear = (i, dir) => {
-    for (let k = i + dir; k >= 0 && k < toks.length; k += dir) {
-      if (toks[k].type === 'space') continue;
-      if (toks[k].type !== 'word') return null;
-      const j = bySlotTok.get(k), c = slots[j].cands[hyp.path[j]];
-      return c.id >= 0 && c.id < m.n && !c.partial ? m.words[c.id] : null;
-    }
-    return null;
-  };
-  let capNext = start.cap === undefined ? true : start.cap;
+  const ctx = result.ctx || context(m, null, start);
+  let capNext = ctx.cap;
+  let prev = ctx.prev;                                            // as decode's context
   const pieces = [];
   toks.forEach((t, i) => {
     if (t.type === 'space') { pieces.push({ text: ' ', slot: -1 }); return; }
     const j = bySlotTok.get(i);
     const c = slots[j].cands[hyp.path[j]];
     let text = c.text;
+    let partial;
     if (t.type === 'number') {
-      text = formatNumber(t.keys, TIME_BEFORE.has(wordNear(i, -1)) || TIME_AFTER.has(wordNear(i, 1)));
       capNext = false;
+      prev = -1;
     } else if (t.type === 'word') {
-      const shown = c.id >= 0 && m.display[c.id];
+      // the next word, if a whole word comes right after (spaces only between)
+      let k = i + 1;
+      while (k < toks.length && toks[k].type === 'space') k++;
+      const nc = k < toks.length && toks[k].type === 'word' ? slots[bySlotTok.get(k)].cands[hyp.path[bySlotTok.get(k)]] : null;
+      const next = nc && !nc.partial ? nc.id : -1;
+      const shown = c.id >= 0 && (capFlip(m, prev, c.id, next) ? m.alt[c.id] : m.display[c.id]);
+      const full = shown || c.partial || text;
       if (shown) text = c.partial ? shown.slice(0, text.length) : shown;
+      if (CALL_SIGN.test(full.toLowerCase())) text = text.toUpperCase();
       if (text === 'i' || text.startsWith("i'")) text = 'I' + text.slice(1);
       // keep brand styling like iPhone / eBay at the start of a sentence
       if (capNext && !/^[a-z][A-Z]/.test(text)) text = text.charAt(0).toUpperCase() + text.slice(1);
+      if (c.partial) partial = CALL_SIGN.test(full.toLowerCase()) ? full.toUpperCase() : full;
       capNext = false;
+      prev = c.id >= 0 && c.id < m.n && !c.partial ? c.id : -1;
     } else {
-      capNext = text !== ',';
+      capNext = /^[.!?]$/.test(text);
+      prev = c.id < 0 ? -1 : c.text === ',' ? c.id : m.bos;
     }
-    const partial = c.partial ? (m.display[c.id] || c.partial) : undefined;
     pieces.push({ text, slot: j, partial, unknown: c.unknown });
   });
   return pieces;
@@ -404,7 +527,7 @@ function render(m, result, hyp, start = {}) {
 // Probability of each letter a-z coming next, for sizing QWERTY keys (null if unknown).
 // Floating point is fine here: it only scales keys, so it needn't match other decoders exactly.
 function nextLetterProbs(m, result, hyp, start = {}) {
-  const S = m.scale, startPrev = start.prev === undefined ? m.bos : start.prev;
+  const S = m.scale, startPrev = result && result.ctx ? result.ctx.prev : start.prev === undefined ? m.bos : start.prev;
   const prevContext = slotIndex => {
     if (slotIndex < 0 || !hyp) return startPrev;
     const s = result.slots[slotIndex], c = s.cands[hyp.path[slotIndex]];
@@ -493,8 +616,8 @@ function userFind(u, prev, cur) {
 }
 function userCount(u, prev, cur) { const i = userFind(u, prev, cur); return i >= 0 ? u.pairs[i][2] : 0; }
 
-function tokenScore(m, u, prev, id) {
-  let s = id > m.bos ? USER_WORD_BASE : lp(m, prev, id);
+function tokenScore(m, u, prev, id, t = -1) {
+  let s = id > m.bos ? USER_WORD_BASE : lp3(m, t, prev, id);
   if (u) {
     s += USER_UNI[Math.min(userCount(u, USER_ANY, id), 15)];
     if (prev >= 0) s += USER_PAIR[Math.min(userCount(u, prev, id), 15)];
@@ -528,16 +651,16 @@ function userWord(m, u, w) {
 }
 
 // Learn from text the person accepted (sent, copied): hyp as decoded, with their corrections.
-// Words still being completed and unmatched key strings are skipped; a word spelled exactly
-// that the dictionary lacks (letters, apostrophes and digits: ke7aqa) becomes a learned word.
+// Words still being completed and unmatched key strings are skipped; a word spelled exactly, or
+// typed on QWERTY, that the dictionary lacks (letters, apostrophes, digits: ke7aqa) is learned.
 function learn(m, u, result, hyp, start = {}) {
   if (!u || u.bos !== m.bos || !hyp) return;
-  let prev = start.prev === undefined ? m.bos : start.prev;
+  let prev = result.ctx ? result.ctx.prev : start.prev === undefined ? m.bos : start.prev;
   result.slots.forEach((s, j) => {
     const c = s.cands[hyp.path[j]];
     let id = c.id;
     if (c.number) { prev = AFTER_NUMBER; return; }
-    if (c.literal && /^[a-z'0-9]+$/.test(c.text) && c.text.length <= USER_WORD_LEN) id = userWord(m, u, c.text);
+    if ((c.literal || c.typed) && /^[a-z'0-9]+$/.test(c.text) && c.text.length <= USER_WORD_LEN) id = userWord(m, u, c.text);
     else if (c.partial || id < 0) { prev = -1; return; }
     userBump(u, USER_ANY, id);
     if (prev >= 0) userBump(u, prev, id);
@@ -546,4 +669,4 @@ function learn(m, u, result, hyp, start = {}) {
 }
 
 if (typeof module !== 'undefined') module.exports = { buildModel, decode, render, nextLetterProbs, exactMatches, wordKeys, tokenize, formatNumber,
-  newUser, learn, USER_UNI, USER_PAIR, userParams };
+  newUser, learn, USER_UNI, USER_PAIR, userParams, recentParams };

@@ -44,14 +44,18 @@
 #endif
 #define OP_USER_WORD_LEN 23     /* longest learned word */
 #define OP_MAX_USER_CANDS 4     /* learned words considered per slot, and again as completions */
+#define OP_RECENT_WORDS 32      /* words of start->before that count as recent */
 #define OP_MAX_CANDS (OP_MAX_EXACT + OP_MAX_COMPLETIONS + 2 * OP_MAX_USER_CANDS)
 
 #define OP_NONE 0xFFFF          /* token id of an unknown word (decoder.js uses -1) */
+#define OP_TIME_ID 0xFFFA       /* id of a number read as a time (5:30); lock a slot to it, or to
+                                   OP_NONE for the plain number (5.30) */
+#define OP_TIME_BEFORE 10       /* words after which a number is likely a time (at, by, until...) */
 
 enum { OP_OK = 0, OP_ERR_MODEL = -1, OP_ERR_TOO_LONG = -2, OP_ERR_SPACE = -3, OP_ERR_ARG = -4 };
 
 /* What each slot was decoded as. */
-enum { OP_WORD, OP_PARTIAL, OP_PUNCT, OP_LITERAL, OP_UNKNOWN, OP_NUMBER };
+enum { OP_WORD, OP_PARTIAL, OP_PUNCT, OP_LITERAL, OP_UNKNOWN, OP_NUMBER, OP_TIME };
 
 enum { OP_P_QQ, OP_P_QN, OP_P_DQ, OP_P_CF, OP_P_DB, OP_P_CB, OP_P_EB,
        OP_P_APOSTROPHE, OP_P_COMPLETION, OP_P_LITERAL, OP_P_UNKNOWN, OP_N_PARAMS };
@@ -74,6 +78,24 @@ typedef struct {
     const char *punct;
     int16_t param[OP_N_PARAMS];
     uint16_t time_id[2];        /* "am", "pm" (OP_NONE if absent) */
+    uint16_t time_before[OP_TIME_BEFORE];   /* "at", "by", ... (OP_NONE if absent) */
+    /* Optional sections (empty in older model files). */
+    const uint16_t *q_skip;     /* greetings skipped when finding a sentence's opener */
+    uint32_t n_skip;
+    const uint32_t *tri_key, *tri_start;    /* three-word contexts p2 << 16 | p1 */
+    const int16_t *tri_bow, *tri_lp;
+    const uint16_t *tri_next;
+    uint32_t n_tri;
+    const uint32_t *cap_key;    /* prev << 16 | word: the word's other casing after prev */
+    uint32_t n_cap;
+    const uint16_t *alt_id;
+    const uint32_t *alt_off;
+    const char *alt_text;
+    uint32_t n_alt;
+    const uint32_t *cap_next;   /* word << 16 | next: the word's other casing before next */
+    uint32_t n_cap_next;
+    const uint32_t *cap_keep;   /* word << 16 | next: its usual casing before next, whatever prev says */
+    uint32_t n_cap_keep;
 } op_model;
 
 /* What one person types, learned by op_learn and read by op_decode: words the dictionary
@@ -98,6 +120,14 @@ typedef struct {
     uint16_t prev;      /* previous token id: model->bos at a sentence start, OP_NONE if unknown */
     uint8_t cap;        /* capitalize the first word */
     const op_user *user;    /* what this person has typed, or NULL */
+    /* The text before the composition, or NULL: what's already in the field, or the last few
+     * messages of the conversation, one per line. Its last words are the context (they replace
+     * prev and cap), and words used in it get a small bonus. A line break ends a sentence. */
+    const char *before;
+    /* On a QWERTY keyboard that sends keypad digits: the letter tapped for each key press
+     * (same length as keys; any other character for presses that weren't letters), or NULL.
+     * Shown, and learned when sent, when no word matches. */
+    const char *hint;
 } op_start;
 
 /* Force slot `slot` to word `id` (as decoder.js locks do). Ignored if that word isn't a candidate. */
@@ -112,13 +142,13 @@ typedef struct {
 } op_tok;
 
 typedef struct {
-    uint16_t id;        /* token id, or OP_NONE for OP_LITERAL / OP_UNKNOWN / OP_NUMBER */
+    uint16_t id;        /* token id; OP_NONE for OP_LITERAL / OP_UNKNOWN / OP_NUMBER, OP_TIME_ID for OP_TIME */
     uint8_t kind;       /* OP_WORD, OP_PARTIAL, ... */
 } op_choice;
 
 typedef struct {
     int32_t score;
-    uint16_t seq, prev, id;
+    uint16_t seq, prev, id, tri;
     uint8_t parent, kind, first, cf;
 } op_entry;
 
@@ -130,8 +160,11 @@ typedef struct {
     op_choice choice[OP_MAX_SLOTS];
     int32_t score;
     const op_user *user;    /* start->user, if it matches the model */
+    uint16_t ctx_prev;      /* the context decoding started from (start->before, or prev / cap) */
+    uint8_t ctx_cap, n_recent;
+    uint16_t recent[OP_RECENT_WORDS];   /* words used in start->before */
     /* Working memory. */
-    char keys[OP_MAX_KEYS], lits[OP_MAX_KEYS];
+    char keys[OP_MAX_KEYS], lits[OP_MAX_KEYS], hints[OP_MAX_KEYS];
     struct { uint16_t id; uint8_t parent, kind; } bp[OP_MAX_SLOTS][OP_MAX_BEAM];
     op_entry ent[OP_MAX_BEAM * OP_MAX_CANDS];
 } op_decoder;

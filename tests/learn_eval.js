@@ -2,6 +2,9 @@
 // (words the model doesn't know yet are spelled in exact mode), score the decode, then learn
 // from the message as sent, as if they had fixed any mistakes first.
 //   node tests/learn_eval.js [users_dev.tsv] [--model onepress.bin] [--params a,b,base]
+//                            [--before N] [--recent bonus,maxUni]
+// --before N: give the decoder the person's previous N messages as the text before (start.before),
+// one per line, as an app carrying context from message to message would.
 // Files: model/corpora/nus/users_{dev,test,test_na}.tsv, built by model/prep_nus.py.
 // Scores predicted words only (exactly spelled ones are always right), with and without learning.
 const fs = require('fs'), path = require('path');
@@ -10,7 +13,8 @@ const D = require(path.join(__dirname, '../web/decoder.js'));
 const args = process.argv.slice(2);
 const opt = (k) => { const i = args.indexOf(k); return i >= 0 ? args.splice(i, 2)[1] : null; };
 const modelFile = opt('--model') || path.join(__dirname, '../model/onepress.bin');
-const params = opt('--params');
+const params = opt('--params'), nBefore = +(opt('--before') || 0), recent = opt('--recent');
+if (recent) D.recentParams(...recent.split(',').map(Number));
 if (params) D.userParams(...params.split(',').map(Number));
 const file = args[0] || path.join(__dirname, '../model/corpora/nus/users_dev.tsv');
 const m = D.buildModel(fs.readFileSync(modelFile));
@@ -32,7 +36,8 @@ function run(learning) {
   for (const [uid, msgs] of users) {
     const u = D.newUser(m), learned = new Set();
     let uw = 0, uwt = 0;
-    for (const msg of msgs) {
+    for (const [mi, msg] of msgs.entries()) {
+      const before = nBefore ? msgs.slice(Math.max(0, mi - nBefore), mi).map(x => x + '\n').join('') : undefined;
       const ref = toks(msg);
       let keys = '';
       const predicted = [];
@@ -46,7 +51,7 @@ function run(learning) {
           predicted.push(pred);
         }
       });
-      const r = D.decode(m, keys, {}, 8, 1, { user: learning ? u : null });
+      const r = D.decode(m, keys, {}, 8, 1, { user: learning ? u : null, before });
       const out = toks(D.render(m, r, r.hyps[0]).map(p => p.text).join(''));
       let wi = 0;
       ref.forEach((x, i) => {

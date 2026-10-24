@@ -31,7 +31,10 @@ if (learnMode) {
   // Call signs and words with digits: spelled once, then typed with the digit held or pressed.
   // At the start (room in the table) and again at the end (full, so words get replaced).
   const callsigns = ['keHaqa', '53H272', '537272', '53H2', '53', '4404053H272#', 'wDbcd', '9D222', 'wDbcd0keHaqa',
-    '9D2220537272#', 'Eever', 'E3837', '43837', '2B3', '2B32', '53H272H', 'H53H272', '53H#272'];
+    '9D2220537272#', 'Eever', 'E3837', '43837', '2B3', '2B32', '53H272H', 'H53H272', '53H#272',
+    // typed on QWERTY (hints) with no word matching, then predicted; and with text before
+    '767839\t\tqorvex', '767839', '76783', '4404767839#\they|\tgi qorvex', '96#93\t\tzm wd', '96#93',
+    '4663\tsee you at the qorvex|\t'];
   inputs.push(...callsigns);
   const users = path.join(__dirname, '../model/corpora/nus/users_dev.tsv'), known = new Set(m.words), seen = new Set();
   if (fs.existsSync(users)) for (const line of fs.readFileSync(users, 'utf8').split('\n')) {
@@ -46,6 +49,11 @@ if (learnMode) {
   inputs.push(...callsigns);
 }
 
+const LETTERS = { 2: 'abc', 3: 'def', 4: 'ghi', 5: 'jkl', 6: 'mno', 7: 'pqrs', 8: 'tuv', 9: 'wxyz' };
+const BEFORE = ['', 'how are you', 'Hello how are you doing', 'See you at the beach.|', 'I bought milk, eggs and',
+  'Are you coming tonight?|Yes|', 'meet at 5 by the KE7AQA', 'It’s my turn, ', 'WHAT ARE YOU DOING', 'the',
+  'call me|ok|what time is the game tonight', 'lol ok! so', 'I think the meeting moved to', 'qorvex is here, and',
+  'x'.repeat(40) + ' word', 'Starbucks after school', 'in', 'ok, and then what', '?', 'helloé world 2day'];
 // Seeded random so failures reproduce.
 let seed = 12345;
 const rnd = n => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
@@ -68,18 +76,27 @@ for (let i = 0; i < nFuzz; i++) {
       for (let j = 1 + rnd(5); j > 0; j--) k += pick("abcdefghijklmnopqrstuvwxyz'"); // spelled exactly
     } else if (r === 8) {
       k += pick(['#', '.', ',', '?', '!', '##', 'A', 'BC', '2A3', '#0#', '#G#AAA#AA', 'BJC#BGI#B#B',
-        'D.BE', 'B,FAA', 'E3837', 'keHaqa', 'CeAabc', "JA's", '#B#', 'F##B', 'G#', '53H252', '280F#DA', '290BA#BF076', 'F#DA76', 'C#BE26', 'CG#FF']);
+        'D.BE', 'B,FAA', 'E3837', 'keHaqa', 'CeAabc', "JA's", '#B#', 'F##B', 'G#', '53H252', '280F#DA', '290BA#BF076', 'F#DA76', 'C#BE26', 'CG#FF',
+        'F.DA', 'F:DA', 'F:', ':', 'J.EF026', '280F.DA', 'B:FG#', '#.#', 'BC:DE', 'C#J9', 'F#DA#AA']);
     } else {
       k += pick('23456789') + pick(['', 'a', '#', "'"]) + pick('23456789');
     }
     k += pick(['0', '0', '0', '#0', '', '00', '#']);
   }
-  inputs.push(k.slice(0, 250));
+  k = k.slice(0, 250);
+  // A third also get the text before (start.before) and QWERTY letter hints (start.hint).
+  if (rnd(3) === 0) {
+    const before = pick(BEFORE);
+    const hint = [...k].map(c => /[2-9]/.test(c) && rnd(4) ? pick(LETTERS[c]) : ' ').join('');
+    k += '\t' + before + (rnd(2) ? '\t' + hint : '');
+  }
+  inputs.push(k);
 }
 
 const user = learnMode ? D.newUser(m) : null;
-const js = inputs.map(k => {
-  const r = D.decode(m, k, {}, beam, 5, { user });
+const js = inputs.map(line => {
+  const [k, before, hint] = line.split('\t');
+  const r = D.decode(m, k, {}, beam, 5, { user, before: before === undefined ? undefined : before.replace(/\|/g, '\n'), hint });
   const text = D.render(m, r, r.hyps[0]).map(p => p.text).join('');
   if (user) D.learn(m, user, r, r.hyps[0]);
   return text;
