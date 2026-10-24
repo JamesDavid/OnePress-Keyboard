@@ -219,7 +219,7 @@ static int lit_match_text(const char *w, int wn, int strip, const char *lit, int
     int t = 0;
     for (int i = 0; i < wn && t < n; i++) {
         if (strip && w[i] == '\'') continue;
-        if (lit[t] && lit[t] != w[i]) return 0;
+        if (lit[t] && lit[t] != (w[i] >= 'A' && w[i] <= 'Z' ? w[i] + 32 : w[i])) return 0;   /* learned words may be cased */
         t++;
     }
     for (; t < n; t++) if (lit[t]) return 0;    /* word shorter than the exact letters */
@@ -279,7 +279,8 @@ static int same_letters(const char *a, int an, const char *b, int bn) {
         while (i < an && a[i] == '\'') i++;
         while (j < bn && b[j] == '\'') j++;
         if (i == an || j == bn) return i == an && j == bn;
-        if (a[i++] != b[j++]) return 0;
+        char x = a[i++], y = b[j++];
+        if ((x >= 'A' && x <= 'Z' ? x + 32 : x) != (y >= 'A' && y <= 'Z' ? y + 32 : y)) return 0;
     }
 }
 
@@ -416,6 +417,7 @@ typedef struct { uint16_t id; uint8_t kind; int16_t pen; } cand;
  * word's digit 2-9 is its own key and 0/1 the held digit; a typed held digit 2-9 compares as
  * that key, and the exact characters (lit) must still agree. */
 static char user_key(char c) {
+    if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
     if (c == 39) return '#';
     if (c >= '0' && c <= '9') return c >= '2' ? c : (char)('A' + (c - '0'));
     return KEY_OF[c - 'a'];
@@ -871,7 +873,7 @@ static int display(const op_model *m, uint16_t prev, uint16_t id, uint16_t next,
  * letter, digit, 1-3 letters (2e0abc). See decoder.js CALL_SIGN. */
 static int call_sign(const char *w, int n) {
     int i = 0, a = 0, b = 0;
-    #define LOW(c) ((c) >= 'a' && (c) <= 'z')
+    #define LOW(c) (((c) | 32) >= 'a' && ((c) | 32) <= 'z')
     #define DIG(c) ((c) >= '0' && (c) <= '9')
     if (n >= 3 && DIG(w[0]) && LOW(w[1]) && DIG(w[2])) {
         for (i = 3; i < n && LOW(w[i]); i++) b++;
@@ -993,8 +995,13 @@ static void user_bump(op_user *u, uint16_t prev, uint16_t cur) {
 /* Id of learned word w[0..wn), adding it (replacing the least used one when full). */
 static uint16_t user_word(op_user *u, const op_model *m, const char *w, int wn) {
     int k = -1;
-    for (int j = 0; j < u->n_words && k < 0; j++)
-        if ((int)strlen(u->word[j]) == wn && memcmp(u->word[j], w, (size_t)wn) == 0) k = j;
+    for (int j = 0; j < u->n_words && k < 0; j++) {     /* ignoring case: it keeps the casing it has */
+        const char *t = u->word[j];
+        int i = 0;
+        while (i < wn && t[i] && (t[i] >= 'A' && t[i] <= 'Z' ? t[i] + 32 : t[i]) == w[i]) i++;
+        if (i == wn && !t[i]) k = j;
+    }
+    if (k >= 0) return (uint16_t)(m->bos + 1 + k);
     if (k < 0 && u->n_words < OP_USER_WORDS) {
         k = u->n_words++;
     } else if (k < 0) {

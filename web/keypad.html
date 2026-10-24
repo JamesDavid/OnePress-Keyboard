@@ -151,7 +151,8 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   background: var(--surface); border: 1px solid var(--key-edge); border-left: 4px solid var(--accent); border-radius: 12px;
   padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; font-size: 0.92rem; line-height: 1.5;
 }
-.tut .top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.tut .top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.tut .step { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); white-space: nowrap; }
 .tut h2 { font-family: var(--f-display); font-weight: 700; font-size: 1.08rem; margin: 0; }
 .tut p { margin: 0; }
 .tut .ok { color: var(--accent); font-weight: 700; min-height: 1.5em; }
@@ -167,6 +168,39 @@ kbd {
 }
 .wrap.tutorial .model, .wrap.tutorial .learned, .wrap.tutorial .compare, .wrap.tutorial .notes { display: none !important; }
 
+/* Fit the keyboard (and the tutorial) on one screen: spacing and key sizes follow the
+   viewport height, down to a 640px-tall phone. */
+body { padding-block: clamp(8px, 2.2dvh, 20px) clamp(10px, 3dvh, 28px); }
+.wrap { gap: clamp(6px, 1.4dvh, 14px); }
+.lcd { height: clamp(5.5rem, 18dvh, 10.5rem); padding: clamp(8px, 1.6dvh, 16px) 16px clamp(6px, 1.2dvh, 12px); gap: clamp(4px, 1dvh, 10px); }
+.out { font-size: clamp(1.15rem, 2.9dvh, 1.45rem); }
+.alts { height: clamp(34px, 5.2dvh, 44px); }
+.chip { padding: clamp(3px, 0.7dvh, 6px) 13px; }
+.mode button { padding: clamp(3px, 0.9dvh, 7px); }
+.pad { gap: clamp(5px, 1.2dvh, 10px); }
+.k { padding: clamp(2px, 1dvh, 10px) 4px clamp(2px, 0.9dvh, 9px); }
+.k .d { font-size: clamp(1.05rem, 3.1dvh, 1.6rem); }
+.qk { height: clamp(34px, 5.6dvh, 46px); }
+.qw { gap: clamp(6px, 1.2dvh, 10px); padding-block: clamp(6px, 1.2dvh, 10px); }
+.row .act { padding: clamp(5px, 1.2dvh, 10px) 8px; }
+.wrap.tutorial .lcd { height: clamp(3.6rem, 12dvh, 8rem); }
+.wrap.tutorial .status, .wrap.tutorial .mode { display: none; }    /* the tutorial uses the keypad */
+.wrap.tutorial.no-alts .alts { display: none; }                    /* only the guesses step needs them */
+@media (max-height: 700px) {
+  body { padding-block: 6px 8px; }
+  .wrap, .pad { gap: 5px; }
+  .k { padding: 1px 4px 2px; }
+}
+@media (max-height: 760px) {
+  .status { display: none; }
+  .lcd { height: clamp(4.2rem, 16dvh, 10.5rem); }
+  .k { gap: 0; }
+  .k .l { line-height: 1.1; }
+}
+.tut { padding: clamp(7px, 1.4dvh, 12px) 12px; gap: clamp(2px, 0.6dvh, 6px); font-size: clamp(0.8rem, 2dvh, 0.92rem); line-height: 1.4; }
+.tut .ok { min-height: 0; }
+.tut .nav .act { padding: clamp(4px, 0.8dvh, 7px) 14px; }
+
 .notes { font-size: 0.86rem; color: var(--muted); line-height: 1.55; display: flex; flex-direction: column; gap: 6px; }
 .notes p { margin: 0; max-width: 62ch; }
 .notes b { color: var(--ink); font-weight: 700; }
@@ -179,8 +213,7 @@ kbd {
   </header>
 
   <section class="tut" id="tut" hidden aria-label="Tutorial">
-    <div class="top"><span id="tutStep"></span><span class="dots" id="tutDots"></span></div>
-    <h2 id="tutTitle"></h2>
+    <div class="top"><h2 id="tutTitle"></h2><span class="step"><span id="tutStep"></span> <span class="dots" id="tutDots"></span></span></div>
     <p id="tutText"></p>
     <p class="ok" id="tutOk" aria-live="polite"></p>
     <div class="nav">
@@ -223,11 +256,12 @@ kbd {
   <div class="notes">
     <p>Press each key once per letter. <b>0</b> is a space, <b>1</b> deletes, and <b>*</b> swaps the selected word for the next guess, and holding it finishes the word you're typing. <b>#</b> is punctuation: the model picks . , ! or ?, and between letters it's an apostrophe. Apostrophes are optional, so "dont" also gives "don't". <b>Hold any number key</b> to type that digit (hold 1 for "1", hold 0 for "0"). Digits end the word, so hold 4 then type 3837 for "4ever". <b>#</b> next to digits makes money and decimals: # 6 # 000 # 00 gives "$6,000.00". For call signs, spell them once in exact mode (ke7aqa) and send: after that one press per character works, 5 3 7 2 7 2, with the 7 tapped or held.</p>
     <p><b>Hold #</b> for exact spelling, for names and words the model doesn't know. Press a key repeatedly to cycle its letters and then its digit (2 = a, b, c, 2), and pause or press another key to move on. # cycles . , ? ! ' : and 0 gives a space, or the digit 0 on a second press. On QWERTY, exact mode types the letter you tap. Hold # again to go back to predictive.</p>
-    <p>The word list includes names, places, brands and apps, with their usual capitalization (iPhone, McDonald's, YouTube).</p>
-    <p><b>Send</b> copies the text, clears it and learns from it: the words you use and the words you use together get more likely, and a word you spelled exactly is guessed from its keys next time. That covers punctuation too. What it learns stays in this browser, kept for each model separately. <b>Forget</b> clears it.</p>
+    <p>Capitals are automatic: sentence starts, I, names, places, brands and apps with their usual capitalization (iPhone, McDonald's, YouTube), the words around a word ("in May" but "I may", "Will Smith"), and call signs (KE7AQA). For a word it learned from you, tap it and <b>Aa</b> to capitalize it from then on.</p>
+    <p>A number that could be a time offers both: 5 # 30 is 5.30 on its own and 5:30 after at, by or until, or with am or pm after it. Tap it to switch.</p>
+    <p><b>Send</b> copies the text, clears it and learns from it: the words you use and the words you use together get more likely, and a word you spelled exactly, or typed on QWERTY when no word matched, is guessed from its keys next time. That covers punctuation too. The next message also starts with your last few in mind, so words you just used are likelier. Once you start a new sentence, the one before it stays as it is. What it learns stays in this browser, kept for each model separately. <b>Forget</b> clears it.</p>
     <p><b>Tutorial</b> (next to the title) walks through all of this in a few steps.</p>
     <p>Tap any word to see other words with the same keys. Picking one locks it, and the rest of the sentence re-decodes around it.</p>
-    <p>The QWERTY keyboard sends only each letter's keypad number (shown in the corner), so the model decodes it exactly as if you'd used the keypad. Keys grow and shrink in place with how likely each letter is to come next. A computer keyboard works the same way, and Tab finishes the word.</p>
+    <p>The QWERTY keyboard sends only each letter's keypad number (shown in the corner), so the model decodes it exactly as if you'd used the keypad. When no word fits, it keeps the letters you tapped. Keys grow and shrink in place with how likely each letter is to come next. A computer keyboard works the same way, and Tab finishes the word.</p>
     <p>Runs entirely in this page. <b>Model</b> picks the word model: Phone (45,000 words), ESP32 (20,000) and Radio (5,000) are the same files the C decoder runs on those devices. <b>Load .bin file…</b> opens any model built with <code>model/export_bin.py</code>. <b>Compare sizes</b> shows what each model makes of the same keys, with the words that differ from the selected model highlighted.</p>
   </div>
 </div>
@@ -463,7 +497,7 @@ function timeKind(keys) {
 // Does dictionary word `id` (matched through key string `key`) agree with the exact letters?
 function litMatch(m, tok, id, key) { return litMatchText(tok, m.words[id], key); }
 function litMatchText(tok, word, key) {
-  const text = key.includes('#') ? word : word.replace(/'/g, '');
+  const text = (key.includes('#') ? word : word.replace(/'/g, '')).toLowerCase();   // learned words may be cased
   for (let i = 0; i < tok.lit.length; i++) {
     if (tok.lit[i] !== null && text[i] !== tok.lit[i]) return false;
   }
@@ -476,7 +510,7 @@ function litMatchText(tok, word, key) {
 // exact letters/digits (tok.lit) still have to agree, so a held 7 never matches a p.
 function userKeys(w) {
   let s = '';
-  for (const c of w) s += c >= '0' && c <= '9' ? (c >= '2' ? c : String.fromCharCode(17 + c.charCodeAt(0))) : KEYMAP[c];
+  for (const c of w.toLowerCase()) s += c >= '0' && c <= '9' ? (c >= '2' ? c : String.fromCharCode(17 + c.charCodeAt(0))) : KEYMAP[c];
   return s;
 }
 function userTyped(k) { return k.replace(/[C-J]/g, c => String(c.charCodeAt(0) - 65)); }
@@ -567,7 +601,7 @@ function slotCandidates(m, tok, isLast, u) {
   if (allLit) {
     // Spelled out exactly: always offer it as typed, even if it isn't in the word list.
     const typed = tok.lit.join('');
-    const known = exact.filter(c => c.text.replace(/'/g, '') === typed.replace(/'/g, '') && c.text.length === typed.length);
+    const known = exact.filter(c => c.text.toLowerCase().replace(/'/g, '') === typed.replace(/'/g, '') && c.text.length === typed.length);
     if (known.length) return known;
     return [{ text: typed, id: -1, literal: true }];
   }
@@ -823,6 +857,8 @@ function nextLetterProbs(m, result, hyp, start = {}) {
 // then on) and counts of each token and token pair they used, which add a bonus to those
 // choices. Mirrors op_user in c/onepress.c: same sizes, same integer tables, same eviction.
 // Ids: learned word k is bos + 1 + k. It belongs to one model (u.bos must match).
+// A learned word is shown with the casing stored in u.words (an app may change it, e.g.
+// "keturah" -> "Keturah"); matching ignores case.
 const USER_WORDS = 256, USER_WORD_LEN = 23, USER_PAIRS = 1024, MAX_USER_CANDS = 4;
 const USER_ANY = 0xFFFD;           // pair prev for a token's own count
 // Bonus by count (capped at 15), in model units (1/256 nat): round(256 * a * ln(1 + count)),
@@ -874,7 +910,7 @@ function userBump(u, prev, cur) {
 
 // Id of learned word w, adding it (replacing the least used one when full).
 function userWord(m, u, w) {
-  let k = u.words.indexOf(w);
+  let k = u.words.findIndex(x => x.toLowerCase() === w);      // keeps the casing it was given
   if (k < 0 && u.words.length < USER_WORDS) { u.words.push(w); k = u.words.length - 1; }
   else if (k < 0) {
     k = 0;
@@ -927,6 +963,22 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
 
   let exact = false, tap = null;
   let m = null, keys = '', locks = {}, sel = null, result = null, best = null, exampleIdx = 0, isExample = false;
+  // The letter tapped for each press on QWERTY (or a computer keyboard), which sends only the
+  // keypad digit: shown, and learned on Send, when no word matches (start.hint). hintKeys is the
+  // key string it was made for; where keys changed since, the letters are dropped.
+  let hint = '', hintKeys = '';
+  function hintFor(k) {
+    let l = 0;
+    while (l < k.length && l < hintKeys.length && k[l] === hintKeys[l]) l++;
+    hint = hint.slice(0, l).padEnd(k.length, ' ');
+    hintKeys = k;
+    return hint;
+  }
+  // The last few messages sent, as the text before the next one (start.before): their words are
+  // likelier, like a conversation carrying on.
+  let sentLog = [];
+  try { sentLog = JSON.parse(localStorage.getItem('sent') || '[]').slice(-3); } catch (err) {}
+  const startFor = id => ({ user: getUser(id), before: sentLog.map(t => t + '\n').join(''), hint: hintFor(keys) });
 
   // Build keypad
   const pad = $('pad');
@@ -956,7 +1008,7 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
       else {
         const d = wordKeys(c);
         b.className = 'qk l'; b.innerHTML = `${c}<sup>${d}</sup>`; b.setAttribute('aria-label', `${c}, key ${d}`);
-        b.onclick = () => (exact ? pressLiteral(c) : press(d));
+        b.onclick = () => (exact ? pressLiteral(c) : press(d, c));
       }
       b.dataset.qk = c;
       r.appendChild(b);
@@ -1029,7 +1081,7 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
   const CYCLE = { '2': 'abcC', '3': 'defD', '4': 'ghiE', '5': 'jklF', '6': 'mnoG', '7': 'pqrsH',
                   '8': 'tuvI', '9': 'wxyzJ', '0': '0A', '#': ".,?!':" };
   const TAP_GAP = 900;
-  function press(d) {
+  function press(d, letter) {
     if (!m) return;
     if (d === '*') { tap = null; nextGuess(); return; }
     if (d === '1') { tap = null; backspace(); return; }
@@ -1046,7 +1098,10 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
       tap.time = now; tap.len = keys.length;
     } else {
       tap = null;
+      hintFor(keys);
       keys += d;
+      hint += letter || ' ';
+      hintKeys = keys;
     }
     sel = null; update();
   }
@@ -1067,7 +1122,7 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
   }
 
   function decodeNow() {
-    result = decode(m, keys, locks, 8, 1, { user: getUser(modelId) });    // the beam the devices use
+    result = decode(m, keys, locks, 8, 1, startFor(modelId));    // the beam the devices use
     // drop locks for slots that no longer exist
     for (const j in locks) if (+j >= result.slots.length) delete locks[j];
     best = result.hyps[0];
@@ -1086,7 +1141,7 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
     for (const c of s.all.slice(0, 30)) {
       const label = c.partial || c.text;
       if (seen.has(label) || c.unknown) continue;
-      const r = decode(m, keys, Object.assign({}, locks, { [j]: { keys: s.tok.keys, text: label } }), 20, 1, { user: getUser(modelId) });
+      const r = decode(m, keys, Object.assign({}, locks, { [j]: { keys: s.tok.keys, text: label } }), 20, 1, startFor(modelId));
       if (!r.hyps.length) continue;
       seen.set(label, { label, score: r.hyps[0].score, completion: c.partial ? c.partial : null });
     }
@@ -1197,11 +1252,13 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
     $('learned').textContent = sent
       ? `Learned from you: ${u.pairs.length.toLocaleString()} word counts${n ? `, ${n} new word${n > 1 ? 's' : ''} (${u.words.slice(-3).join(', ')})` : ''}`
       : 'Learns from what you send';
-    $('forget').disabled = !sent;
+    $('forget').disabled = !sent && !sentLog.length;
   }
   $('forget').addEventListener('click', () => {
     users[modelId] = newUser(m);
     saveUser(modelId);
+    sentLog = [];
+    try { localStorage.removeItem('sent'); } catch (err) {}
     update();
   });
   let modelId = 'l', comparing = false;
@@ -1281,7 +1338,7 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
       const e = getModel(id);
       let text = mine;                 // the selected model's row matches the display, locks included
       if (id !== modelId && keys) {
-        const r = decode(e.m, keys, {}, 8, 1, { user: getUser(id) });
+        const r = decode(e.m, keys, {}, 8, 1, startFor(id));
         text = r.hyps.length ? render(e.m, r, r.hyps[0]).map(p => p.text).join('') : '';
       }
       const row = document.createElement('div');
@@ -1318,6 +1375,19 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
     l.textContent = alts.length > 1 ? 'Other guesses' : (alts.length ? 'Only match' : 'Not in word list');
     box.appendChild(l);
     const cur = currentLabel(j);
+    // A word it learned from you: Aa switches its capital (keturah / Keturah), remembered.
+    const cc = result.slots[j].cands[best.path[j]];
+    if (cc.id > m.bos && !cc.partial) {
+      const u = getUser(modelId), k = cc.id - m.bos - 1, w = u.words[k];
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'chip'; b.textContent = 'Aa';
+      b.setAttribute('aria-label', w === w.toLowerCase() ? 'Capitalize this word from now on' : 'Lowercase this word from now on');
+      b.addEventListener('click', () => {
+        u.words[k] = w === w.toLowerCase() ? w.charAt(0).toUpperCase() + w.slice(1) : w.toLowerCase();
+        saveUser(modelId); update();
+      });
+      box.appendChild(b);
+    }
     for (const a of alts) {
       const b = document.createElement('button');
       b.type = 'button'; b.className = 'chip' + (a.label === cur ? ' on' : '');
@@ -1350,6 +1420,10 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
       navigator.clipboard.writeText(t).then(done, () => { btn.textContent = 'Sent'; setTimeout(() => btn.textContent = 'Send', 1400); });
     } catch (e) { btn.textContent = 'Sent'; setTimeout(() => btn.textContent = 'Send', 1400); }
     if (tutIdx >= 0) tutSent = true;
+    if (!isExample) {
+      sentLog = sentLog.concat(t).slice(-3);
+      try { localStorage.setItem('sent', JSON.stringify(sentLog)); } catch (err) {}
+    }
     keys = ''; locks = {}; sel = null; isExample = false; update();
   });
 
@@ -1357,32 +1431,32 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
   const k = (...ks) => ks.map(x => `<kbd>${x}</kbd>`).join(' ');
   const TUT = [
     { title: 'One press per letter',
-      text: `Press each letter's key once, even when the letter is third on its key. Type <b>hi</b>: ${k('4', '4')}, then ${k('0')} for a space.`,
-      ok: '4 4 could be gh, gi, ih… the model knew you meant hi.',
+      text: `Press each letter's key once, even if it's the third letter on the key. Type <b>hi</b>: ${k('4', '4')}, then ${k('0')} for a space.`,
+      ok: '4 4 could be gh, gi, ih… it knew you meant hi.',
       check: t => /^hi\s/i.test(t.text) },
     { title: 'It reads the whole sentence',
-      text: `Type <b>on my way home</b>: ${k('66')} ${k('0')} ${k('69')} ${k('0')} ${k('929')} ${k('0')} ${k('4663')}. Words settle as you type; ${k('1')} deletes.`,
-      ok: 'On its own 4663 is "good". After "on my way" it\'s "home": each new word can fix the ones before it.',
+      text: `Type <b>on my way home</b>: ${k('66')} ${k('0')} ${k('69')} ${k('0')} ${k('929')} ${k('0')} ${k('4663')}. ${k('1')} deletes.`,
+      ok: 'Alone, 4663 is "good"; after "on my way" it\'s "home". Later words fix earlier ones.',
       check: t => /on my way home/i.test(t.text) },
-    { title: 'Other guesses',
-      text: `Type ${k('4663')}, then press ${k('*')} to swap in the next word with the same keys, or tap a guess under the display. You can tap any word on the display to change it.`,
-      ok: 'Your pick is locked, and the rest of the sentence decodes around it.',
+    { title: 'Other guesses', alts: true,
+      text: `Type ${k('4663')}, then press ${k('*')} for the next word with the same keys, or tap a guess below the display. Tap any word to change it.`,
+      ok: 'Locked in. The rest of the sentence decodes around it.',
       check: t => t.keys.includes('4663') && Object.keys(t.locks).length > 0 },
     { title: 'Punctuation',
-      text: `Type <b>ok</b> (${k('6', '5')}) and press ${k('#')}. The model picks . , ? or ! from the sentence. Between letters ${k('#')} is an apostrophe, and you can skip it: dont gives don't.`,
-      ok: 'Not the mark you wanted? Press * for the next one.',
+      text: `Type <b>ok</b> (${k('6', '5')}) and press ${k('#')}: it picks . , ? or ! from the sentence. Between letters ${k('#')} is an apostrophe, and optional: dont gives don't.`,
+      ok: 'Wrong mark? Press * for the next one.',
       check: t => /ok[.,!?]\s*$/i.test(t.text) },
     { title: 'Numbers',
-      text: `<b>Hold</b> a number key to type its digit. Hold ${k('4')}, then type ${k('3837')}. Held digits next to ${k('#')} make times and money: at 5 # 30 gives 5:30.`,
-      ok: '4ever. Digits end a word unless the next press is another digit, a # or a dot.',
+      text: `<b>Hold</b> a number key for its digit. Hold ${k('4')}, then type ${k('3837')}. With ${k('#')} between digits: at 5 # 30 is 5:30, # 6 # 000 is $6,000.`,
+      ok: '4ever. A digit ends a word unless another digit or # follows.',
       check: t => /4ever/i.test(t.text) },
     { title: 'Exact spelling',
-      text: `For names and call signs, <b>hold</b> ${k('#')}: the display gets a blue outline. Now presses cycle each key's letters (${k('5')} ${k('5')} is k) and then its digit. Spell anything, then hold ${k('#')} again to go back.`,
-      ok: 'A word you spell and then send is learned: next time it comes from its keys like any other word.',
+      text: `For names and call signs, <b>hold</b> ${k('#')} (blue outline). Press a key again to cycle its letters: ${k('5')} ${k('5')} is k. Spell anything, then hold ${k('#')} to go back.`,
+      ok: 'Send a spelled word and it\'s learned: next time, one press per letter.',
       check: t => /[a-z]/.test(t.keys) && !t.exact },
     { title: 'Send',
-      text: `Type anything and press <b>Send</b>. It copies the text, clears the display and learns from it: your words, the words you use together and how you punctuate.`,
-      ok: 'Sent. Forget, under the model picker, clears what it has learned.',
+      text: `Type anything and press <b>Send</b>. It copies the text, clears the display and learns your words, phrases and punctuation.`,
+      ok: 'Sent. Forget (under Model) clears what it learned.',
       check: t => t.sent },
     { title: "You're set",
       text: 'The notes under the keypad cover the rest: the QWERTY keyboard, the three model sizes and comparing them. Tutorial is next to the title any time.',
@@ -1395,6 +1469,7 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
     if (exact) toggleExact();
     $('tut').hidden = false;
     $('wrap').classList.add('tutorial');
+    $('wrap').classList.toggle('no-alts', !TUT[i].alts);
     setMode('keypad');
     const st = TUT[i];
     $('tutStep').textContent = i < TUT.length - 1 ? `Step ${i + 1} of ${TUT.length - 1}` : 'Done';
@@ -1408,7 +1483,7 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
   function tutEnd() {
     tutIdx = -1;
     $('tut').hidden = true;
-    $('wrap').classList.remove('tutorial');
+    $('wrap').classList.remove('tutorial', 'no-alts');
     try { localStorage.setItem('tutorialSeen', '1'); } catch (err) {}
     keys = ''; locks = {}; sel = null; update();
   }
@@ -1438,7 +1513,7 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
     const letter = e.key.toLowerCase();
     if (/^[a-zA-Z']$/.test(k)) k = wordKeys(k.toLowerCase());
     else if (k === 'Enter') k = '#';
-    if (/^[0-9*#]$/.test(k)) { e.preventDefault(); flash(k, letter); press(k); }
+    if (/^[0-9*#]$/.test(k)) { e.preventDefault(); flash(k, letter); press(k, /^[a-z]$/.test(letter) ? letter : undefined); }
   });
   function flash(k, letter) {
     if (!k) return;

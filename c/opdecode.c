@@ -43,6 +43,18 @@ int main(int argc, char **argv) {
     char out[4 * OP_MAX_KEYS + 64];
     while (fgets(line, sizeof line, stdin)) {
         line[strcspn(line, "\r\n")] = 0;
+        /* @Word: give the learned word spelled that way (ignoring case) this casing, as an app's
+         * "capitalize this word" would; prints the line back. */
+        if (line[0] == '@') {
+            for (int k = 0; k < user.n_words; k++) {
+                size_t n = strlen(user.word[k]), i = 0;
+                if (n != strlen(line + 1)) continue;
+                while (i < n && (user.word[k][i] | 32) == (line[1 + i] | 32)) i++;
+                if (i == n) memcpy(user.word[k], line + 1, n);
+            }
+            printf("%s\n", line);
+            continue;
+        }
         /* keys<TAB>before<TAB>hint: the text before ('|' for a line break), the QWERTY letters */
         char *before = strchr(line, '\t'), *hint = NULL;
         if (before) {

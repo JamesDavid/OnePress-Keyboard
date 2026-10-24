@@ -225,7 +225,7 @@ function timeKind(keys) {
 // Does dictionary word `id` (matched through key string `key`) agree with the exact letters?
 function litMatch(m, tok, id, key) { return litMatchText(tok, m.words[id], key); }
 function litMatchText(tok, word, key) {
-  const text = key.includes('#') ? word : word.replace(/'/g, '');
+  const text = (key.includes('#') ? word : word.replace(/'/g, '')).toLowerCase();   // learned words may be cased
   for (let i = 0; i < tok.lit.length; i++) {
     if (tok.lit[i] !== null && text[i] !== tok.lit[i]) return false;
   }
@@ -238,7 +238,7 @@ function litMatchText(tok, word, key) {
 // exact letters/digits (tok.lit) still have to agree, so a held 7 never matches a p.
 function userKeys(w) {
   let s = '';
-  for (const c of w) s += c >= '0' && c <= '9' ? (c >= '2' ? c : String.fromCharCode(17 + c.charCodeAt(0))) : KEYMAP[c];
+  for (const c of w.toLowerCase()) s += c >= '0' && c <= '9' ? (c >= '2' ? c : String.fromCharCode(17 + c.charCodeAt(0))) : KEYMAP[c];
   return s;
 }
 function userTyped(k) { return k.replace(/[C-J]/g, c => String(c.charCodeAt(0) - 65)); }
@@ -329,7 +329,7 @@ function slotCandidates(m, tok, isLast, u) {
   if (allLit) {
     // Spelled out exactly: always offer it as typed, even if it isn't in the word list.
     const typed = tok.lit.join('');
-    const known = exact.filter(c => c.text.replace(/'/g, '') === typed.replace(/'/g, '') && c.text.length === typed.length);
+    const known = exact.filter(c => c.text.toLowerCase().replace(/'/g, '') === typed.replace(/'/g, '') && c.text.length === typed.length);
     if (known.length) return known;
     return [{ text: typed, id: -1, literal: true }];
   }
@@ -585,6 +585,8 @@ function nextLetterProbs(m, result, hyp, start = {}) {
 // then on) and counts of each token and token pair they used, which add a bonus to those
 // choices. Mirrors op_user in c/onepress.c: same sizes, same integer tables, same eviction.
 // Ids: learned word k is bos + 1 + k. It belongs to one model (u.bos must match).
+// A learned word is shown with the casing stored in u.words (an app may change it, e.g.
+// "keturah" -> "Keturah"); matching ignores case.
 const USER_WORDS = 256, USER_WORD_LEN = 23, USER_PAIRS = 1024, MAX_USER_CANDS = 4;
 const USER_ANY = 0xFFFD;           // pair prev for a token's own count
 // Bonus by count (capped at 15), in model units (1/256 nat): round(256 * a * ln(1 + count)),
@@ -636,7 +638,7 @@ function userBump(u, prev, cur) {
 
 // Id of learned word w, adding it (replacing the least used one when full).
 function userWord(m, u, w) {
-  let k = u.words.indexOf(w);
+  let k = u.words.findIndex(x => x.toLowerCase() === w);      // keeps the casing it was given
   if (k < 0 && u.words.length < USER_WORDS) { u.words.push(w); k = u.words.length - 1; }
   else if (k < 0) {
     k = 0;

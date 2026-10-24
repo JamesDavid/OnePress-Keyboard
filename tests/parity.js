@@ -34,7 +34,9 @@ if (learnMode) {
     '9D2220537272#', 'Eever', 'E3837', '43837', '2B3', '2B32', '53H272H', 'H53H272', '53H#272',
     // typed on QWERTY (hints) with no word matching, then predicted; and with text before
     '767839\t\tqorvex', '767839', '76783', '4404767839#\they|\tgi qorvex', '96#93\t\tzm wd', '96#93',
-    '4663\tsee you at the qorvex|\t'];
+    '4663\tsee you at the qorvex|\t',
+    // learned words given a casing by the app
+    '@Qorvex', '767839', '4404767839#', 'qorvex', '@KE7aqa', '53H272', 'keHaqa0767839', '76783\tQORVEX said'];
   inputs.push(...callsigns);
   const users = path.join(__dirname, '../model/corpora/nus/users_dev.tsv'), known = new Set(m.words), seen = new Set();
   if (fs.existsSync(users)) for (const line of fs.readFileSync(users, 'utf8').split('\n')) {
@@ -95,6 +97,10 @@ for (let i = 0; i < nFuzz; i++) {
 
 const user = learnMode ? D.newUser(m) : null;
 const js = inputs.map(line => {
+  if (line[0] === '@') {           // @Word: recase a learned word (as opdecode does)
+    if (user) user.words.forEach((w, i) => { if (w.toLowerCase() === line.slice(1).toLowerCase()) user.words[i] = line.slice(1); });
+    return line;
+  }
   const [k, before, hint] = line.split('\t');
   const r = D.decode(m, k, {}, beam, 5, { user, before: before === undefined ? undefined : before.replace(/\|/g, '\n'), hint });
   const text = D.render(m, r, r.hyps[0]).map(p => p.text).join('');
