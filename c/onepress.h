@@ -7,16 +7,16 @@
  * Usage:
  *   static op_model model;   static op_decoder dec;
  *   op_model_open(&model, blob, blob_size);           // blob: 4-byte aligned KPD2 file
- *   op_decode(&dec, &model, "4330968", 8, NULL, NULL, 0);
- *   op_render(&dec, &model, NULL, out, sizeof out);   // "Hello you"
+ *   op_decode(&dec, &model, "66069092904663", 8, NULL, NULL, 0);
+ *   op_render(&dec, &model, NULL, out, sizeof out);   // "On my way home"
  *
  * Key strings use the same characters as decoder.js: '2'-'9' predictive letters, '0'
  * space, '#' punctuation (an apostrophe between letters), and from exact mode the literal
  * characters 'a'-'z', '\'', '.', ',', '?', '!' and 'A'-'J' for the digits 0-9 (exact mode or
  * a held number key). Digits form numbers: #6#000#00 renders "$6,000.00".
  *
- * Memory: sizeof(op_decoder) is about 20 KB with the defaults below. Small targets can
- * lower the limits, e.g. -DOP_MAX_BEAM=4 -DOP_MAX_SLOTS=48 -DOP_MAX_KEYS=160 for ~5 KB.
+ * Memory: sizeof(op_decoder) is about 24 KB with the defaults below. Small targets can
+ * lower the limits, e.g. -DOP_MAX_BEAM=4 -DOP_MAX_SLOTS=48 -DOP_MAX_KEYS=160 for ~6 KB.
  * The model must be little-endian (it is on ARM, x86, ESP32 and RISC-V).
  */
 #ifndef ONEPRESS_H

@@ -236,7 +236,7 @@ The decoder can change earlier words as more keys arrive, so the keyboard owns a
 
 ## 7. Other targets (later)
 
-- **Handheld radios** (DM-32UV, TIDRADIO H3 and similar): first confirm the MCU and free flash under the community firmwares (OpenDM32 / RA4FHE research for the DM-32UV; NicSure firmware for the TD-H3/H8). The decoder is cheap. Storage is the constraint: about 100 KB for unigram-only T9, a few hundred KB for a pruned bigram, or external SPI flash for the full model. DMR text messaging is the natural use.
+- **Handheld radios** (DM-32UV, TIDRADIO H3 and similar): first confirm the MCU and free flash under the community firmwares (OpenDM32 / RA4FHE research for the DM-32UV; NicSure firmware for the TD-H3/H8). The decoder is cheap. Storage is the constraint: about 100 KB for a word list without pairs, a few hundred KB for a pruned bigram (`onepress-s.bin` is 238 KB), or external SPI flash for the full model. DMR text messaging is the natural use.
 - **ESP32 or other embedded keypad devices:** the same binary format works from flash.
 
 ---

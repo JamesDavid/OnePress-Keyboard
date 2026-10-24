@@ -1,0 +1,34 @@
+# Publishes the demo (web/keypad.html, which has the decoder and models built in) to GitHub Pages,
+# with the models, decoder.js and llm.txt alongside it for direct download.
+name: Pages
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          cp web/keypad.html _site/index.html
+          cp web/decoder.js llm.txt model/onepress.bin model/onepress-m.bin model/onepress-s.bin _site/
+      - uses: actions/upload-pages-artifact@v3
+      - id: deployment
+        uses: actions/deploy-pages@v4
