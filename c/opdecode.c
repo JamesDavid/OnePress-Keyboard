@@ -61,6 +61,15 @@ int main(int argc, char **argv) {
     char out[4 * OP_MAX_KEYS + 64];
     while (fgets(line, sizeof line, stdin)) {
         line[strcspn(line, "\r\n")] = 0;
+        /* @@save: save the user, load it back, and print the saved bytes in hex. */
+        if (strcmp(line, "@@save") == 0) {
+            static uint8_t saved[sizeof(op_user) + 16];
+            int n = op_user_save(&user, saved, sizeof saved);
+            if (n < 0 || op_user_load(&user, &model, saved, (size_t)n) != OP_OK) { printf("<save error>\n"); continue; }
+            for (int i = 0; i < n; i++) printf("%02x", saved[i]);
+            printf("\n");
+            continue;
+        }
         /* @Word: give the learned word spelled that way (ignoring case) this casing, as an app's
          * "capitalize this word" would; prints the line back. */
         if (line[0] == '@') {

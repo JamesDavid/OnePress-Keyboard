@@ -42,7 +42,7 @@ if (learnMode) {
     '4663\tsee you at the qorvex|\t',
     // learned words given a casing by the app
     '@Qorvex', '767839', '4404767839#', 'qorvex', '@KE7aqa', '53H272', 'keHaqa0767839', '76783\tQORVEX said'];
-  inputs.push(...callsigns, ...COMPOUNDS, ...COMPOUNDS);
+  inputs.push(...callsigns, ...COMPOUNDS, ...COMPOUNDS, '@@save');
   const users = path.join(__dirname, '../model/corpora/nus/users_dev.tsv'), known = new Set(m.words), seen = new Set();
   if (fs.existsSync(users)) for (const line of fs.readFileSync(users, 'utf8').split('\n')) {
     const msg = line.split('\t')[1];
@@ -53,7 +53,7 @@ if (learnMode) {
       return x;
     }).replace(/[.,!?]/g, '#')).join('0'));
   }
-  inputs.push(...callsigns);
+  inputs.push('@@save', ...callsigns, '@@save');
 }
 
 const LETTERS = { 2: 'abc', 3: 'def', 4: 'ghi', 5: 'jkl', 6: 'mno', 7: 'pqrs', 8: 'tuv', 9: 'wxyz' };
@@ -103,6 +103,11 @@ for (let i = 0; i < nFuzz; i++) {
 const user = learnMode ? D.newUser(m) : null;
 const nn = nnFile ? D.buildNN(fs.readFileSync(nnFile), m) : undefined;
 const js = inputs.map(line => {
+  if (line === '@@save') {          // save, load back, print the bytes (as opdecode does)
+    const b = D.saveUser(user), back = D.loadUser(m, b);
+    Object.assign(user, back);
+    return Buffer.from(b).toString('hex');
+  }
   if (line[0] === '@') {           // @Word: recase a learned word (as opdecode does)
     if (user) user.words.forEach((w, i) => { if (w.toLowerCase() === line.slice(1).toLowerCase()) user.words[i] = line.slice(1); });
     return line;

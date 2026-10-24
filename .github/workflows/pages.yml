@@ -1,5 +1,6 @@
-# Publishes the demo (web/keypad.html, which has the decoder and models built in) to GitHub Pages,
-# with the models, decoder.js and llm.txt alongside it for direct download.
+# Publishes the demo to GitHub Pages: index.html (the page with the decoder built in; it fetches
+# only the model picked) and the models, decoder.js and llm.txt alongside it. web/keypad.html,
+# with every model built in, is the version that works offline.
 name: Pages
 
 on:
@@ -27,7 +28,8 @@ jobs:
       - name: Assemble site
         run: |
           mkdir -p _site
-          cp web/keypad.html _site/index.html
+          python3 web/build_page.py _site/index.html --lazy
+          cp web/keypad.html _site/keypad.html
           cp web/decoder.js llm.txt model/onepress.bin model/onepress-m.bin model/onepress-s.bin model/onepress-nn.bin _site/
       - uses: actions/upload-pages-artifact@v3
       - id: deployment

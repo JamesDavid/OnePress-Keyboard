@@ -21,12 +21,5 @@ fi
 "$PY" export_bin.py model.json onepress.bin --ambig-only --min-count 3 --tri-min 6
 "$PY" export_bin.py model.json onepress-m.bin --vocab 20000 --ambig-only --min-count 6
 "$PY" export_bin.py model.json onepress-s.bin --vocab 5000 --ambig-only --min-count 20 --no-context-case
-"$PY" - <<'PY'
-import base64
-t = open("../web/page.template.html", encoding="utf-8").read()
-t = t.replace("__DECODER__", open("../web/decoder.js", encoding="utf-8").read())
-for tag, f in [("L", "onepress.bin"), ("M", "onepress-m.bin"), ("S", "onepress-s.bin")]:
-    t = t.replace(f"__MODEL_{tag}__", base64.b64encode(open(f, "rb").read()).decode())
-open("../web/keypad.html", "w", encoding="utf-8", newline="\n").write(t)
-PY
+"$PY" ../web/build_page.py
 echo "built model.json, onepress{,-m,-s}.bin, web/keypad.html"

@@ -104,8 +104,9 @@ typedef struct {
 /* What one person types, learned by op_learn and read by op_decode: words the dictionary
  * lacks, call signs with digits included (spelled once in exact mode, predicted after that;
  * learned word k has id bos + 1 + k)
- * and counts of each token and token pair they used. Plain data with no pointers, so it can be
- * saved to flash as bytes and loaded back; it belongs to the model it was made for (bos).
+ * and counts of each token and token pair they used. Save it with op_user_save and restore it
+ * with op_user_load (a versioned format that survives changes to these limits or the compiler);
+ * it belongs to the model it was made for (bos).
  * About 12 KB with the defaults; -DOP_USER_WORDS=64 -DOP_USER_PAIRS=256 gives ~3 KB. */
 typedef struct {
     uint16_t prev, cur;         /* cur's own count uses prev 0xFFFD */
@@ -225,5 +226,13 @@ void op_user_init(op_user *u, const op_model *m);
  * start as op_decode. Completions still being typed and unmatched keys are skipped; a word
  * spelled exactly that the dictionary lacks becomes a learned word. */
 int op_learn(op_user *u, const op_decoder *d, const op_model *m, const op_start *start);
+
+/* Save u as bytes ("KPU1" format, see onepress.c): returns the length, or OP_ERR_SPACE if cap is
+ * too small (op_user_save(u, NULL, 0) returns the length needed). */
+int op_user_save(const op_user *u, uint8_t *out, int cap);
+
+/* Restore bytes from op_user_save into u. OP_ERR_MODEL if they aren't a saved user for model m
+ * (u is then empty). Saved with larger limits, the extra words and pairs are dropped. */
+int op_user_load(op_user *u, const op_model *m, const uint8_t *data, size_t size);
 
 #endif

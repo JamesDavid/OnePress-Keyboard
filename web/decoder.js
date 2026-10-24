@@ -481,7 +481,7 @@ function nnState(nn, key, parent, tok) {
   if (!st) {
     const h = nnStep(nn, parent ? parent.h : null, tok);
     st = { h, p: nnProj(nn, h) };
-    if (nn.cache.size > 50000) nn.cache.clear();
+    if (nn.cache.size > 4096) nn.cache.clear();     // ~3 MB at most
     nn.cache.set(key, st);
   }
   return st;
@@ -770,6 +770,46 @@ function userParams(uni, pair, base) {
 
 function newUser(m) { return { bos: m.bos, words: [], pairs: [] }; }   // pairs: [prev, cur, count], sorted
 
+// A user as bytes, for storage anywhere ("KPU1", the same bytes as the C op_user_save):
+// "KPU1", u16 version (1), u16 bos, u16 nWords, u16 nPairs, the words each NUL-terminated,
+// then each pair as u16 prev, u16 cur, u8 count. All little-endian.
+function saveUser(u) {
+  const n = 12 + u.words.reduce((a, w) => a + w.length + 1, 0) + 5 * u.pairs.length;
+  const b = new Uint8Array(n), dv = new DataView(b.buffer);
+  b.set([75, 80, 85, 49]);
+  [1, u.bos, u.words.length, u.pairs.length].forEach((x, i) => dv.setUint16(4 + 2 * i, x, true));
+  let o = 12;
+  for (const w of u.words) { for (let i = 0; i < w.length; i++) b[o++] = w.charCodeAt(i); b[o++] = 0; }
+  for (const [p, c, k] of u.pairs) { dv.setUint16(o, p, true); dv.setUint16(o + 2, c, true); b[o + 4] = k; o += 5; }
+  return b;
+}
+// The user saved by saveUser (or op_user_save) for model m, or null if it isn't one.
+function loadUser(m, b) {
+  if (!b || b.length < 12 || String.fromCharCode(...b.subarray(0, 4)) !== 'KPU1') return null;
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength), u16 = o => dv.getUint16(o, true);
+  if (u16(4) !== 1 || u16(6) !== m.bos) return null;
+  const u = newUser(m), nw = u16(8), np = u16(10);
+  let o = 12;
+  for (let k = 0; k < nw; k++) {
+    const e = b.indexOf(0, o);
+    if (e < 0 || e - o > USER_WORD_LEN) return null;
+    if (k < USER_WORDS) u.words.push(String.fromCharCode(...b.subarray(o, e)));
+    o = e + 1;
+  }
+  if (b.length - o < 5 * np) return null;
+  const last = m.bos + u.words.length;
+  for (let i = 0; i < np; i++, o += 5) {
+    const prev = u16(o), cur = u16(o + 2), k = b[o + 4];
+    if ((prev !== USER_ANY && prev > last) || cur > last || !k) continue;
+    if (u.pairs.length === USER_PAIRS) {
+      u.pairs = u.pairs.filter(e => (e[2] >>= 1) > 0);     // full: as learning does
+      if (u.pairs.length === USER_PAIRS) continue;
+    }
+    u.pairs.push([prev, cur, k]);
+  }
+  return u;
+}
+
 // Index of pair (prev, cur), or -(insertion point) - 1.
 function userFind(u, prev, cur) {
   let lo = 0, hi = u.pairs.length;
@@ -838,4 +878,4 @@ function learn(m, u, result, hyp, start = {}) {
 }
 
 if (typeof module !== 'undefined') module.exports = { buildModel, decode, render, nextLetterProbs, exactMatches, wordKeys, tokenize, formatNumber,
-  newUser, learn, USER_UNI, USER_PAIR, userParams, recentParams, buildNN };
+  newUser, learn, saveUser, loadUser, USER_UNI, USER_PAIR, userParams, recentParams, buildNN };

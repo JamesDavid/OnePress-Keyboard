@@ -1281,6 +1281,71 @@ static uint16_t user_word(op_user *u, const op_model *m, const char *w, int wn) 
     return (uint16_t)(m->bos + 1 + k);
 }
 
+/* Saved user, all little-endian: "KPU1", u16 version (1), u16 bos, u16 nWords, u16 nPairs, the
+ * words each NUL-terminated, then each pair as u16 prev, u16 cur, u8 count, sorted by
+ * (prev, cur). Same bytes as decoder.js saveUser. */
+int op_user_save(const op_user *u, uint8_t *out, int cap) {
+    int n = 12;
+    for (int k = 0; k < u->n_words; k++) n += (int)strlen(u->word[k]) + 1;
+    n += 5 * u->n_pairs;
+    if (!out) return n;
+    if (n > cap) return OP_ERR_SPACE;
+    uint16_t head[4] = { 1, u->bos, u->n_words, u->n_pairs };
+    memcpy(out, "KPU1", 4);
+    for (int i = 0; i < 4; i++) { out[4 + 2 * i] = (uint8_t)head[i]; out[5 + 2 * i] = (uint8_t)(head[i] >> 8); }
+    int o = 12;
+    for (int k = 0; k < u->n_words; k++) {
+        size_t l = strlen(u->word[k]) + 1;
+        memcpy(out + o, u->word[k], l);
+        o += (int)l;
+    }
+    for (int i = 0; i < u->n_pairs; i++, o += 5) {
+        const op_user_pair *p = &u->pair[i];
+        out[o] = (uint8_t)p->prev; out[o + 1] = (uint8_t)(p->prev >> 8);
+        out[o + 2] = (uint8_t)p->cur; out[o + 3] = (uint8_t)(p->cur >> 8);
+        out[o + 4] = p->count;
+    }
+    return n;
+}
+
+int op_user_load(op_user *u, const op_model *m, const uint8_t *b, size_t size) {
+    if (!u || !m) return OP_ERR_ARG;
+    op_user_init(u, m);
+    if (!b || size < 12 || memcmp(b, "KPU1", 4) != 0 || rd16(b + 4) != 1 || rd16(b + 6) != m->bos) return OP_ERR_MODEL;
+    int nw = rd16(b + 8), np = rd16(b + 10);
+    size_t o = 12;
+    for (int k = 0; k < nw; k++) {
+        const uint8_t *e = o < size ? memchr(b + o, 0, size - o) : NULL;
+        if (!e || e - (b + o) > OP_USER_WORD_LEN) { op_user_init(u, m); return OP_ERR_MODEL; }
+        if (k < OP_USER_WORDS) memcpy(u->word[k], b + o, (size_t)(e - (b + o)) + 1);
+        o = (size_t)(e - b) + 1;
+    }
+    u->n_words = (uint16_t)(nw < OP_USER_WORDS ? nw : OP_USER_WORDS);
+    if (size - o < 5u * (size_t)np) { op_user_init(u, m); return OP_ERR_MODEL; }
+    uint16_t last = (uint16_t)(m->bos + u->n_words);      /* highest id kept */
+    int kept = 0;
+    for (int i = 0; i < np; i++, o += 5) {
+        uint16_t prev = rd16(b + o), cur = rd16(b + o + 2);
+        if ((prev != USER_ANY && prev != AFTER_NUMBER && prev > last) || cur > last || !b[o + 4]) continue;
+        if (kept == OP_USER_PAIRS) {
+            /* Full: halve every count and drop zeros, as op_learn does when it runs out of room. */
+            int k = 0;
+            for (int j = 0; j < kept; j++) {
+                u->pair[j].count >>= 1;
+                if (u->pair[j].count) u->pair[k++] = u->pair[j];
+            }
+            kept = k;
+            if (kept == OP_USER_PAIRS) continue;
+        }
+        u->pair[kept].prev = prev;
+        u->pair[kept].cur = cur;
+        u->pair[kept].count = b[o + 4];
+        kept++;
+    }
+    u->n_pairs = (uint16_t)kept;
+    return OP_OK;
+}
+
 /* Mirrors decoder.js learn. */
 int op_learn(op_user *u, const op_decoder *d, const op_model *m, const op_start *start) {
     if (!u || !d || !m || u->bos != m->bos) return OP_ERR_ARG;

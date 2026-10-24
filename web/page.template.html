@@ -269,9 +269,10 @@ body { padding-block: clamp(8px, 2.2dvh, 20px) clamp(10px, 3dvh, 28px); }
   </div>
 </div>
 
-<script type="application/octet-stream" id="model-l">__MODEL_L__</script>
-<script type="application/octet-stream" id="model-m">__MODEL_M__</script>
-<script type="application/octet-stream" id="model-s">__MODEL_S__</script>
+<!-- Built in by web/build_page.py, or empty: then fetched when first picked -->
+<script type="application/octet-stream" id="model-l" data-file="onepress.bin" data-size="__SIZE_L__" data-words="__WORDS_L__">__MODEL_L__</script>
+<script type="application/octet-stream" id="model-m" data-file="onepress-m.bin" data-size="__SIZE_M__" data-words="__WORDS_M__">__MODEL_M__</script>
+<script type="application/octet-stream" id="model-s" data-file="onepress-s.bin" data-size="__SIZE_S__" data-words="__WORDS_S__">__MODEL_S__</script>
 <script>
 __DECODER__
 </script>
@@ -313,20 +314,25 @@ __DECODER__
   try { nnOn = localStorage.getItem('nn') !== '0'; } catch (err) {}
   const startFor = id => ({ user: getUser(id), before: sentLog.map(t => t + '\n').join(''), hint: hintFor(keys),
     nn: nnOn && nnModel && getModel(id).m.bos === nnModel.modelBos ? nnModel : undefined });
-  async function loadNN() {
-    for (const url of ['onepress-nn.bin', '../model/onepress-nn.bin']) {
-      try {
-        const r = await fetch(url);
-        if (!r.ok) continue;
-        const bytes = new Uint8Array(await r.arrayBuffer());
-        nnModel = buildNN(bytes, getModel('l').m);
-        nnModel.size = bytes.length;
-        $('nnLabel').hidden = false;
-        $('nnToggle').checked = nnOn;
-        if (m) useModel(modelId);
-        return;
-      } catch (err) {}
-    }
+  // The network (6.3 MB) is downloaded only when the Phone model is used with Neural on.
+  let nnLoading = null, nnFailed = false;
+  function loadNN() {
+    if (!nnLoading) nnLoading = (async () => {
+      for (const url of ['onepress-nn.bin', '../model/onepress-nn.bin']) {
+        try {
+          const r = await fetch(url);
+          if (!r.ok) continue;
+          const bytes = new Uint8Array(await r.arrayBuffer());
+          nnModel = buildNN(bytes, null);        // used only with the model it was made for (bos)
+          nnModel.size = bytes.length;
+          if (m) useModel(modelId);
+          return;
+        } catch (err) {}
+      }
+      nnFailed = true;                         // not available (opened as a file, offline)
+      $('nnLabel').hidden = true;
+    })();
+    return nnLoading;
   }
   $('nnToggle').addEventListener('change', e => {
     nnOn = e.target.checked;
@@ -618,39 +624,57 @@ __DECODER__
   });
   let modelId = 'l', comparing = false;
   const fmtSize = b => b >= 1e6 ? (b / 1e6).toFixed(2) + ' MB' : Math.round(b / 1e3) + ' KB';
-  const embedded = id => {
-    const raw = atob($(MODELS.find(x => x.id === id).el).textContent.trim());
-    const bytes = new Uint8Array(raw.length);
-    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-    return bytes;
-  };
-  function getModel(id) {
-    if (!loaded[id]) {
-      const bytes = embedded(id);
-      loaded[id] = { m: buildModel(bytes), size: bytes.length, name: MODELS.find(x => x.id === id).name };
-    }
-    return loaded[id];
+  // A model's bytes: built into the page, else fetched (only the ones picked are downloaded).
+  const loading = {};
+  function ensureModel(id) {
+    if (loaded[id]) return Promise.resolve(loaded[id]);
+    if (!loading[id]) loading[id] = (async () => {
+      const spec = MODELS.find(x => x.id === id), el = $(spec.el), b64 = el.textContent.trim();
+      let bytes = null;
+      if (b64) {
+        const raw = atob(b64);
+        bytes = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+      } else {
+        for (const url of [el.dataset.file, '../model/' + el.dataset.file]) {
+          try { const r = await fetch(url); if (r.ok) { bytes = new Uint8Array(await r.arrayBuffer()); break; } } catch (err) {}
+        }
+        if (!bytes) { delete loading[id]; throw new Error(`couldn't download ${el.dataset.file}`); }
+      }
+      return (loaded[id] = { m: buildModel(bytes), size: bytes.length, name: spec.name });
+    })();
+    return loading[id];
   }
+  function getModel(id) { return loaded[id]; }       // once ensureModel has finished
   function describe(e) {
     return `${e.m.n.toLocaleString()} words · ${e.m.next.length.toLocaleString()} pairs · ${fmtSize(e.size)}`;
   }
-  function useModel(id) {
+  async function useModel(id) {
+    if (!loaded[id]) {
+      $('modelPick').value = id;
+      $('status').textContent = 'Loading the model…';
+      try { await ensureModel(id); } catch (err) {
+        $('status').textContent = err.message;
+        if (m) $('modelPick').value = modelId;
+        return;
+      }
+    }
     const e = getModel(id);
     m = e.m; modelId = id;
     $('modelPick').value = id;
     const withNN = nnOn && nnModel && e.m.bos === nnModel.modelBos;
     $('status').textContent = describe(e) + (withNN ? ` + neural ${fmtSize(nnModel.size)}` : '') + ' · runs offline';
-    $('nnToggle').disabled = !nnModel || e.m.bos !== nnModel.modelBos;
+    $('nnLabel').hidden = id !== 'l' || nnFailed;
+    $('nnToggle').checked = nnOn;
+    if (id === 'l' && nnOn && !nnModel) loadNN();
     if (id !== 'custom') try { localStorage.setItem('model', id); } catch (err) {}
     update();
   }
 
   const pick = $('modelPick');
   for (const spec of MODELS) {
-    // Label from the file header, without building the model yet.
-    const len = $(spec.el).textContent.trim().length, size = Math.floor(len * 3 / 4);
-    const head = atob($(spec.el).textContent.trim().slice(0, 16));
-    const words = head.charCodeAt(8) | head.charCodeAt(9) << 8;
+    // Label from what the build wrote down, without loading the model.
+    const size = +$(spec.el).dataset.size, words = +$(spec.el).dataset.words;
     pick.append(new Option(`${spec.device} · ${Math.round(words / 1000)}k words · ${fmtSize(size)}`, spec.id));
   }
   const fileOpt = new Option('Load .bin file…', 'file');
@@ -691,6 +715,12 @@ __DECODER__
     const mine = keys && best ? plainText() : '';
     const myWords = mine.split(' ');
     const ids = MODELS.map(x => x.id).concat(loaded.custom ? ['custom'] : []);
+    const missing = ids.filter(id => !loaded[id]);
+    if (missing.length) {             // download the others first (only when comparing)
+      box.textContent = 'Loading the other models…';
+      Promise.all(missing.map(ensureModel)).then(renderCompare, err => { box.textContent = err.message; });
+      return;
+    }
     for (const id of ids) {
       const e = getModel(id);
       let text = mine;                 // the selected model's row matches the display, locks included
@@ -882,7 +912,7 @@ __DECODER__
     if (!b) return; b.classList.add('down'); setTimeout(() => b.classList.remove('down'), 110);
   }
 
-  setTimeout(() => {
+  setTimeout(async () => {
     let saved = 'l';
     try {
       if (MODELS.some(x => x.id === localStorage.getItem('model'))) saved = localStorage.getItem('model');
@@ -890,8 +920,7 @@ __DECODER__
     } catch (err) {}
     $('compareToggle').checked = comparing;
     $('compare').hidden = !comparing;
-    useModel(saved);
-    loadNN();
+    await useModel(saved);
     let seen = false;
     try { seen = localStorage.getItem('tutorialSeen') === '1'; } catch (err) {}
     if (seen) loadExample(); else tutGo(0);      // first visit: start with the tutorial
