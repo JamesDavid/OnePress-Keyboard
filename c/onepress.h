@@ -115,6 +115,30 @@ typedef struct {
     op_user_pair pair[OP_USER_PAIRS];                   /* sorted by (prev, cur) */
 } op_user;
 
+/* Optional neural word model (KPN1 file, model/export_nn.py): a small GRU that scores each
+ * candidate word given everything before it. Read in place like op_model. For phones; it
+ * needs ~40 KB of working memory (op_nn_work) and about 0.3M multiply-adds per hypothesis
+ * per word. Integer only, so results match decoder.js exactly. -DOP_NO_NN leaves it out
+ * (op_nn_open then returns OP_ERR_ARG). */
+#ifndef OP_NN_MAX
+#define OP_NN_MAX 256           /* largest embedding / hidden size */
+#endif
+#define OP_NN_LINE 32           /* tokens of start->before's current line it reads first */
+typedef struct {
+    uint16_t E, H, V, bos, unk, model_bos;
+    int16_t weight;             /* how much its score counts, in 1/256 */
+    uint8_t se, sih, shh, sp;
+    const int16_t *sig, *bias;
+    const int8_t *emb, *wih, *whh, *proj;
+    const int32_t *bih, *bhh, *bproj;
+} op_nn;
+
+typedef struct {
+    int16_t h[2][OP_MAX_BEAM][OP_NN_MAX];   /* the beam's states, double-buffered */
+    int16_t p[2][OP_MAX_BEAM][OP_NN_MAX];   /* and their projections */
+    int32_t g[6 * OP_NN_MAX];
+} op_nn_work;
+
 /* Context before the composition, from the text already in the field. */
 typedef struct {
     uint16_t prev;      /* previous token id: model->bos at a sentence start, OP_NONE if unknown */
@@ -128,6 +152,9 @@ typedef struct {
      * (same length as keys; any other character for presses that weren't letters), or NULL.
      * Shown, and learned when sent, when no word matches. */
     const char *hint;
+    /* The neural word model and its working memory, or NULL (op_nn_open). */
+    const op_nn *nn;
+    op_nn_work *nn_work;
 } op_start;
 
 /* Force slot `slot` to word `id` (as decoder.js locks do). Ignored if that word isn't a candidate. */
@@ -163,6 +190,8 @@ typedef struct {
     uint16_t ctx_prev;      /* the context decoding started from (start->before, or prev / cap) */
     uint8_t ctx_cap, n_recent;
     uint16_t recent[OP_RECENT_WORDS];   /* words used in start->before */
+    uint16_t line[OP_NN_LINE];          /* start->before's current line, for the network */
+    uint8_t n_line;
     /* Working memory. */
     char keys[OP_MAX_KEYS], lits[OP_MAX_KEYS], hints[OP_MAX_KEYS];
     struct { uint16_t id; uint8_t parent, kind; } bp[OP_MAX_SLOTS][OP_MAX_BEAM];
@@ -181,6 +210,9 @@ int op_render(const op_decoder *d, const op_model *m, const op_start *start, cha
 
 /* Word text of token `id` (not NUL-terminated); returns its length. */
 int op_word(const op_model *m, uint16_t id, const char **text);
+
+/* Point `nn` at a KPN1 network made for model m (4-byte aligned, kept valid while used). */
+int op_nn_open(op_nn *nn, const void *data, size_t size, const op_model *m);
 
 /* Start an empty op_user for model m. */
 void op_user_init(op_user *u, const op_model *m);

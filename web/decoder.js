@@ -342,12 +342,94 @@ function slotCandidates(m, tok, isLast, u) {
   return exact;
 }
 
+// ---- Neural word model (optional): a small GRU over the word model's vocabulary ----
+// KPN1 file from model/export_nn.py; all integer, so the C decoder gives the same results.
+// With start.nn, every candidate also gets weight/256 * log P(word | everything before it),
+// which sees further back than the word pairs. Hypotheses then can't be merged by their last
+// word (the network remembers more), so the beam keeps the best paths as they are.
+function buildNN(bytes, m) {
+  if (bytes.byteOffset % 4) bytes = new Uint8Array(bytes);
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (String.fromCharCode(...bytes.subarray(0, 4)) !== 'KPN1') throw new Error('not a KPN1 network');
+  const u16 = o => dv.getUint16(o, true);
+  const nn = { E: u16(6), H: u16(8), V: u16(10), bos: u16(12), unk: u16(14), weight: dv.getInt16(16, true),
+    se: bytes[18], sih: bytes[19], shh: bytes[20], sp: bytes[21], modelBos: u16(26), cache: new Map() };
+  if (m && nn.modelBos !== m.bos) throw new Error('this network belongs to another word model');
+  if (nn.E > 256 || nn.H > 256) throw new Error('network too large');
+  let off = 32;
+  const take = (T, n) => {
+    off += (4 - off % 4) % 4;
+    const a = new T(bytes.buffer, bytes.byteOffset + off, n);
+    off += n * T.BYTES_PER_ELEMENT;
+    return a;
+  };
+  const { E, H, V } = nn;
+  Object.assign(nn, {
+    sig: take(Int16Array, 4096), emb: take(Int8Array, V * E), wih: take(Int8Array, 3 * H * E),
+    whh: take(Int8Array, 3 * H * H), bih: take(Int32Array, 3 * H), bhh: take(Int32Array, 3 * H),
+    proj: take(Int8Array, E * H), bproj: take(Int32Array, E), bias: take(Int16Array, V),
+  });
+  if (off > bytes.length) throw new Error('truncated KPN1 network');
+  return nn;
+}
+const NN_CLAMP = 524287;          // gate inputs are clamped so r * gate stays inside int32
+function nnSig(nn, v) { return nn.sig[((v < -32768 ? -32768 : v > 32767 ? 32767 : v) + 32768) >> 4]; }
+// The state after token tok (state h, Q12); null h is the zero state.
+function nnStep(nn, h, tok) {
+  const { E, H, emb, wih, whh, bih, bhh } = nn, xo = tok * E, gsh = nn.sih + nn.se - 12;
+  const g = new Int32Array(6 * H), out = new Int16Array(H);
+  for (let k = 0; k < 3 * H; k++) {
+    let a = 0, b = 0;
+    for (let j = 0, wo = k * E; j < E; j++) a += wih[wo + j] * emb[xo + j];
+    if (h) for (let j = 0, ho = k * H; j < H; j++) b += whh[ho + j] * h[j];
+    const gi = (a >> gsh) + bih[k], gh = (b >> nn.shh) + bhh[k];
+    g[k] = gi < -NN_CLAMP ? -NN_CLAMP : gi > NN_CLAMP ? NN_CLAMP : gi;
+    g[3 * H + k] = gh < -NN_CLAMP ? -NN_CLAMP : gh > NN_CLAMP ? NN_CLAMP : gh;
+  }
+  for (let i = 0; i < H; i++) {
+    const r = nnSig(nn, g[i] + g[3 * H + i]);
+    const z = nnSig(nn, g[H + i] + g[4 * H + i]);
+    const n = 2 * nnSig(nn, 2 * (g[2 * H + i] + ((r * g[5 * H + i]) >> 12))) - 4096;
+    out[i] = ((4096 - z) * n + z * (h ? h[i] : 0)) >> 12;
+  }
+  return out;
+}
+function nnProj(nn, h) {
+  const { E, H, proj, bproj } = nn, p = new Int16Array(E);
+  for (let e = 0; e < E; e++) {
+    let a = 0;
+    for (let j = 0, o = e * H; j < H; j++) a += proj[o + j] * h[j];
+    const v = (a >> nn.sp) + bproj[e];
+    p[e] = v < -32767 ? -32767 : v > 32767 ? 32767 : v;
+  }
+  return p;
+}
+// log P(tok | state) in model units, from the projected state p.
+function nnScore(nn, p, tok) {
+  let a = 0;
+  for (let e = 0, o = tok * nn.E; e < nn.E; e++) a += p[e] * nn.emb[o + e];
+  const v = (a >> (nn.se + 4)) + nn.bias[tok];
+  return v < -32767 ? -32767 : v > 32767 ? 32767 : v;      // so weight * score fits in int32
+}
+// State and projection after the token sequence key (ids joined by ','), cached across decodes.
+function nnState(nn, key, parent, tok) {
+  let st = nn.cache.get(key);
+  if (!st) {
+    const h = nnStep(nn, parent ? parent.h : null, tok);
+    st = { h, p: nnProj(nn, h) };
+    if (nn.cache.size > 50000) nn.cache.clear();
+    nn.cache.set(key, st);
+  }
+  return st;
+}
+
 // The context a composition starts in. start.before is the text before it (what's already in
 // the field, or the conversation so far): its last words give the word-pair and three-word
 // context, whether to capitalize, and the opener of an unfinished sentence (for ? vs .); words
 // used in its last RECENT_WORDS words get RECENT_BONUS, if not among the most common words.
 // Without start.before: start.prev (default BOS) and start.cap (default true).
 const RECENT_WORDS = 32;
+const NN_LINE = 32;               // tokens of the current line the neural model reads first
 let RECENT_BONUS = 3, RECENT_MAX_UNI = -9;      // nats; for tuning only: recentParams()
 function recentParams(bonus, maxUni) { RECENT_BONUS = bonus; RECENT_MAX_UNI = maxUni; }
 function wordId(m, u, w) {
@@ -358,13 +440,16 @@ function wordId(m, u, w) {
 }
 function context(m, u, start) {
   const ctx = { prev2: -1, prev: start.prev === undefined ? m.bos : start.prev,
-    cap: start.cap === undefined ? true : start.cap, first: null, cf: null, recent: new Set() };
+    cap: start.cap === undefined ? true : start.cap, first: null, cf: null, recent: new Set(), line: [] };
   if (typeof start.before !== 'string') return ctx;
   const toks = start.before.toLowerCase().replace(/[\u2018\u2019]/g, "'").match(/[a-z0-9']+|[.,!?\n]/g) || [];
   let p2 = -1, p1 = m.bos, first = null, cf = null, cap = true;
   const recent = [];
+  let line = [];                   // the current line's tokens, for the neural model
   for (const t of toks) {
     // A line break ends a sentence too: messages are often sent without a final mark.
+    if (t === '\n') line = [];
+    else line.push(t.length === 1 && '.,!?'.includes(t) ? m.n + m.punct.indexOf(t) : /^[0-9]+$/.test(t) ? -1 : wordId(m, null, t));
     if (t === '.' || t === '!' || t === '?' || t === '\n') { p2 = -1; p1 = m.bos; first = cf = null; cap = true; continue; }
     cap = false;
     if (t === ',') { p2 = p1; p1 = m.n + m.punct.indexOf(','); cf = null; continue; }
@@ -375,7 +460,7 @@ function context(m, u, start) {
     if (cf === null && !m.qSkip.has(id)) cf = id;
     if (id >= 0) recent.push(id);
   }
-  return { prev2: p2, prev: p1, cap, first, cf, recent: new Set(recent.slice(-RECENT_WORDS)) };
+  return { prev2: p2, prev: p1, cap, first, cf, recent: new Set(recent.slice(-RECENT_WORDS)), line: line.slice(-NN_LINE) };
 }
 
 // start: { before: text before the composition (see context), or prev / cap,
@@ -401,7 +486,16 @@ function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
     s.cands = c;
   });
 
-  let beam = [{ score: 0, prev: ctx.prev, t: triFind(m, ctx.prev2, ctx.prev), first: ctx.first, cf: ctx.cf, path: [] }];
+  const nn = start.nn && start.nn.modelBos === m.bos ? start.nn : null;
+  const nnTok = id => id >= 0 && id < m.bos ? id : nn.unk;
+  let nnKey = '', nnSt = null;
+  if (nn) {
+    // BOS, then the current line of the text before
+    nnKey = String(nn.bos);
+    nnSt = nnState(nn, nnKey, null, nn.bos);
+    for (const id of ctx.line) { const t = nnTok(id); nnKey += ',' + t; nnSt = nnState(nn, nnKey, nnSt, t); }
+  }
+  let beam = [{ score: 0, prev: ctx.prev, t: triFind(m, ctx.prev2, ctx.prev), first: ctx.first, cf: ctx.cf, path: [], nk: nnKey, ns: nnSt }];
   slots.forEach((s, j) => {
     const isFinal = j === slots.length - 1;
     let next = [];
@@ -411,6 +505,7 @@ function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
         let step = c.id < 0 ? (c.number ? 0 : c.literal ? P.literal : P.unknown) : tokenScore(m, u, h.prev, c.id, h.t) + (c.penalty || 0) +
           (ctx.recent.has(c.id) && (c.id > m.bos || m.uni[c.id] < RECENT_MAX_UNI * m.scale) ? Math.round(RECENT_BONUS * m.scale) : 0);
         if (c.time) step += m.scale * ((m.timeBefore.has(h.prev) ? TIME_PREV : -TIME_ALONE) - (timeKind(s.tok.keys) === '.' ? TIME_LITERAL : 0));
+        if (nn) step += (nn.weight * nnScore(nn, h.ns.p, nnTok(c.id))) >> 8;
         let prev = c.timeable ? AFTER_DECIMAL : c.number ? AFTER_NUMBER : c.id < 0 ? -1 : c.id;
         let first = h.first, cf = h.cf;
         if (c.id >= m.n && c.id < m.bos) {
@@ -454,10 +549,15 @@ function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
     beam = [];
     for (const h of next) {
       const k = ((h.t + 1) * 70000 + h.prev + 3) * 9 + qs(h.first) * 3 + qs(h.cf);
-      if (states.has(k)) continue;
+      if (!nn && states.has(k)) continue;      // with the network, states differ by their whole past
       states.add(k);
       beam.push(h);
       if (beam.length >= beamWidth) break;
+    }
+    if (nn) for (const h of beam) {
+      const t = nnTok(s.cands[h.path[j]].id);
+      h.nk = h.from.nk + ',' + t;
+      h.ns = nnState(nn, h.nk, h.from.ns, t);
     }
   });
   return { toks, slots, hyps: beam.slice(0, nBest), ctx };
@@ -671,4 +771,4 @@ function learn(m, u, result, hyp, start = {}) {
 }
 
 if (typeof module !== 'undefined') module.exports = { buildModel, decode, render, nextLetterProbs, exactMatches, wordKeys, tokenize, formatNumber,
-  newUser, learn, USER_UNI, USER_PAIR, userParams, recentParams };
+  newUser, learn, USER_UNI, USER_PAIR, userParams, recentParams, buildNN };

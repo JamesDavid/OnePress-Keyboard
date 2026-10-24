@@ -1,6 +1,7 @@
 /* Command-line driver: decode one key string per line of stdin.
- *   opdecode onepress.bin [beam] [--learn] < keys.txt
+ *   opdecode onepress.bin [beam] [--learn] [--nn onepress-nn.bin] < keys.txt
  * --learn: one person typed every line, and each decoded line is learned before the next.
+ * --nn: also score with the neural word model.
  * Used by tests/parity.js to check the C decoder against web/decoder.js. */
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,34 +12,51 @@
 static op_model model;
 static op_decoder dec;
 static op_user user;
+static op_nn nn;
+static op_nn_work nn_work;
+
+/* The whole file, in malloc'd (so suitably aligned) memory. */
+static void *read_file(const char *path, size_t *size) {
+    FILE *f = fopen(path, "rb");
+    if (!f) { perror(path); exit(1); }
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    void *blob = malloc((size_t)n);
+    if (!blob || fread(blob, 1, (size_t)n, f) != (size_t)n) { fprintf(stderr, "can't read %s\n", path); exit(1); }
+    fclose(f);
+    *size = (size_t)n;
+    return blob;
+}
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        fprintf(stderr, "usage: opdecode model.bin [beam] [--learn] < keys.txt\n");
+        fprintf(stderr, "usage: opdecode model.bin [beam] [--learn] [--nn network.bin] < keys.txt\n");
         return 2;
     }
-    int beam = argc > 2 ? atoi(argv[2]) : 8, learn = argc > 3 && strcmp(argv[3], "--learn") == 0;
-    FILE *f = fopen(argv[1], "rb");
-    if (!f) {
-        perror(argv[1]);
-        return 1;
+    int beam = 8, learn = 0;
+    const char *nn_path = NULL;
+    for (int i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "--learn") == 0) learn = 1;
+        else if (strcmp(argv[i], "--nn") == 0 && i + 1 < argc) nn_path = argv[++i];
+        else beam = atoi(argv[i]);
     }
-    fseek(f, 0, SEEK_END);
-    long size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    void *blob = malloc((size_t)size);     /* malloc memory is suitably aligned */
-    if (!blob || fread(blob, 1, (size_t)size, f) != (size_t)size) {
-        fprintf(stderr, "can't read %s\n", argv[1]);
-        return 1;
-    }
-    fclose(f);
-    if (op_model_open(&model, blob, (size_t)size) != OP_OK) {
+    size_t size;
+    void *blob = read_file(argv[1], &size);
+    if (op_model_open(&model, blob, size) != OP_OK) {
         fprintf(stderr, "%s is not a KPD2 model\n", argv[1]);
         return 1;
     }
+    if (nn_path) {
+        void *nb = read_file(nn_path, &size);
+        if (op_nn_open(&nn, nb, size, &model) != OP_OK) {
+            fprintf(stderr, "%s is not a KPN1 network for this model\n", nn_path);
+            return 1;
+        }
+    }
 
     op_user_init(&user, &model);
-    op_start start = { model.bos, 1, learn ? &user : NULL, NULL, NULL };
+    op_start start = { model.bos, 1, learn ? &user : NULL, NULL, NULL, nn_path ? &nn : NULL, &nn_work };
     static char line[4 * OP_MAX_KEYS + 4096];
     char out[4 * OP_MAX_KEYS + 64];
     while (fgets(line, sizeof line, stdin)) {

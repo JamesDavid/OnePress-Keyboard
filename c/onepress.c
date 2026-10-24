@@ -635,10 +635,13 @@ static void context(op_decoder *d, const op_model *m, const op_start *start,
     d->ctx_prev = start ? start->prev : m->bos;
     d->ctx_cap = start ? start->cap : 1;
     d->n_recent = 0;
+    d->n_line = 0;
     if (!start || !start->before) return;
     const unsigned char *b = (const unsigned char *)start->before;
-    uint16_t p2 = OP_NONE, p1 = m->bos, recent[OP_RECENT_WORDS];
-    int n_recent = 0, cap = 1;
+    uint16_t p2 = OP_NONE, p1 = m->bos, recent[OP_RECENT_WORDS], line[OP_NN_LINE];
+    int n_recent = 0, cap = 1, n_line = 0;
+    #define LINE_PUSH(id) do { if (n_line == OP_NN_LINE) { memmove(line, line + 1, sizeof line - sizeof *line); n_line--; } \
+                               line[n_line++] = (id); } while (0)
     uint8_t f = 0, g = 0;
     char w[OP_USER_WORD_LEN + 9];
     while (*b) {
@@ -658,8 +661,9 @@ static void context(op_decoder *d, const op_model *m, const op_start *start,
             cap = 0;
             int digits = 1;
             for (int i = 0; i < wn; i++) if (w[i] < '0' || w[i] > '9') digits = 0;
-            if (digits) { p2 = OP_NONE; p1 = AFTER_NUMBER; continue; }
+            if (digits) { p2 = OP_NONE; p1 = AFTER_NUMBER; LINE_PUSH(OP_NONE); continue; }
             uint16_t id = long_word ? OP_NONE : context_word(m, d->user, w, wn);
+            LINE_PUSH(id <= m->bos ? id : OP_NONE);         /* learned words are unknown to it */
             p2 = p1; p1 = id;
             int skip = id != OP_NONE && in_u16(m->q_skip, m->n_skip, id);
             if (!f && !skip) f = q_state(m, id);
@@ -670,6 +674,8 @@ static void context(op_decoder *d, const op_model *m, const op_start *start,
             }
             continue;
         }
+        if (c == '\n') n_line = 0;
+        else if (c == '.' || c == '!' || c == '?' || c == ',') LINE_PUSH((uint16_t)(m->n_words + punct_index(m, (char)c)));
         if (c == '.' || c == '!' || c == '?' || c == '\n') {     /* a line break ends a sentence too */
             p2 = OP_NONE; p1 = m->bos; f = g = 0; cap = 1;
         } else if (c == ',') {
@@ -684,12 +690,86 @@ static void context(op_decoder *d, const op_model *m, const op_start *start,
     d->ctx_cap = (uint8_t)cap;
     memcpy(d->recent, recent, (size_t)n_recent * sizeof *recent);
     d->n_recent = (uint8_t)n_recent;
+    memcpy(d->line, line, (size_t)n_line * sizeof *line);
+    d->n_line = (uint8_t)n_line;
+    #undef LINE_PUSH
 }
 
 static int recent_bonus(const op_decoder *d, const op_model *m, uint16_t id) {
     for (int i = 0; i < d->n_recent; i++)
         if (d->recent[i] == id) return id > m->bos || m->uni[id] < RECENT_MAX_UNI * m->scale ? RECENT_BONUS * m->scale : 0;
     return 0;
+}
+
+/* ---- neural word model (see decoder.js buildNN / nnStep) ---- */
+
+int op_nn_open(op_nn *nn, const void *data, size_t size, const op_model *m) {
+#ifdef OP_NO_NN
+    (void)nn; (void)data; (void)size; (void)m;
+    return OP_ERR_ARG;
+#endif
+    const uint8_t *b = (const uint8_t *)data;
+    if (!nn || !b || ((uintptr_t)b & 3) || size < 32 || memcmp(b, "KPN1", 4) != 0 || rd16(b + 4) != 1) return OP_ERR_MODEL;
+    nn->E = rd16(b + 6); nn->H = rd16(b + 8); nn->V = rd16(b + 10);
+    nn->bos = rd16(b + 12); nn->unk = rd16(b + 14); nn->weight = (int16_t)rd16(b + 16);
+    nn->se = b[18]; nn->sih = b[19]; nn->shh = b[20]; nn->sp = b[21];
+    nn->model_bos = rd16(b + 26);
+    if ((m && nn->model_bos != m->bos) || nn->E > OP_NN_MAX || nn->H > OP_NN_MAX || nn->sih + nn->se < 12) return OP_ERR_MODEL;
+    size_t off = 32, E = nn->E, H = nn->H, V = nn->V;
+    #define TAKE(dst, T, n) do { off = (off + 3) & ~(size_t)3; if (off + (n) * sizeof(T) > size) return OP_ERR_MODEL; \
+                                 dst = (const T *)(b + off); off += (n) * sizeof(T); } while (0)
+    TAKE(nn->sig, int16_t, 4096);
+    TAKE(nn->emb, int8_t, V * E);
+    TAKE(nn->wih, int8_t, 3 * H * E);
+    TAKE(nn->whh, int8_t, 3 * H * H);
+    TAKE(nn->bih, int32_t, 3 * H);
+    TAKE(nn->bhh, int32_t, 3 * H);
+    TAKE(nn->proj, int8_t, E * H);
+    TAKE(nn->bproj, int32_t, E);
+    TAKE(nn->bias, int16_t, V);
+    #undef TAKE
+    return OP_OK;
+}
+
+#define NN_CLAMP 524287         /* gate inputs are clamped so r * gate stays inside int32 */
+static int32_t nn_sig(const op_nn *nn, int32_t v) {
+    return nn->sig[((v < -32768 ? -32768 : v > 32767 ? 32767 : v) + 32768) >> 4];
+}
+static int32_t clamp_gate(int32_t v) { return v < -NN_CLAMP ? -NN_CLAMP : v > NN_CLAMP ? NN_CLAMP : v; }
+
+/* out = the state after token tok from state h (NULL: the zero state); p = its projection. */
+static void nn_step(const op_nn *nn, int32_t *g, const int16_t *h, uint16_t tok, int16_t *out, int16_t *p) {
+    int E = nn->E, H = nn->H, gsh = nn->sih + nn->se - 12;
+    const int8_t *x = nn->emb + (size_t)tok * E;
+    for (int k = 0; k < 3 * H; k++) {
+        int32_t a = 0, c = 0;
+        const int8_t *wi = nn->wih + (size_t)k * E, *wh = nn->whh + (size_t)k * H;
+        for (int j = 0; j < E; j++) a += wi[j] * x[j];
+        if (h) for (int j = 0; j < H; j++) c += wh[j] * h[j];
+        g[k] = clamp_gate((a >> gsh) + nn->bih[k]);
+        g[3 * H + k] = clamp_gate((c >> nn->shh) + nn->bhh[k]);
+    }
+    for (int i = 0; i < H; i++) {
+        int32_t r = nn_sig(nn, g[i] + g[3 * H + i]);
+        int32_t z = nn_sig(nn, g[H + i] + g[4 * H + i]);
+        int32_t n = 2 * nn_sig(nn, 2 * (g[2 * H + i] + ((r * g[5 * H + i]) >> 12))) - 4096;
+        out[i] = (int16_t)(((4096 - z) * n + z * (h ? h[i] : 0)) >> 12);
+    }
+    for (int e = 0; e < E; e++) {
+        int32_t a = 0;
+        const int8_t *w = nn->proj + (size_t)e * H;
+        for (int j = 0; j < H; j++) a += w[j] * out[j];
+        int32_t v = (a >> nn->sp) + nn->bproj[e];
+        p[e] = (int16_t)(v < -32767 ? -32767 : v > 32767 ? 32767 : v);
+    }
+}
+/* log P(tok | state) in model units, from the state's projection p. */
+static int32_t nn_score(const op_nn *nn, const int16_t *p, uint16_t tok) {
+    int32_t a = 0;
+    const int8_t *e = nn->emb + (size_t)tok * nn->E;
+    for (int i = 0; i < nn->E; i++) a += p[i] * e[i];
+    int32_t v = (a >> (nn->se + 4)) + nn->bias[tok];
+    return v < -32767 ? -32767 : v > 32767 ? 32767 : v;
 }
 
 /* ---- beam search ---- */
@@ -726,6 +806,21 @@ int op_decode(op_decoder *d, const op_model *m, const char *keys, int beam,
     score[0] = 0;
     prev[0] = d->ctx_prev;
     tri[0] = tri_find(m, prev2, prev[0]);
+#ifdef OP_NO_NN
+    const op_nn *nn = NULL;     /* built without the network: its code drops out */
+#else
+    const op_nn *nn = start && start->nn && start->nn_work && start->nn->model_bos == m->bos ? start->nn : NULL;
+#endif
+    op_nn_work *w = nn ? start->nn_work : NULL;
+    int cur = 0;                /* which half of w holds the beam's states */
+    #define NN_TOK(id) ((id) <= m->bos - 1 ? (id) : nn->unk)
+    if (nn) {                   /* BOS, then the current line of the text before */
+        nn_step(nn, w->g, NULL, nn->bos, w->h[0][0], w->p[0][0]);
+        for (int i = 0; i < d->n_line; i++) {
+            nn_step(nn, w->g, w->h[cur][0], NN_TOK(d->line[i]), w->h[!cur][0], w->p[!cur][0]);
+            cur = !cur;
+        }
+    }
 
     cand c[OP_MAX_CANDS];
     for (int j = 0; j < d->n_slots; j++) {
@@ -757,6 +852,7 @@ int op_decode(op_decoder *d, const op_model *m, const char *keys, int beam,
                     step = token_score(m, d->user, prev[h], id, tri[h]) + c[ci].pen + recent_bonus(d, m, id);
                     p = id;
                 }
+                if (nn) step += (nn->weight * nn_score(nn, w->p[cur][h], NN_TOK(id))) >> 8;
                 if (id != OP_NONE && id >= m->n_words && id < m->bos) {
                     /* Punctuation: a word-pair model can't see how the sentence began,
                      * so use the sentence's first word to judge question vs statement. */
@@ -814,7 +910,7 @@ int op_decode(op_decoder *d, const op_model *m, const char *keys, int beam,
         for (int i = 0; i < ne && nk < beam; i++) {
             const op_entry *e = &d->ent[i];
             int dup = 0;
-            for (int k = 0; k < nk && !dup; k++) {
+            for (int k = 0; k < nk && !dup && !nn; k++) {     /* with the network, states differ by their whole past */
                 const op_entry *o = &d->ent[kept[k]];
                 dup = o->prev == e->prev && o->tri == e->tri && o->first == e->first && o->cf == e->cf;
             }
@@ -827,12 +923,15 @@ int op_decode(op_decoder *d, const op_model *m, const char *keys, int beam,
             first[k] = e->first;
             cf[k] = e->cf;
             tri[k] = e->tri;
+            if (nn) nn_step(nn, w->g, w->h[cur][e->parent], NN_TOK(e->id), w->h[!cur][k], w->p[!cur][k]);
             d->bp[j][k].id = e->id;
             d->bp[j][k].parent = e->parent;
             d->bp[j][k].kind = e->kind;
         }
         nb = nk;
+        cur ^= nn != NULL;
     }
+    #undef NN_TOK
     d->score = score[0];
     for (int j = d->n_slots - 1, h = 0; j >= 0; j--) {
         d->choice[j].id = d->bp[j][h].id;

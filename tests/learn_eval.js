@@ -2,7 +2,7 @@
 // (words the model doesn't know yet are spelled in exact mode), score the decode, then learn
 // from the message as sent, as if they had fixed any mistakes first.
 //   node tests/learn_eval.js [users_dev.tsv] [--model onepress.bin] [--params a,b,base]
-//                            [--before N] [--recent bonus,maxUni]
+//                            [--before N] [--recent bonus,maxUni] [--nn onepress-nn.bin]
 // --before N: give the decoder the person's previous N messages as the text before (start.before),
 // one per line, as an app carrying context from message to message would.
 // Files: model/corpora/nus/users_{dev,test,test_na}.tsv, built by model/prep_nus.py.
@@ -18,6 +18,7 @@ if (recent) D.recentParams(...recent.split(',').map(Number));
 if (params) D.userParams(...params.split(',').map(Number));
 const file = args[0] || path.join(__dirname, '../model/corpora/nus/users_dev.tsv');
 const m = D.buildModel(fs.readFileSync(modelFile));
+const nnFile = opt('--nn'), nn = nnFile ? D.buildNN(fs.readFileSync(nnFile), m) : undefined;
 const known = new Set(m.words);
 const TOK = /[a-z]+(?:'[a-z]+)?|[.,!?]/g;
 const toks = s => s.toLowerCase().match(TOK) || [];
@@ -51,7 +52,7 @@ function run(learning) {
           predicted.push(pred);
         }
       });
-      const r = D.decode(m, keys, {}, 8, 1, { user: learning ? u : null, before });
+      const r = D.decode(m, keys, {}, 8, 1, { user: learning ? u : null, before, nn });
       const out = toks(D.render(m, r, r.hyps[0]).map(p => p.text).join(''));
       let wi = 0;
       ref.forEach((x, i) => {

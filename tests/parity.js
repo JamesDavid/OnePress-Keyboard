@@ -12,6 +12,7 @@ const D = require(path.join(__dirname, '../web/decoder.js'));
 const args = process.argv.slice(2);
 const opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args.splice(i, 2)[1] : d; };
 const learnMode = args.includes('--learn');
+const nnFile = opt('--nn');
 if (learnMode) args.splice(args.indexOf('--learn'), 1);
 const beam = +opt('--beam', 8), nFuzz = +opt('--fuzz', 5000);
 const modelFile = opt('--model', path.join(__dirname, '../model/onepress.bin'));
@@ -96,19 +97,20 @@ for (let i = 0; i < nFuzz; i++) {
 }
 
 const user = learnMode ? D.newUser(m) : null;
+const nn = nnFile ? D.buildNN(fs.readFileSync(nnFile), m) : undefined;
 const js = inputs.map(line => {
   if (line[0] === '@') {           // @Word: recase a learned word (as opdecode does)
     if (user) user.words.forEach((w, i) => { if (w.toLowerCase() === line.slice(1).toLowerCase()) user.words[i] = line.slice(1); });
     return line;
   }
   const [k, before, hint] = line.split('\t');
-  const r = D.decode(m, k, {}, beam, 5, { user, before: before === undefined ? undefined : before.replace(/\|/g, '\n'), hint });
+  const r = D.decode(m, k, {}, beam, 5, { user, before: before === undefined ? undefined : before.replace(/\|/g, '\n'), hint, nn });
   const text = D.render(m, r, r.hyps[0]).map(p => p.text).join('');
   if (user) D.learn(m, user, r, r.hyps[0]);
   return text;
 });
 const t0 = Date.now();
-const c = execFileSync(exe, [modelFile, String(beam)].concat(learnMode ? ['--learn'] : []), { input: inputs.join('\n') + '\n', maxBuffer: 1 << 28 })
+const c = execFileSync(exe, [modelFile, String(beam)].concat(learnMode ? ['--learn'] : [], nnFile ? ['--nn', nnFile] : []), { input: inputs.join('\n') + '\n', maxBuffer: 1 << 28 })
   .toString().split(/\r?\n/);
 const ms = Date.now() - t0;
 let bad = 0;
