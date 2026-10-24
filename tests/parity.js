@@ -100,6 +100,28 @@ for (let i = 0; i < nFuzz; i++) {
   inputs.push(k);
 }
 
+// Typed on QWERTY: every letter's tap in the hint, some on a neighboring key, some messages cut
+// off mid-word (completions), some with text before. From the NUS dev messages, or the fuzz words.
+{
+  const ROWS = ['qwertyuiop', 'asdfghjkl', 'zxcvbnm'], pos = {};
+  ROWS.forEach((r, y) => [...r].forEach((c, x) => { pos[c] = [x + [0, 0.5, 1][y], y]; }));
+  const near = c => Object.keys(pos).filter(d => d !== c && Math.hypot(pos[d][0] - pos[c][0], pos[d][1] - pos[c][1]) < 1.2);
+  const dev = path.join(__dirname, '../model/corpora/nus/dev.txt');
+  const msgs = fs.existsSync(dev) ? fs.readFileSync(dev, 'utf8').split('\n').filter(Boolean).slice(0, 1500)
+    : Array.from({ length: 300 }, () => Array.from({ length: 1 + rnd(6) }, () => m.words[rnd(5000)]).join(' '));
+  for (const msg of msgs) {
+    let k = '', h = '';
+    for (const ch of msg.toLowerCase()) {
+      if (ch >= 'a' && ch <= 'z') { const t = rnd(10) ? ch : pick(near(ch)); k += D.wordKeys(t); h += t; }
+      else if (ch === ' ') { k += '0'; h += ' '; }
+      else if (ch === "'") { k += '#'; h += ' '; }
+      else if ('.,!?'.includes(ch)) { k += '#'; h += ' '; }
+    }
+    const cut = rnd(3) ? k.length : Math.max(1, k.length - 1 - rnd(4));
+    inputs.push(k.slice(0, cut) + '\t' + (rnd(3) ? '' : pick(BEFORE)) + '\t' + h.slice(0, cut));
+  }
+}
+
 const user = learnMode ? D.newUser(m) : null;
 const nn = nnFile ? D.buildNN(fs.readFileSync(nnFile), m) : undefined;
 const js = inputs.map(line => {

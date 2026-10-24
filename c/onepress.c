@@ -413,7 +413,7 @@ static char time_kind(const char *k, int kn) {
 
 /* ---- candidates ---- */
 
-typedef struct { uint16_t id; uint8_t kind; int16_t pen; } cand;
+typedef struct { uint16_t id; uint8_t kind; int32_t pen; } cand;
 
 /* Learned words may hold digits (call signs). As decoder.js userKeys / userTyped: a learned
  * word's digit 2-9 is its own key and 0/1 the held digit; a typed held digit 2-9 compares as
@@ -649,6 +649,161 @@ static int compounds(const op_model *m, const char *k, const char *lit, int kn, 
     return nb;
 }
 
+/* The OP_MAX_COMPLETIONS most frequent distinct words whose keys start with k[0..kn) (and agree
+ * with lit, if given), ascending by id. See decoder.js prefixCandidates. */
+static int prefix_best(const op_model *m, const char *k, int kn, const char *lit, uint16_t *best) {
+    int nb = 0, starts;
+    for (int strip = 0; strip < 2; strip++) {
+        const uint16_t *ix = strip ? m->strip_idx : m->key_idx;
+        uint32_t ixn = strip ? m->n_strip : m->n_words;
+        for (uint32_t i = lower_bound(m, ix, ixn, strip, k, kn); i < ixn; i++) {
+            key_cmp(m, ix[i], strip, k, kn, &starts);
+            if (!starts) break;
+            uint16_t id = ix[i];
+            if (lit && !lit_match(m, id, strip, lit, kn)) continue;
+            int dup = 0;
+            for (int j = 0; j < nb; j++) if (best[j] == id) dup = 1;
+            if (dup) continue;
+            if (nb < OP_MAX_COMPLETIONS) best[nb++] = id;
+            else if (id < best[nb - 1]) best[nb - 1] = id;
+            else continue;
+            for (int j = nb - 1; j > 0 && best[j] < best[j - 1]; j--) {
+                uint16_t x = best[j]; best[j] = best[j - 1]; best[j - 1] = x;
+            }
+        }
+    }
+    return nb;
+}
+
+/* ---- QWERTY: the letters tapped are evidence too (see decoder.js qwertyCandidates) ---- */
+static const char *const QWERTY_NEAR[26] = { "qwsz", "ghvn", "dfxv", "erfsxc", "wrsd", "rtgdcv", "tyhfvb",
+    "yujgbn", "uojk", "uikhnm", "iojlm", "opk", "jkn", "hjbm", "ipkl", "ol", "wa", "etdf", "weadzx", "ryfg",
+    "yihj", "fgcb", "qeas", "sdzc", "tugh", "asx" };
+#define QW_NEAR (-32)           /* 1/4 nat: a neighboring key (-8 nats) */
+#define QW_FAR (-96)            /* a letter only on the same keypad key (-24 nats) */
+#define QW_MAX_KEYS 32
+
+static int is_qwerty(const op_decoder *d, const op_tok *t) {
+    int any = 0;
+    if (t->len > QW_MAX_KEYS) return 0;
+    for (int i = t->off; i < t->off + t->len; i++) {
+        if (d->lits[i]) return 0;
+        if (d->hints[i]) any = 1; else if (d->keys[i] != '#') return 0;
+    }
+    return any;
+}
+/* What the taps say about word w[0..wn) as the token's letters, in model units. */
+static int32_t tap_cost(const op_model *m, const op_decoder *d, const op_tok *t, const char *w, int wn) {
+    int strip = !memchr(d->keys + t->off, '#', (size_t)t->len), j = 0;
+    int32_t c = 0, q = m->scale >> 2;
+    for (int i = 0; i < wn && j < t->len; i++) {
+        char ch = w[i];
+        if (strip && ch == '\'') continue;
+        if (ch >= 'A' && ch <= 'Z') ch = (char)(ch + 32);
+        char h = d->hints[t->off + j++];
+        if (!h || ch == h) continue;
+        c += strchr(QWERTY_NEAR[h - 'a'], ch) && ch ? QW_NEAR * q : QW_FAR * q;
+    }
+    return c;
+}
+/* Best candidates by (unigram + pen) descending, then id; one entry per id. */
+typedef struct { cand c[OP_MAX_EXACT + OP_MAX_COMPLETIONS]; int32_t s[OP_MAX_EXACT + OP_MAX_COMPLETIONS]; int n, max; } qw_list;
+static void qw_add(qw_list *l, cand c, int32_t score) {
+    for (int i = 0; i < l->n; i++) {
+        if (l->c[i].id != c.id) continue;
+        if (l->s[i] >= score) return;
+        memmove(l->c + i, l->c + i + 1, (size_t)(l->n - i - 1) * sizeof *l->c);
+        memmove(l->s + i, l->s + i + 1, (size_t)(l->n - i - 1) * sizeof *l->s);
+        l->n--;
+        break;
+    }
+    int k = l->n;
+    while (k > 0 && (l->s[k - 1] < score || (l->s[k - 1] == score && l->c[k - 1].id > c.id))) k--;
+    if (k >= l->max) return;
+    if (l->n == l->max) l->n--;
+    memmove(l->c + k + 1, l->c + k, (size_t)(l->n - k) * sizeof *l->c);
+    memmove(l->s + k + 1, l->s + k, (size_t)(l->n - k) * sizeof *l->s);
+    l->c[k] = c;
+    l->s[k] = score;
+    l->n++;
+}
+typedef struct {
+    const op_decoder *d; const op_model *m; const op_tok *t;
+    char allowed[QW_MAX_KEYS][8], pre[QW_MAX_KEYS];
+    int is_last;
+    qw_list ex, comp;
+} qw_walk_state;
+static void qw_walk(qw_walk_state *w, int len) {
+    const op_model *m = w->m;
+    int starts, any = 0;
+    for (int strip = 0; strip < 2 && !any; strip++) {
+        const uint16_t *ix = strip ? m->strip_idx : m->key_idx;
+        uint32_t ixn = strip ? m->n_strip : m->n_words, i = lower_bound(m, ix, ixn, strip, w->pre, len);
+        if (i < ixn) { key_cmp(m, ix[i], strip, w->pre, len, &starts); any = starts; }
+    }
+    if (!any) return;
+    if (len < w->t->len) {
+        for (const char *dg = w->allowed[len]; *dg; dg++) { w->pre[len] = *dg; qw_walk(w, len + 1); }
+        return;
+    }
+    const char *text;
+    for (int strip = 0; strip < 2; strip++) {
+        const uint16_t *ix = strip ? m->strip_idx : m->key_idx;
+        uint32_t ixn = strip ? m->n_strip : m->n_words;
+        for (uint32_t i = lower_bound(m, ix, ixn, strip, w->pre, len); i < ixn && key_cmp(m, ix[i], strip, w->pre, len, &starts) == 0; i++) {
+            int tn = op_word(m, ix[i], &text);
+            int32_t pen = (strip ? m->param[OP_P_APOSTROPHE] : 0) + tap_cost(m, w->d, w->t, text, tn);
+            qw_add(&w->ex, (cand){ ix[i], OP_WORD, pen }, m->uni[ix[i]] + pen);
+        }
+    }
+    if (w->is_last) {
+        uint16_t best[OP_MAX_COMPLETIONS];
+        int nb = prefix_best(m, w->pre, len, NULL, best);
+        for (int j = 0; j < nb; j++) {
+            int tn = op_word(m, best[j], &text);
+            if (tn <= len) continue;
+            int32_t pen = m->param[OP_P_COMPLETION] + tap_cost(m, w->d, w->t, text, tn);
+            qw_add(&w->comp, (cand){ best[j], OP_PARTIAL, pen }, m->uni[best[j]] + pen);
+        }
+    }
+}
+/* Exact candidates into out (returns how many), completions into comp (*n_comp). */
+static int qwerty_cands(const op_decoder *d, const op_model *m, const op_tok *t, int is_last,
+                        cand *out, cand *comp, int *n_comp) {
+    qw_walk_state w;            /* ~1.6 KB of stack, only for words typed on QWERTY */
+    w.d = d; w.m = m; w.t = t; w.is_last = is_last;
+    w.ex.n = w.comp.n = 0;
+    w.ex.max = OP_MAX_EXACT;
+    w.comp.max = OP_MAX_EXACT + OP_MAX_COMPLETIONS;    /* the exact ones are dropped below */
+    for (int i = 0; i < t->len; i++) {
+        /* The keypad digits of the tapped letter and its neighbors, ascending. */
+        char h = d->hints[t->off + i], *a = w.allowed[i], letters[8];
+        int na = 0;
+        if (!h) { a[0] = '#'; a[1] = 0; continue; }
+        letters[0] = h;
+        strcpy(letters + 1, QWERTY_NEAR[h - 'a']);
+        for (const char *c = letters; *c; c++) {
+            char dg = KEY_OF[*c - 'a'];
+            int k = 0;
+            while (k < na && a[k] < dg) k++;
+            if (k < na && a[k] == dg) continue;
+            memmove(a + k + 1, a + k, (size_t)(na - k));
+            a[k] = dg;
+            na++;
+        }
+        a[na] = 0;
+    }
+    qw_walk(&w, 0);
+    for (int i = 0; i < w.ex.n; i++) out[i] = w.ex.c[i];
+    *n_comp = 0;
+    for (int i = 0; i < w.comp.n && *n_comp < OP_MAX_COMPLETIONS; i++) {
+        int dup = 0;
+        for (int e = 0; e < w.ex.n; e++) if (w.ex.c[e].id == w.comp.c[i].id) dup = 1;
+        if (!dup) comp[(*n_comp)++] = w.comp.c[i];
+    }
+    return w.ex.n;
+}
+
 static int slot_cands(const op_decoder *d, const op_model *m, const op_tok *t, int is_last, cand *out) {
     const op_user *u = d->user;
     if (t->type == TOK_NUM) {
@@ -671,50 +826,55 @@ static int slot_cands(const op_decoder *d, const op_model *m, const op_tok *t, i
         if (lit[i]) has_lit = 1; else all_lit = 0;
         if (k[i] == '#') has_hash = 1;
     }
-    /* Exact matches from both indexes, merged into id (frequency) order. A contraction typed
-     * without its apostrophe ("im" for I'm) matches through stripIdx with a small penalty. */
-    int starts;
-    uint32_t a = lower_bound(m, m->key_idx, m->n_words, 0, k, kn), ae = a;
-    uint32_t b = lower_bound(m, m->strip_idx, m->n_strip, 1, k, kn), be = b;
-    while (ae < m->n_words && key_cmp(m, m->key_idx[ae], 0, k, kn, &starts) == 0) ae++;
-    while (be < m->n_strip && key_cmp(m, m->strip_idx[be], 1, k, kn, &starts) == 0) be++;
-    while ((a < ae || b < be) && n < OP_MAX_EXACT) {
-        int from_strip = a >= ae || (b < be && m->strip_idx[b] < m->key_idx[a]);
-        uint16_t id = from_strip ? m->strip_idx[b++] : m->key_idx[a++];
-        if (has_lit && !lit_match(m, id, !has_hash, lit, kn)) continue;
-        out[n++] = (cand){ id, OP_WORD, from_strip ? m->param[OP_P_APOSTROPHE] : 0 };
+    int qw = is_qwerty(d, t), n_qc = 0;
+    cand qc[OP_MAX_COMPLETIONS];
+    if (qw) {
+        n = qwerty_cands(d, m, t, is_last, out, qc, &n_qc);
+    } else {
+        /* Exact matches from both indexes, merged into id (frequency) order. A contraction typed
+         * without its apostrophe ("im" for I'm) matches through stripIdx with a small penalty. */
+        int starts;
+        uint32_t a = lower_bound(m, m->key_idx, m->n_words, 0, k, kn), ae = a;
+        uint32_t b = lower_bound(m, m->strip_idx, m->n_strip, 1, k, kn), be = b;
+        while (ae < m->n_words && key_cmp(m, m->key_idx[ae], 0, k, kn, &starts) == 0) ae++;
+        while (be < m->n_strip && key_cmp(m, m->strip_idx[be], 1, k, kn, &starts) == 0) be++;
+        while ((a < ae || b < be) && n < OP_MAX_EXACT) {
+            int from_strip = a >= ae || (b < be && m->strip_idx[b] < m->key_idx[a]);
+            uint16_t id = from_strip ? m->strip_idx[b++] : m->key_idx[a++];
+            if (has_lit && !lit_match(m, id, !has_hash, lit, kn)) continue;
+            out[n++] = (cand){ id, OP_WORD, from_strip ? m->param[OP_P_APOSTROPHE] : 0 };
+        }
     }
     cand upart[OP_MAX_USER_CANDS];
     int n_upart = 0;
     if (u) {
         int n_uexact = 0;
         user_cands(m, u, k, lit, kn, is_last && !all_lit, out + n, &n_uexact, upart, &n_upart);
+        if (qw) {               /* what the taps say about each learned word */
+            const char *w;
+            for (int j = 0; j < n_uexact; j++) {
+                int wn = tok_text(m, u, out[n + j].id, &w);
+                out[n + j].pen += tap_cost(m, d, t, w, wn);
+            }
+            for (int j = 0; j < n_upart; j++) {
+                int wn = tok_text(m, u, upart[j].id, &w);
+                upart[j].pen += tap_cost(m, d, t, w, wn);
+            }
+        }
         n += n_uexact;
     }
     int n_exact = n;
-    if (is_last && !all_lit) {
+    if (qw) {
+        for (int j = 0; j < n_qc; j++) {
+            int seen = 0;
+            for (int e = 0; e < n_exact; e++) if (out[e].id == qc[j].id) seen = 1;
+            if (!seen) out[n++] = qc[j];
+        }
+        for (int j = 0; j < n_upart; j++) out[n++] = upart[j];
+    } else if (is_last && !all_lit) {
         /* While still typing, also offer the most frequent completions. */
         uint16_t best[OP_MAX_COMPLETIONS];
-        int nb = 0;
-        for (int strip = 0; strip < 2; strip++) {
-            const uint16_t *ix = strip ? m->strip_idx : m->key_idx;
-            uint32_t ixn = strip ? m->n_strip : m->n_words;
-            for (uint32_t i = lower_bound(m, ix, ixn, strip, k, kn); i < ixn; i++) {
-                key_cmp(m, ix[i], strip, k, kn, &starts);
-                if (!starts) break;
-                uint16_t id = ix[i];
-                if (has_lit && !lit_match(m, id, strip, lit, kn)) continue;
-                int dup = 0;
-                for (int j = 0; j < nb; j++) if (best[j] == id) dup = 1;
-                if (dup) continue;
-                if (nb < OP_MAX_COMPLETIONS) best[nb++] = id;
-                else if (id < best[nb - 1]) best[nb - 1] = id;
-                else continue;
-                for (int j = nb - 1; j > 0 && best[j] < best[j - 1]; j--) {
-                    uint16_t x = best[j]; best[j] = best[j - 1]; best[j - 1] = x;
-                }
-            }
-        }
+        int nb = prefix_best(m, k, kn, has_lit ? lit : NULL, best);
         for (int j = 0; j < nb; j++) {
             int seen = 0;
             for (int e = 0; e < n_exact; e++) if (out[e].id == best[j]) seen = 1;

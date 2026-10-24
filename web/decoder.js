@@ -283,6 +283,71 @@ function joinLearned(toks, u) {
   return out;
 }
 
+// ---- QWERTY: the letters tapped are evidence too ----
+// A word typed on a QWERTY layout (every press has its letter in start.hint) is matched
+// letter by letter, not just by keypad digits: each tapped letter may stand for itself or a
+// neighboring key (QWERTY_NEAR), so a slip still finds the word. Each candidate's letters are
+// compared with the taps: a neighbor costs QW_NEAR, a letter only on the same keypad key costs
+// QW_FAR (in 1/4 nat). Candidates: words whose keypad digits fit, found by walking the digits
+// each tap allows and dropping prefixes no word starts with; the MAX_EXACT best by unigram plus
+// that cost (ties: lower id), and while typing the MAX_COMPLETIONS best completions.
+const QWERTY_NEAR = { q: 'wa', w: 'qeas', e: 'wrsd', r: 'etdf', t: 'ryfg', y: 'tugh', u: 'yihj', i: 'uojk',
+  o: 'ipkl', p: 'ol', a: 'qwsz', s: 'weadzx', d: 'erfsxc', f: 'rtgdcv', g: 'tyhfvb', h: 'yujgbn',
+  j: 'uikhnm', k: 'iojlm', l: 'opk', z: 'asx', x: 'sdzc', c: 'dfxv', v: 'fgcb', b: 'ghvn', n: 'hjbm', m: 'jkn' };
+let QW_NEAR = -32, QW_FAR = -96;          // 1/4 nat: -8 and -24 nats, tuned with tests/qwerty_eval.js
+const QW_MAX_KEYS = 32;                   // longer words are matched by their digits only
+function qwertyParams(near, far) { QW_NEAR = Math.round(near * 4); QW_FAR = Math.round(far * 4); }  // tuning only
+function isQwerty(tok) {
+  let any = false;
+  if (tok.keys.length > QW_MAX_KEYS) return false;
+  for (let i = 0; i < tok.keys.length; i++) {
+    if (tok.lit[i] !== null) return false;
+    if (tok.hint[i] !== null) any = true; else if (tok.keys[i] !== '#') return false;
+  }
+  return any;
+}
+// What the taps say about word (lowercase) as the first tok.keys.length letters, in model units.
+function tapCost(m, tok, word) {
+  const w = tok.keys.includes('#') ? word : word.replace(/'/g, ''), q = m.scale >> 2;
+  let c = 0;
+  for (let i = 0; i < tok.keys.length; i++) {
+    const h = tok.hint[i];
+    if (h === null || w[i] === h) continue;
+    c += QWERTY_NEAR[h].includes(w[i]) ? QW_NEAR * q : QW_FAR * q;
+  }
+  return c;
+}
+function qwertyCandidates(m, tok, isLast) {
+  const n = tok.keys.length, P = m.params, allowed = [];
+  for (let i = 0; i < n; i++) {
+    const h = tok.hint[i];
+    if (h === null) { allowed.push(['#']); continue; }
+    const ds = [];
+    for (const c of h + QWERTY_NEAR[h]) if (!ds.includes(KEYMAP[c])) ds.push(KEYMAP[c]);
+    allowed.push(ds.sort());
+  }
+  const exact = [], comps = [];
+  const walk = pre => {
+    if (!m.indexes.some(ix => { const i = lowerBound(ix, pre); return i < ix.keys.length && ix.keys[i].startsWith(pre); })) return;
+    if (pre.length < n) { for (const d of allowed[pre.length]) walk(pre + d); return; }
+    for (const id of exactMatches(m, pre)) exact.push({ id, pen: m.fullKeys[id] === pre ? 0 : P.apostrophe });
+    if (isLast) for (const id of prefixCandidates(m, pre, MAX_COMPLETIONS)) comps.push(id);
+  };
+  walk('');
+  const best = (list, max) => {
+    list.forEach(c => { c.score = m.uni[c.id] + c.penalty; });
+    list.sort((a, b) => b.score - a.score || a.id - b.id);
+    const out = [], seen = new Set();
+    for (const c of list) { if (out.length === max) break; if (!seen.has(c.id)) { seen.add(c.id); out.push(c); } }
+    return out;
+  };
+  const ex = best(exact.map(c => ({ text: m.words[c.id], id: c.id, penalty: c.pen + tapCost(m, tok, m.words[c.id]) })), MAX_EXACT);
+  const done = new Set(ex.map(c => c.id));
+  const cp = best(comps.filter(id => !done.has(id) && m.words[id].length > n)
+    .map(id => ({ text: m.words[id].slice(0, n), id, partial: m.words[id], penalty: P.completion + tapCost(m, tok, m.words[id]) })), MAX_COMPLETIONS);
+  return [ex, cp];
+}
+
 // Candidates for each slot: [{text, id, partial, penalty}]
 function slotCandidates(m, tok, isLast, u) {
   const P = m.params;
@@ -299,11 +364,16 @@ function slotCandidates(m, tok, isLast, u) {
   }
   const hasLit = tok.lit.some(x => x !== null);
   const allLit = tok.lit.every(x => x !== null);
+  const qw = isQwerty(tok);
   // A contraction typed without its apostrophe ("im" for I'm) is allowed but slightly penalized.
-  let ids = exactMatches(m, tok.keys);
-  if (hasLit) ids = ids.filter(id => litMatch(m, tok, id, tok.keys));
-  const exact = ids.slice(0, MAX_EXACT).map(id =>
-    ({ text: m.words[id], id, penalty: m.fullKeys[id] === tok.keys ? 0 : P.apostrophe }));
+  let exact, qwComps = null;
+  if (qw) [exact, qwComps] = qwertyCandidates(m, tok, isLast);
+  else {
+    let ids = exactMatches(m, tok.keys);
+    if (hasLit) ids = ids.filter(id => litMatch(m, tok, id, tok.keys));
+    exact = ids.slice(0, MAX_EXACT).map(id =>
+      ({ text: m.words[id], id, penalty: m.fullKeys[id] === tok.keys ? 0 : P.apostrophe }));
+  }
   // Words this person taught it: exact matches first, completions after the dictionary's.
   const userExact = [], userPartial = [];
   if (u) {
@@ -311,14 +381,17 @@ function slotCandidates(m, tok, isLast, u) {
     u.words.forEach((w, k) => {
       const id = m.bos + 1 + k, f = userMatch(w, tok, keys, partial);
       if (!f) return;
+      const miss = qw ? tapCost(m, tok, w.toLowerCase()) : 0;
       if (!f.partial && userExact.length < MAX_USER_CANDS)
-        userExact.push({ text: w, id, penalty: f.full ? 0 : P.apostrophe });
+        userExact.push({ text: w, id, penalty: (f.full ? 0 : P.apostrophe) + miss });
       else if (f.partial && userPartial.length < MAX_USER_CANDS)
-        userPartial.push({ text: w.slice(0, tok.keys.length), id, partial: w, penalty: P.completion });
+        userPartial.push({ text: w.slice(0, tok.keys.length), id, partial: w, penalty: P.completion + miss });
     });
   }
   exact.push(...userExact);
-  if (isLast && !allLit) {
+  if (qwComps) {
+    exact.push(...qwComps.filter(c => !exact.some(e => e.id === c.id)), ...userPartial);
+  } else if (isLast && !allLit) {
     // While still typing, also offer completions (shown truncated to what's typed).
     const seen = new Set(exact.map(c => c.id));
     const pred = hasLit ? (id, key) => litMatch(m, tok, id, key) : null;
@@ -878,4 +951,4 @@ function learn(m, u, result, hyp, start = {}) {
 }
 
 if (typeof module !== 'undefined') module.exports = { buildModel, decode, render, nextLetterProbs, exactMatches, wordKeys, tokenize, formatNumber,
-  newUser, learn, saveUser, loadUser, USER_UNI, USER_PAIR, userParams, recentParams, buildNN };
+  newUser, learn, saveUser, loadUser, qwertyParams, USER_UNI, USER_PAIR, userParams, recentParams, buildNN };

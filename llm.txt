@@ -71,8 +71,9 @@ Examples: `435560968` is "Hello you". `66069092904663` is "On my way home". `65#
    starting context, capitalization and recently used words from it. Without it, set `prev` (the
    model's `bos` at a sentence start) and `cap` yourself.
 5. On a QWERTY layout that sends keypad digits, also pass `hint`: the letter tapped for each
-   press (a space for presses that weren't letters). A word no dictionary word matches is then
-   shown, and learned, as typed.
+   press (a space for presses that weren't letters). The decoder then matches those letters,
+   forgiving taps on a neighboring key (99.6% of words right typing accurately, 96.5% with 10% of
+   taps on a neighbor), and a word no dictionary word matches is shown, and learned, as typed.
 6. A finished sentence doesn't change once more is typed (only its final mark can, . to ,).
 7. Beam width 8 is what every shipped target uses. Keep compositions under `OP_MAX_KEYS` (256)
    presses; committing at each sentence end is fine.

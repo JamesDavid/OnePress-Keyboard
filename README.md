@@ -21,8 +21,10 @@ browser, and a short tutorial starts on your first visit.
   around a word ("in May" but "I may", "Will Smith"), and call signs (KE7AQA).
 - **Numbers, money and times.** Hold a number key for its digit: `# 6 # 000 # 00` gives
   "$6,000.00", and "at 5 # 30" gives "at 5:30" (5.30 is one tap away).
-- **Exact spelling** (multi-tap) for anything else, mixed freely with predicted words. On a QWERTY
-  layout, a word it doesn't know keeps the letters you tapped.
+- **Exact spelling** (multi-tap) for anything else, mixed freely with predicted words.
+- **QWERTY too.** The letters you tap count, and a tap on a neighboring key is forgiven: 99.6% of
+  words right typing accurately, 96.5% with one letter in ten on the wrong key. A word it doesn't
+  know keeps the letters you tapped.
 - **Words run together.** A long word it doesn't know is tried as known words written as one
   ("icecreamtruck", "snowmanparty"), ranked by how often each word starts or ends real
   compounds, with the other splits a tap away.

@@ -19,6 +19,9 @@ neural network helps on phones and the web.
   | `onepress-s.bin` | 5k | 239 KB | 89.18% | 91.16% | 46.7% | radios, nRF52 |
 
   `node tests/eval.js --nn model/onepress-nn.bin` for the network.
+- QWERTY (letters passed as `start.hint`): `node tests/qwerty_eval.js [--miss 0.1]` types each
+  test message with that share of letters on a neighboring key. Current: 99.6% words right at 0%,
+  98.7% at 3%, 96.5% at 10%.
 - Learning from the user (SPEC.md §3): `node tests/learn_eval.js [users_test.tsv] [--before 3]`
   replays each NUS user's messages in order. Tune on `users_dev.tsv`. Current, test users:
   predicted words 90.23% → 93.12%, punctuation 58.6% → 66.8% (US/Canada: 94.18% → 95.27%,
