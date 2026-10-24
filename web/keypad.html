@@ -143,16 +143,50 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 }
 .act.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 700; }
 
+.hdr-r { display: flex; align-items: baseline; gap: 10px; }
+.linkbtn { font: inherit; font-size: 0.82rem; color: var(--accent); background: none; border: 0; padding: 2px 0; cursor: pointer; text-decoration: underline; }
+.tut {
+  background: var(--surface); border: 1px solid var(--key-edge); border-left: 4px solid var(--accent); border-radius: 12px;
+  padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; font-size: 0.92rem; line-height: 1.5;
+}
+.tut .top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.tut h2 { font-family: var(--f-display); font-weight: 700; font-size: 1.08rem; margin: 0; }
+.tut p { margin: 0; }
+.tut .ok { color: var(--accent); font-weight: 700; min-height: 1.5em; }
+.tut .ok:empty { min-height: 0; }
+.tut .nav { display: flex; gap: 8px; justify-content: flex-end; margin-top: 2px; }
+.tut .nav .act { padding: 7px 14px; }
+.tut .dots { display: inline-flex; gap: 4px; }
+.tut .dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--key-edge); }
+.tut .dots i.on { background: var(--accent); }
+kbd {
+  font-family: var(--f-mono); font-size: 0.85em; background: var(--key); border: 1px solid var(--key-edge);
+  border-bottom-width: 2px; border-radius: 5px; padding: 0 5px; white-space: nowrap;
+}
+.wrap.tutorial .model, .wrap.tutorial .learned, .wrap.tutorial .compare, .wrap.tutorial .notes { display: none !important; }
+
 .notes { font-size: 0.86rem; color: var(--muted); line-height: 1.55; display: flex; flex-direction: column; gap: 6px; }
 .notes p { margin: 0; max-width: 62ch; }
 .notes b { color: var(--ink); font-weight: 700; }
 </style>
 
-<div class="wrap">
+<div class="wrap" id="wrap">
   <header>
     <h1>Single-Press Keypad</h1>
-    <span class="status" id="status">Loading word model…</span>
+    <span class="hdr-r"><span class="status" id="status">Loading word model…</span><button type="button" class="linkbtn" id="tutOpen">Tutorial</button></span>
   </header>
+
+  <section class="tut" id="tut" hidden aria-label="Tutorial">
+    <div class="top"><span id="tutStep"></span><span class="dots" id="tutDots"></span></div>
+    <h2 id="tutTitle"></h2>
+    <p id="tutText"></p>
+    <p class="ok" id="tutOk" aria-live="polite"></p>
+    <div class="nav">
+      <button type="button" class="act" id="tutClose">Close</button>
+      <button type="button" class="act" id="tutBack">Back</button>
+      <button type="button" class="act primary" id="tutNext">Skip</button>
+    </div>
+  </section>
 
   <div class="model">
     <label for="modelPick">Model</label>
@@ -189,6 +223,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     <p><b>Hold #</b> for exact spelling, for names and words the model doesn't know. Press a key repeatedly to cycle its letters and then its digit (2 = a, b, c, 2), and pause or press another key to move on. # cycles . , ? ! ' and 0 gives a space, or the digit 0 on a second press. On QWERTY, exact mode types the letter you tap. Hold # again to go back to predictive.</p>
     <p>The word list includes names, places, brands and apps, with their usual capitalization (iPhone, McDonald's, YouTube).</p>
     <p><b>Send</b> copies the text, clears it and learns from it: the words you use and the words you use together get more likely, and a word you spelled exactly is guessed from its keys next time. That covers punctuation too. What it learns stays in this browser, kept for each model separately. <b>Forget</b> clears it.</p>
+    <p><b>Tutorial</b> (next to the title) walks through all of this in a few steps.</p>
     <p>Tap any word to see other words with the same keys. Picking one locks it, and the rest of the sentence re-decodes around it.</p>
     <p>The QWERTY keyboard sends only each letter's keypad number (shown in the corner), so the model decodes it exactly as if you'd used the keypad. Keys grow and shrink in place with how likely each letter is to come next. A computer keyboard works the same way, and Tab finishes the word.</p>
     <p>Runs entirely in this page. <b>Model</b> picks the word model: Phone (45,000 words), ESP32 (20,000) and Radio (5,000) are the same files the C decoder runs on those devices. <b>Load .bin file…</b> opens any model built with <code>model/export_bin.py</code>. <b>Compare sizes</b> shows what each model makes of the same keys, with the words that differ from the selected model highlighted.</p>
@@ -1002,6 +1037,7 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
     renderAlts();
     sizeKeys();
     renderCompare();
+    tutCheck();
   }
 
   // ---- Models: three sizes are embedded; any KPD2 file can be loaded for testing ----
@@ -1188,8 +1224,82 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
     try {
       navigator.clipboard.writeText(t).then(done, () => { btn.textContent = 'Sent'; setTimeout(() => btn.textContent = 'Send', 1400); });
     } catch (e) { btn.textContent = 'Sent'; setTimeout(() => btn.textContent = 'Send', 1400); }
+    if (tutIdx >= 0) tutSent = true;
     keys = ''; locks = {}; sel = null; isExample = false; update();
   });
+
+  // ---- Tutorial: short steps, each checked against what's on the display ----
+  const k = (...ks) => ks.map(x => `<kbd>${x}</kbd>`).join(' ');
+  const TUT = [
+    { title: 'One press per letter',
+      text: `Press each letter's key once, even when the letter is third on its key. Type <b>hi</b>: ${k('4', '4')}, then ${k('0')} for a space.`,
+      ok: '4 4 could be gh, gi, ih… the model knew you meant hi.',
+      check: t => /^hi\s/i.test(t.text) },
+    { title: 'It reads the whole sentence',
+      text: `Type <b>on my way home</b>: ${k('66')} ${k('0')} ${k('69')} ${k('0')} ${k('929')} ${k('0')} ${k('4663')}. Words settle as you type; ${k('1')} deletes.`,
+      ok: 'On its own 4663 is "good". After "on my way" it\'s "home": each new word can fix the ones before it.',
+      check: t => /on my way home/i.test(t.text) },
+    { title: 'Other guesses',
+      text: `Type ${k('4663')}, then press ${k('*')} to swap in the next word with the same keys, or tap a guess under the display. You can tap any word on the display to change it.`,
+      ok: 'Your pick is locked, and the rest of the sentence decodes around it.',
+      check: t => t.keys.includes('4663') && Object.keys(t.locks).length > 0 },
+    { title: 'Punctuation',
+      text: `Type <b>ok</b> (${k('6', '5')}) and press ${k('#')}. The model picks . , ? or ! from the sentence. Between letters ${k('#')} is an apostrophe, and you can skip it: dont gives don't.`,
+      ok: 'Not the mark you wanted? Press * for the next one.',
+      check: t => /ok[.,!?]\s*$/i.test(t.text) },
+    { title: 'Numbers',
+      text: `<b>Hold</b> a number key to type its digit. Hold ${k('4')}, then type ${k('3837')}. Held digits next to ${k('#')} make times and money: at 5 # 30 gives 5:30.`,
+      ok: '4ever. Digits end a word unless the next press is another digit, a # or a dot.',
+      check: t => /4ever/i.test(t.text) },
+    { title: 'Exact spelling',
+      text: `For names and call signs, <b>hold</b> ${k('#')}: the display gets a blue outline. Now presses cycle each key's letters (${k('5')} ${k('5')} is k) and then its digit. Spell anything, then hold ${k('#')} again to go back.`,
+      ok: 'A word you spell and then send is learned: next time it comes from its keys like any other word.',
+      check: t => /[a-z]/.test(t.keys) && !t.exact },
+    { title: 'Send',
+      text: `Type anything and press <b>Send</b>. It copies the text, clears the display and learns from it: your words, the words you use together and how you punctuate.`,
+      ok: 'Sent. Forget, under the model picker, clears what it has learned.',
+      check: t => t.sent },
+    { title: "You're set",
+      text: 'The notes under the keypad cover the rest: the QWERTY keyboard, the three model sizes and comparing them. Tutorial is next to the title any time.',
+      check: () => true },
+  ];
+  let tutIdx = -1, tutSent = false;
+  function tutGo(i) {
+    tutIdx = i; tutSent = false;
+    keys = ''; locks = {}; sel = null; isExample = false;
+    if (exact) toggleExact();
+    $('tut').hidden = false;
+    $('wrap').classList.add('tutorial');
+    setMode('keypad');
+    const st = TUT[i];
+    $('tutStep').textContent = i < TUT.length - 1 ? `Step ${i + 1} of ${TUT.length - 1}` : 'Done';
+    $('tutDots').innerHTML = TUT.slice(0, -1).map((_, j) => `<i class="${j <= i ? 'on' : ''}"></i>`).join('');
+    $('tutTitle').textContent = st.title;
+    $('tutText').innerHTML = st.text;
+    $('tutBack').hidden = i === 0;
+    $('tutClose').hidden = i === TUT.length - 1;
+    update();
+  }
+  function tutEnd() {
+    tutIdx = -1;
+    $('tut').hidden = true;
+    $('wrap').classList.remove('tutorial');
+    try { localStorage.setItem('tutorialSeen', '1'); } catch (err) {}
+    keys = ''; locks = {}; sel = null; update();
+  }
+  function tutCheck() {
+    if (tutIdx < 0) return;
+    const st = TUT[tutIdx], last = tutIdx === TUT.length - 1;
+    const done = st.check({ text: keys ? plainText() : '', keys, locks, exact, sent: tutSent });
+    $('tutOk').textContent = done && st.ok ? '✓ ' + st.ok : '';
+    const next = $('tutNext');
+    next.textContent = last ? 'Finish' : done ? 'Next' : 'Skip';
+    next.className = 'act' + (done ? ' primary' : '');
+  }
+  $('tutOpen').addEventListener('click', () => tutGo(0));
+  $('tutNext').addEventListener('click', () => tutIdx >= TUT.length - 1 ? tutEnd() : tutGo(tutIdx + 1));
+  $('tutBack').addEventListener('click', () => tutGo(Math.max(0, tutIdx - 1)));
+  $('tutClose').addEventListener('click', tutEnd);
 
   document.addEventListener('keydown', e => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -1224,7 +1334,9 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
     $('compareToggle').checked = comparing;
     $('compare').hidden = !comparing;
     useModel(saved);
-    loadExample();
+    let seen = false;
+    try { seen = localStorage.getItem('tutorialSeen') === '1'; } catch (err) {}
+    if (seen) loadExample(); else tutGo(0);      // first visit: start with the tutorial
   }, 20);
   $('out').appendChild(Object.assign(document.createElement('span'), { className: 'placeholder', textContent: 'Loading…' }));
 })();
