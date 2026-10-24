@@ -5,7 +5,7 @@
 #include <string.h>
 
 enum { TOK_WORD, TOK_PUNCT, TOK_SPACE, TOK_NUM };
-enum { N_SECTIONS = 15, N_ALL_SECTIONS = 27 };     /* sections 15..26 are optional */
+enum { N_SECTIONS = 15, N_ALL_SECTIONS = 29 };     /* sections 15..28 are optional */
 
 static const char KEY_OF[26] = "22233344455566677778889999";
 static const char FIRST_LETTER[8] = "adgjmptw";     /* first letter of keys 2-9 */
@@ -94,6 +94,8 @@ int op_model_open(op_model *m, const void *data, size_t size) {
     m->n_cap_next = len[25] / 4;
     m->cap_keep = (const uint32_t *)sec[26];
     m->n_cap_keep = len[26] / 4;
+    m->cmp_head = len[27] == m->n_words ? (const int8_t *)sec[27] : NULL;
+    m->cmp_tail = len[28] == m->n_words ? (const int8_t *)sec[28] : NULL;
     if (m->n_tri >= 0xFFFF || (n_sec > N_SECTIONS && (len[17] != 4u * (m->n_tri + 1) || len[18] != 2u * m->n_tri ||
         len[20] != len[19] || len[23] != 4u * (m->n_alt + 1))))
         return OP_ERR_MODEL;
@@ -514,12 +516,14 @@ static int punct_index(const op_model *m, char ch) {
 
 /* Known words run together (lollypops: lolly + pops) for a word nothing matches: every split
  * into 2 or 3 parts of at least COMPOUND_PART keys, each part one of its COMPOUND_WORDS most
- * frequent words that agree with the exact letters, scored by the word pairs inside it, each
- * split costing COMPOUND_SPLIT nats; the COMPOUND_MAX best distinct spellings. Same splits,
- * order and ties as decoder.js compounds. */
+ * frequent words that agree with the exact letters, scored by how likely each part is to start
+ * and end such a word (cmpHead / cmpTail) plus COMPOUND_PAIR x any lift a known word pair gives
+ * (ice cream), each split costing COMPOUND_SPLIT nats; the
+ * COMPOUND_MAX best distinct spellings. Same splits, order and ties as decoder.js compounds. */
 #define COMPOUND_PART 2
-#define COMPOUND_WORDS 3
-#define COMPOUND_SPLIT 4
+#define COMPOUND_WORDS 5
+#define COMPOUND_SPLIT 2
+#define COMPOUND_PAIR 2
 #define COMPOUND_MAX 6
 #define COMPOUND_KEYS 24
 typedef struct { int32_t score; uint8_t len; char text[64]; } compound;
@@ -546,6 +550,13 @@ static int compound_part(const op_model *m, const char *k, const char *lit, int 
         pen[n++] = from_strip ? m->param[OP_P_APOSTROPHE] : 0;
     }
     return n;
+}
+
+static int32_t compound_score(const op_model *m, uint16_t id, int first, int last) {
+    int32_t q = m->scale >> 2, s = 0;
+    if (!last) s += m->uni[id] + (m->cmp_head ? m->cmp_head[id] : 0) * q;
+    if (!first) s += m->uni[id] + (m->cmp_tail ? m->cmp_tail[id] : 0) * q;
+    return s;
 }
 
 static void compound_add(const op_model *m, compound *best, int *nb, int32_t score, const uint16_t *ids, int np) {
@@ -579,22 +590,48 @@ static void compound_split(const op_model *m, const char *k, const char *lit, co
                            compound *best, int *nb) {
     uint16_t id[3][COMPOUND_WORDS];
     int16_t pen[3][COMPOUND_WORDS];
+    int32_t sc[3][COMPOUND_WORDS], top[4] = { 0, 0, 0, 0 };    /* top[i]: best possible from part i on */
+    int32_t pl[2][COMPOUND_WORDS][COMPOUND_WORDS];               /* pair lift between parts i, i + 1 */
     int cnt[3] = { 1, 1, 1 };
     for (int i = 0, a = 0; i < np; a = ends[i++]) {
         cnt[i] = compound_part(m, k + a, lit + a, ends[i] - a, id[i], pen[i]);
         if (!cnt[i]) return;
+        for (int x = 0; x < cnt[i]; x++) sc[i][x] = compound_score(m, id[i][x], i == 0, i == np - 1) + pen[i][x];
     }
+    for (int i = 0; i + 1 < np; i++)
+        for (int x = 0; x < cnt[i]; x++)
+            for (int y = 0; y < cnt[i + 1]; y++) {
+                int32_t g = lp(m, id[i][x], id[i + 1][y]) - m->uni[id[i + 1][y]];
+                pl[i][x][y] = g > 0 ? COMPOUND_PAIR * g : 0;
+            }
+    for (int i = np - 1; i >= 0; i--) {
+        for (int y = 0; y < cnt[i]; y++) {
+            int32_t s = sc[i][y];
+            if (i) {
+                int32_t g = 0;
+                for (int x = 0; x < cnt[i - 1]; x++) if (pl[i - 1][x][y] > g) g = pl[i - 1][x][y];
+                s += g;
+            }
+            if (y == 0 || s > top[i]) top[i] = s;
+        }
+        top[i] += top[i + 1];
+    }
+    /* Skipping what can't beat the last of a full list leaves the result unchanged. */
+    #define HOPELESS(s) (*nb == COMPOUND_MAX && (s) <= best[COMPOUND_MAX - 1].score)
     int32_t base = -(np - 1) * COMPOUND_SPLIT * m->scale;
     for (int x = 0; x < cnt[0]; x++) {
-        int32_t s0 = base + m->uni[id[0][x]] + pen[0][x];
+        int32_t s0 = base + sc[0][x];
+        if (HOPELESS(s0 + top[1])) continue;
         for (int y = 0; y < cnt[1]; y++) {
-            int32_t s1 = s0 + lp(m, id[0][x], id[1][y]) + pen[1][y];
+            int32_t s1 = s0 + sc[1][y] + pl[0][x][y];
+            if (HOPELESS(s1 + top[2])) continue;
             for (int z = 0; z < (np == 3 ? cnt[2] : 1); z++) {
                 uint16_t ids[3] = { id[0][x], id[1][y], np == 3 ? id[2][z] : 0 };
-                compound_add(m, best, nb, np == 3 ? s1 + lp(m, id[1][y], id[2][z]) + pen[2][z] : s1, ids, np);
+                compound_add(m, best, nb, np == 3 ? s1 + sc[2][z] + pl[1][y][z] : s1, ids, np);
             }
         }
     }
+    #undef HOPELESS
 }
 
 static int compounds(const op_model *m, const char *k, const char *lit, int kn, compound *best) {

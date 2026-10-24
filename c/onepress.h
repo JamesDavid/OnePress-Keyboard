@@ -98,6 +98,7 @@ typedef struct {
     uint32_t n_cap_next;
     const uint32_t *cap_keep;   /* word << 16 | next: its usual casing before next, whatever prev says */
     uint32_t n_cap_keep;
+    const int8_t *cmp_head, *cmp_tail;   /* words run together: start / end lift in 1/4 nat, or NULL */
 } op_model;
 
 /* What one person types, learned by op_learn and read by op_decode: words the dictionary

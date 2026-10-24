@@ -1,7 +1,7 @@
 """Export model.json to the KPD2 binary model read by every decoder (web, C, firmware).
 
 Usage: python export_bin.py model.json onepress.bin [--vocab N] [--min-count C] [--ambig-only]
-                           [--tri-min C] [--tri-contexts N] [--no-context-case]
+                           [--tri-min C] [--tri-contexts N] [--no-context-case] [--no-compounds]
 
 Everything is little-endian, every section 4-byte aligned, and the decoder searches the
 file in place (from flash or a memory map), so nothing is parsed or allocated on load.
@@ -52,6 +52,9 @@ SECTIONS = [
     "capNextKey", # u32[] word << 16 | next: the word takes its other casing before next (Will Smith)
     "capKeepKey", # u32[] word << 16 | next: the word keeps its usual casing before next, whatever
                   #       the previous word says ("like apple pie")
+    "cmpHead",    # i8[nWords] how much likelier than its unigram the word is to start a word run
+                  #            together from known words (snow-man), in 1/4 nat; see compound_lifts
+    "cmpTail",    # i8[nWords] ... to end one (snow-man)
 ]
 # Decoder constants, all in log-prob units. The punctuation ones come from model.json
 # punctParams when present (see tune_punct.js).
@@ -143,6 +146,33 @@ def reduce(M, vocab=0, min_count=0, ambig_only=False, tri_min=0, tri_contexts=65
                 capKeep=[[new[a], new[b]] for a, b in M.get("capKeep", []) if a in new and b in new],
                 bi=bi, ctx=ctx, tri=tri if tri_min else {}, tctx=tctx, bos=len(keep) + nP)
 
+# Words run together (lollypops = lolly + pops): how often each word starts or ends one, from
+# every wordfreq word outside the vocabulary that splits into two vocabulary words (parts of at
+# least 2 letters), weighted by its zipf frequency - 1 and shared among its splits. P(start | w)
+# is smoothed toward the unigram: (count + K * P(w) * total) / (total * (1 + K)); stored is its
+# log over the unigram's, in 1/4 nat. Tuned on held-out wordfreq compounds: the right word first
+# 37% of the time (unigram and word pairs alone: 21%), in the 6 offered 68% (50%).
+COMPOUND_K = 0.03
+def compound_lifts(words, logp):
+    import re, wordfreq
+    vocab = {w: i for i, w in enumerate(words)}
+    head, tail = Counter(), Counter()
+    for w in wordfreq.get_frequency_dict("en", "large"):
+        if not re.fullmatch(r"[a-z]{4,24}", w) or w in vocab:
+            continue
+        splits = [(w[:i], w[i:]) for i in range(2, len(w) - 1) if w[:i] in vocab and w[i:] in vocab]
+        if not splits:
+            continue
+        wt = max(wordfreq.zipf_frequency(w, "en", "large") - 1, 0.05) / len(splits)
+        for a, b in splits:
+            head[vocab[a]] += wt
+            tail[vocab[b]] += wt
+    def lift(cnt):
+        tot = sum(cnt.values())
+        return [max(-128, min(127, round(4 * (math.log((cnt[i] + COMPOUND_K * math.exp(lp) * tot) / (tot * (1 + COMPOUND_K))) - lp))))
+                for i, lp in enumerate(logp)]
+    return lift(head), lift(tail)
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("model_json")
@@ -153,7 +183,9 @@ def main():
     ap.add_argument("--tri-min", type=int, default=0)
     ap.add_argument("--tri-contexts", type=int, default=65000)
     ap.add_argument("--no-context-case", action="store_true", help="leave out the context casing tables (in May)")
+    ap.add_argument("--no-compounds", action="store_true", help="leave out the run-together word tables")
     a = ap.parse_args()
+    no_compounds = a.no_compounds      # (a is reused below)
     M = reduce(json.load(open(a.model_json, encoding="utf-8")), a.vocab, a.min_count, a.ambig_only,
                a.tri_min, min(a.tri_contexts, 65000))
     if a.no_context_case:
@@ -248,6 +280,9 @@ def main():
     sec["altId"] = u16([i for i, _ in alts])
     sec["altOff"] = struct.pack(f"<{len(alts) + 1}I", *aoff)
     sec["altText"] = b"".join(atext)
+    ch, ct = ([], []) if no_compounds else compound_lifts(words, M["logp"])
+    sec["cmpHead"] = struct.pack(f"<{len(ch)}b", *ch)
+    sec["cmpTail"] = struct.pack(f"<{len(ct)}b", *ct)
 
     sec["rowStart"] = struct.pack(f"<{len(rows)}I", *rows)
     sec["bow"] = i16(bow)

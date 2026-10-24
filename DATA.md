@@ -15,7 +15,7 @@ The corpora are not stored here; `model/fetch_corpora.sh` downloads them.
 
 | Source | Used for | Terms |
 |---|---|---|
-| [wordfreq](https://github.com/rspeer/wordfreq) by Robyn Speer | vocabulary and word frequencies | Data [CC BY-SA 4.0](https://github.com/rspeer/wordfreq/blob/master/NOTICE.md) (code Apache 2.0) |
+| [wordfreq](https://github.com/rspeer/wordfreq) by Robyn Speer | vocabulary, word frequencies, and which words start or end compounds (snow-man) | Data [CC BY-SA 4.0](https://github.com/rspeer/wordfreq/blob/master/NOTICE.md) (code Apache 2.0) |
 | [NUS SMS Corpus](https://github.com/kite1988/nus-sms-corpus), Tao Chen and Min-Yen Kan | word pairs, neural model, and the held-out evaluation | Public domain ("released to the general domain, copyright-free"); please cite the paper below |
 | [Topical-Chat](https://github.com/alexa/Topical-Chat) (Amazon) | word pairs and triples, casing, neural model | [CDLA-Sharing-1.0](https://github.com/alexa/Topical-Chat/blob/master/DATALICENSE); places no restrictions on results such as trained models |
 | [Taskmaster-1](https://github.com/google-research-datasets/Taskmaster) (Google) | word pairs and triples, casing, neural model | CC BY 4.0 |

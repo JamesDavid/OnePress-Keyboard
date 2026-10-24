@@ -13,10 +13,10 @@ neural network helps on phones and the web.
 
   | Model | Words | Size | Words acc. | Ambiguous acc. | Punctuation | Target |
   |---|---|---|---|---|---|---|
-  | `onepress.bin` + `onepress-nn.bin` | 45k | 3.24 MB + 6.3 MB | 95.14% | 93.48% | 50.6% | phones, web |
-  | `onepress.bin` | 45k | 3.24 MB | 94.14% | 92.12% | 49.8% | phones, web |
-  | `onepress-m.bin` | 20k | 1.02 MB | 93.08% | 91.24% | 47.2% | ESP32 Meshtastic |
-  | `onepress-s.bin` | 5k | 229 KB | 88.85% | 91.16% | 46.7% | radios, nRF52 |
+  | `onepress.bin` + `onepress-nn.bin` | 45k | 3.33 MB + 6.3 MB | 95.14% | 93.48% | 50.6% | phones, web |
+  | `onepress.bin` | 45k | 3.33 MB | 94.14% | 92.12% | 49.8% | phones, web |
+  | `onepress-m.bin` | 20k | 1.06 MB | 93.17% | 91.24% | 47.2% | ESP32 Meshtastic |
+  | `onepress-s.bin` | 5k | 239 KB | 89.18% | 91.16% | 46.7% | radios, nRF52 |
 
   `node tests/eval.js --nn model/onepress-nn.bin` for the network.
 - Learning from the user (SPEC.md §3): `node tests/learn_eval.js [users_test.tsv] [--before 3]`

@@ -13,7 +13,7 @@ browser, and a short tutorial starts on your first visit.
   after "on my way" it's "home". A finished sentence stays put once you start the next one.
 - **Small enough for microcontrollers.** One C99 file, no memory allocation, about 18 KB of code
   and 6–24 KB of RAM. The model is read straight from flash.
-- **Three model sizes** from 229 KB to 3.2 MB, for radios up to phones, and an optional neural
+- **Three model sizes** from 239 KB to 3.3 MB, for radios up to phones, and an optional neural
   network for phones and the web.
 - **Learns from you.** Names, slang and call signs you spell once are guessed from their keys
   after that, and your own word habits and punctuation get more likely. Recent messages count too.
@@ -24,7 +24,8 @@ browser, and a short tutorial starts on your first visit.
 - **Exact spelling** (multi-tap) for anything else, mixed freely with predicted words. On a QWERTY
   layout, a word it doesn't know keeps the letters you tapped.
 - **Words run together.** A long word it doesn't know is tried as known words written as one
-  ("lollypops" from lolly + pops), with the other splits a tap away.
+  ("icecreamtruck", "snowmanparty"), ranked by how often each word starts or ends real
+  compounds, with the other splits a tap away.
 - **Identical decoders** in C and JavaScript, checked against each other on 11,000 inputs.
 
 ## Keys
@@ -46,10 +47,10 @@ users, `node tests/eval.js`):
 
 | Model | Size | Words right | Ambiguous words right | Punctuation right | For |
 |---|---|---|---|---|---|
-| `onepress.bin` + `onepress-nn.bin` | 3.2 MB + 6.3 MB | **95.1%** | 93.5% | 50.6% | phones, web |
-| `onepress.bin` (45k words) | 3.2 MB | 94.1% | 92.1% | 49.8% | phones, web |
-| `onepress-m.bin` (20k words) | 1.0 MB | 93.1% | 91.2% | 47.2% | ESP32, Meshtastic |
-| `onepress-s.bin` (5k words) | 229 KB | 88.9% | 91.2% | 46.7% | radios, nRF52 |
+| `onepress.bin` + `onepress-nn.bin` | 3.3 MB + 6.3 MB | **95.1%** | 93.5% | 50.6% | phones, web |
+| `onepress.bin` (45k words) | 3.3 MB | 94.1% | 92.1% | 49.8% | phones, web |
+| `onepress-m.bin` (20k words) | 1.1 MB | 93.2% | 91.2% | 47.2% | ESP32, Meshtastic |
+| `onepress-s.bin` (5k words) | 239 KB | 89.2% | 91.2% | 46.7% | radios, nRF52 |
 
 With learning, replaying each person's messages in order (`node tests/learn_eval.js`, all 84 test
 users): words go from 90.2% to 93.1%, and punctuation from 58.6% to 66.8%.

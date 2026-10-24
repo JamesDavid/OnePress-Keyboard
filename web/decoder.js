@@ -7,7 +7,8 @@ const KEY_LETTERS = { '#':"'", '2':'abc','3':'def','4':'ghi','5':'jkl','6':'mno'
 const SECTIONS = ['wordText', 'wordOff', 'keyIdx', 'stripIdx', 'dispId', 'dispOff', 'dispText', 'uni',
   'rowStart', 'bow', 'next', 'lp', 'qStart', 'punct', 'params',
   // optional (older files stop at params):
-  'qSkip', 'triKey', 'triStart', 'triBow', 'triNext', 'triLp', 'capKey', 'altId', 'altOff', 'altText', 'capNextKey', 'capKeepKey'];
+  'qSkip', 'triKey', 'triStart', 'triBow', 'triNext', 'triLp', 'capKey', 'altId', 'altOff', 'altText', 'capNextKey', 'capKeepKey',
+  'cmpHead', 'cmpTail'];
 const PARAMS = ['qQ', 'qN', 'dQ', 'cF', 'dB', 'cB', 'eB', 'apostrophe', 'completion', 'literal', 'unknown'];
 const MAX_EXACT = 40, MAX_COMPLETIONS = 12;
 const AFTER_NUMBER = -2;           // beam state after a number (the model has no number token)
@@ -58,6 +59,7 @@ function buildModel(bytes) {
     triNext: at('triNext', Uint16Array), triLp: at('triLp', Int16Array),
     capKey: at('capKey', Uint32Array), capNextKey: at('capNextKey', Uint32Array),
     capKeepKey: at('capKeepKey', Uint32Array), alt,
+    cmpHead: at('cmpHead', Int8Array), cmpTail: at('cmpTail', Int8Array),
     punct: utf8.decode(at('punct', Uint8Array)).split(''),
     uni: at('uni', Int16Array), rowStart: at('rowStart', Uint32Array), bow: at('bow', Int16Array),
     next: at('next', Uint16Array), lp: at('lp', Int16Array), qStart: new Set(at('qStart', Uint16Array)),
@@ -349,11 +351,14 @@ function slotCandidates(m, tok, isLast, u) {
 
 // A long word nothing matches may be known words run together (lollypops: lolly + pops). Every
 // split into 2 or 3 parts of at least COMPOUND_PART keys, each part one of the COMPOUND_WORDS
-// most frequent words for its keys that agree with the exact letters. Scored by the word pairs
-// inside it, each split costing COMPOUND_SPLIT nats; the COMPOUND_MAX best distinct spellings,
-// ties in the order tried (two parts before three, then by split points, then by word rank).
-// The C decoder recomputes these from the token when rendering.
-const COMPOUND_PART = 2, COMPOUND_WORDS = 3, COMPOUND_SPLIT = 4, COMPOUND_MAX = 6, COMPOUND_KEYS = 24;
+// most frequent words for its keys that agree with the exact letters. Each part scores how
+// likely it is to start (all but the last) and to end (all but the first) such a word: its
+// unigram plus the model's cmpHead / cmpTail lift (1/4 nat; none in older files), and two parts
+// the word pairs know get COMPOUND_PAIR x how much likelier the pair makes the second (ice
+// cream), never less. Each split costs COMPOUND_SPLIT nats. The COMPOUND_MAX best distinct spellings, ties in the order tried
+// (two parts before three, then by split points, then by word rank). The C decoder recomputes
+// these from the token when rendering.
+const COMPOUND_PART = 2, COMPOUND_WORDS = 5, COMPOUND_SPLIT = 2, COMPOUND_PAIR = 2, COMPOUND_MAX = 6, COMPOUND_KEYS = 24;
 function compoundPart(m, tok, a, b) {
   const keys = tok.keys.slice(a, b), sub = { lit: tok.lit.slice(a, b) }, out = [];
   for (const id of exactMatches(m, keys)) {
@@ -361,6 +366,10 @@ function compoundPart(m, tok, a, b) {
     if (litMatch(m, sub, id, keys)) out.push({ id, pen: m.fullKeys[id] === keys ? 0 : m.params.apostrophe });
   }
   return out;
+}
+function compoundScore(m, id, first, last) {
+  const q = m.scale >> 2;
+  return (last ? 0 : m.uni[id] + (m.cmpHead[id] || 0) * q) + (first ? 0 : m.uni[id] + (m.cmpTail[id] || 0) * q);
 }
 function compounds(m, tok) {
   const n = tok.keys.length, best = [];
@@ -381,7 +390,10 @@ function compounds(m, tok) {
     }
     const walk = (i, prev, score, ids) => {
       if (i === parts.length) return add(score, ids);
-      for (const p of parts[i]) walk(i + 1, p.id, score + (i ? lp(m, prev, p.id) : m.uni[p.id]) + p.pen, ids.concat(p.id));
+      for (const p of parts[i]) {
+        const pair = i ? COMPOUND_PAIR * Math.max(0, lp(m, prev, p.id) - m.uni[p.id]) : 0;
+        walk(i + 1, p.id, score + compoundScore(m, p.id, i === 0, i === parts.length - 1) + p.pen + pair, ids.concat(p.id));
+      }
     };
     walk(0, -1, -(ends.length - 1) * COMPOUND_SPLIT * m.scale, []);
   };
