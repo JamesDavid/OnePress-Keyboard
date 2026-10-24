@@ -331,31 +331,97 @@ static int format_number(const char *k, int kn, int time, char *out, int cap) {
 
 typedef struct { uint16_t id; uint8_t kind; int16_t pen; } cand;
 
+/* Learned words may hold digits (call signs). As decoder.js userKeys / userTyped: a learned
+ * word's digit 2-9 is its own key and 0/1 the held digit; a typed held digit 2-9 compares as
+ * that key, and the exact characters (lit) must still agree. */
+static char user_key(char c) {
+    if (c == 39) return '#';
+    if (c >= '0' && c <= '9') return c >= '2' ? c : (char)('A' + (c - '0'));
+    return KEY_OF[c - 'a'];
+}
+static void user_typed(const char *k, int kn, char *out) {
+    for (int i = 0; i < kn; i++) out[i] = k[i] >= 'C' && k[i] <= 'J' ? (char)('0' + (k[i] - 'A')) : k[i];
+}
+
+/* How learned word t fits typed keys k (through user_typed): 1 whole, 2 whole without its
+ * apostrophes, 3 its beginning (only if `partial`), else 0. See decoder.js userMatch. */
+static int user_match(const char *t, const char *k, const char *lit, int kn, int partial) {
+    if (!t[0]) return 0;
+    char full[OP_USER_WORD_LEN], strip[OP_USER_WORD_LEN];
+    int fn = 0, sn = 0;
+    for (; t[fn]; fn++) {
+        full[fn] = user_key(t[fn]);
+        if (t[fn] != 39) strip[sn++] = full[fn];
+    }
+    int full_eq = fn == kn && memcmp(full, k, (size_t)kn) == 0;
+    int strip_eq = sn != fn && sn == kn && memcmp(strip, k, (size_t)kn) == 0;
+    if (full_eq || strip_eq) return lit_match_text(t, fn, !full_eq, lit, kn) ? (full_eq ? 1 : 2) : 0;
+    if (!partial) return 0;
+    int fs = fn >= kn && memcmp(full, k, (size_t)kn) == 0;
+    int ss = !fs && sn >= kn && memcmp(strip, k, (size_t)kn) == 0;
+    return (fs || ss) && lit_match_text(t, fn, ss, lit, kn) ? 3 : 0;
+}
+
 /* Learned words matching a word token: exact ones into out (up to OP_MAX_USER_CANDS), and
  * with `partial` completions into part. Mirrors the user loop in decoder.js slotCandidates. */
 static void user_cands(const op_model *m, const op_user *u, const char *k, const char *lit, int kn,
-                       int has_lit, int partial, cand *out, int *n_out, cand *part, int *n_part) {
+                       int partial, cand *out, int *n_out, cand *part, int *n_part) {
+    char typed[OP_USER_WORD_LEN];
+    if (kn > OP_USER_WORD_LEN) return;      /* longer than any learned word */
+    user_typed(k, kn, typed);
     for (int w = 0; w < u->n_words; w++) {
-        const char *t = u->word[w];
-        char full[OP_USER_WORD_LEN], strip[OP_USER_WORD_LEN];
-        int fn = 0, sn = 0;
-        for (; t[fn]; fn++) {
-            full[fn] = t[fn] == 39 ? '#' : KEY_OF[t[fn] - 'a'];
-            if (t[fn] != 39) strip[sn++] = full[fn];
-        }
         uint16_t id = (uint16_t)(m->bos + 1 + w);
-        int full_eq = fn == kn && memcmp(full, k, (size_t)kn) == 0;
-        int strip_eq = sn != fn && sn == kn && memcmp(strip, k, (size_t)kn) == 0;
-        if (full_eq || strip_eq) {
-            if (*n_out < OP_MAX_USER_CANDS && (!has_lit || lit_match_text(t, fn, !full_eq, lit, kn)))
-                out[(*n_out)++] = (cand){ id, OP_WORD, (int16_t)(full_eq ? 0 : m->param[OP_P_APOSTROPHE]) };
-        } else if (partial && *n_part < OP_MAX_USER_CANDS) {
-            int fs = fn >= kn && memcmp(full, k, (size_t)kn) == 0;
-            int ss = !fs && sn >= kn && memcmp(strip, k, (size_t)kn) == 0;
-            if ((fs || ss) && (!has_lit || lit_match_text(t, fn, ss, lit, kn)))
-                part[(*n_part)++] = (cand){ id, OP_PARTIAL, m->param[OP_P_COMPLETION] };
-        }
+        int f = user_match(u->word[w], typed, lit, kn, partial);
+        if ((f == 1 || f == 2) && *n_out < OP_MAX_USER_CANDS)
+            out[(*n_out)++] = (cand){ id, OP_WORD, (int16_t)(f == 1 ? 0 : m->param[OP_P_APOSTROPHE]) };
+        else if (f == 3 && *n_part < OP_MAX_USER_CANDS)
+            part[(*n_part)++] = (cand){ id, OP_PARTIAL, m->param[OP_P_COMPLETION] };
     }
+}
+
+/* A run of word and number tokens with nothing between them (53, held 7, 272) that spells a
+ * learned word is that one word; the last run may be its beginning. See decoder.js joinLearned. */
+static int pure_number(const op_decoder *d, const op_tok *t) {
+    if (t->type != TOK_NUM) return 0;
+    for (int k = t->off; k < t->off + t->len; k++) if (d->keys[k] < '0' || d->keys[k] > '9') return 0;
+    return 1;
+}
+static void join_learned(op_decoder *d) {
+    const op_user *u = d->user;
+    int any = 0;
+    for (int w = 0; w < u->n_words && !any; w++) any = strpbrk(u->word[w], "0123456789") != NULL;
+    if (!any) return;
+    int out = 0;
+    for (int i = 0; i < d->n_toks;) {
+        int j = i, len = 0;
+        while (j < d->n_toks && (d->toks[j].type == TOK_WORD || pure_number(d, &d->toks[j]))) len += d->toks[j++].len;
+        if (j - i > 1 && len <= OP_USER_WORD_LEN) {
+            int off = d->toks[i].off, match = 0;
+            char k[OP_USER_WORD_LEN], lit[OP_USER_WORD_LEN];
+            for (int r = i; r < j; r++) {           /* spans are contiguous: nothing between them */
+                const op_tok *t = &d->toks[r];
+                for (int q = t->off; q < t->off + t->len; q++) {
+                    char c = d->keys[q];
+                    k[q - off] = t->type == TOK_NUM ? (char)('A' + (c - '0')) : c;
+                    lit[q - off] = t->type == TOK_NUM ? c : d->lits[q];
+                }
+            }
+            char typed[OP_USER_WORD_LEN];
+            user_typed(k, len, typed);
+            for (int w = 0; w < u->n_words && !match; w++) match = user_match(u->word[w], typed, lit, len, j == d->n_toks);
+            if (match) {
+                memcpy(d->keys + off, k, (size_t)len);
+                memcpy(d->lits + off, lit, (size_t)len);
+                d->toks[out].type = TOK_WORD; d->toks[out].lit = 0;
+                d->toks[out].off = (uint16_t)off; d->toks[out].len = (uint16_t)len;
+                out++; i = j;
+                continue;
+            }
+        }
+        if (j == i) j = i + 1;
+        while (i < j) d->toks[out++] = d->toks[i++];
+    }
+    d->n_toks = (uint16_t)out;
 }
 
 static int punct_index(const op_model *m, char ch) {
@@ -394,7 +460,7 @@ static int slot_cands(const op_decoder *d, const op_model *m, const op_tok *t, i
     int n_upart = 0;
     if (u) {
         int n_uexact = 0;
-        user_cands(m, u, k, lit, kn, has_lit, is_last && !all_lit, out + n, &n_uexact, upart, &n_upart);
+        user_cands(m, u, k, lit, kn, is_last && !all_lit, out + n, &n_uexact, upart, &n_upart);
         n += n_uexact;
     }
     int n_exact = n;
@@ -463,6 +529,7 @@ int op_decode(op_decoder *d, const op_model *m, const char *keys, int beam,
     int r = tokenize(d, keys);
     if (r) return r;
     d->user = start && start->user && start->user->bos == m->bos ? start->user : NULL;
+    if (d->user) join_learned(d);
     d->n_slots = 0;
     for (int i = 0; i < d->n_toks; i++) {
         if (d->toks[i].type == TOK_SPACE) continue;
@@ -719,7 +786,8 @@ int op_learn(op_user *u, const op_decoder *d, const op_model *m, const op_start 
         if (ch.kind == OP_LITERAL) {
             const char *lit = d->lits + t->off;
             int ok = t->len <= OP_USER_WORD_LEN;
-            for (int k = 0; k < t->len; k++) if (!((lit[k] >= 'a' && lit[k] <= 'z') || lit[k] == 39)) ok = 0;
+            for (int k = 0; k < t->len; k++)
+                if (!((lit[k] >= 'a' && lit[k] <= 'z') || (lit[k] >= '0' && lit[k] <= '9') || lit[k] == 39)) ok = 0;
             if (!ok) { prev = OP_NONE; continue; }
             id = user_word(u, m, lit, t->len);
         } else if (ch.kind == OP_PARTIAL || id == OP_NONE) {

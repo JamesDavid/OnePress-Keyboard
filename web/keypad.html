@@ -388,6 +388,54 @@ function litMatchText(tok, word, key) {
   return true;
 }
 
+// Learned words may hold digits (call signs like ke7aqa). Their keys: letters as usual, a digit
+// 2-9 as its own key (so it can be typed with one press like a letter) and 0 or 1 as the held
+// digit ('A', 'B'). userTyped maps a typed key string the same way (a held 7 'H' -> '7'); the
+// exact letters/digits (tok.lit) still have to agree, so a held 7 never matches a p.
+function userKeys(w) {
+  let s = '';
+  for (const c of w) s += c >= '0' && c <= '9' ? (c >= '2' ? c : String.fromCharCode(17 + c.charCodeAt(0))) : KEYMAP[c];
+  return s;
+}
+function userTyped(k) { return k.replace(/[C-J]/g, c => String(c.charCodeAt(0) - 65)); }
+
+// How learned word w fits word token tok (typed keys already through userTyped): {full} for a
+// whole match (full: with its apostrophes), {partial} for its beginning if `partial`, else null.
+function userMatch(w, tok, keys, partial) {
+  const full = userKeys(w), strip = full.replace(/#/g, '');
+  if (full === keys || (strip !== full && strip === keys)) {
+    return litMatchText(tok, w, full === keys ? full : strip) ? { full: full === keys } : null;
+  }
+  if (!partial) return null;
+  const key = full.startsWith(keys) ? full : strip.startsWith(keys) ? strip : null;
+  return key && litMatchText(tok, w, key) ? { partial: true } : null;
+}
+
+// Typing a call sign with the digit held splits it (53, held 7, 272). A run of word and number
+// tokens with nothing between them that spells a learned word is that one word; the last run
+// may be its beginning.
+function joinLearned(toks, u) {
+  if (!u || !u.words.some(w => /[0-9]/.test(w))) return toks;
+  const out = [];
+  for (let i = 0; i < toks.length;) {
+    let j = i;
+    while (j < toks.length && (toks[j].type === 'word' || (toks[j].type === 'number' && /^[0-9]+$/.test(toks[j].keys)))) j++;
+    if (j - i > 1) {
+      const run = toks.slice(i, j);
+      const tok = {
+        type: 'word',
+        keys: run.map(t => t.type === 'word' ? t.keys : [...t.keys].map(d => String.fromCharCode(65 + +d)).join('')).join(''),
+        lit: [].concat(...run.map(t => t.type === 'word' ? t.lit : [...t.keys])),
+      };
+      const keys = userTyped(tok.keys);
+      if (u.words.some(w => userMatch(w, tok, keys, j === toks.length))) { out.push(tok); i = j; continue; }
+    }
+    if (j === i) j = i + 1;
+    while (i < j) out.push(toks[i++]);
+  }
+  return out;
+}
+
 // Candidates for each slot: [{text, id, partial, penalty}]
 function slotCandidates(m, tok, isLast, u) {
   const P = m.params;
@@ -406,18 +454,14 @@ function slotCandidates(m, tok, isLast, u) {
   // Words this person taught it: exact matches first, completions after the dictionary's.
   const userExact = [], userPartial = [];
   if (u) {
+    const keys = userTyped(tok.keys), partial = isLast && !allLit;
     u.words.forEach((w, k) => {
-      const full = wordKeys(w), strip = full.replace(/#/g, '');
-      const id = m.bos + 1 + k;
-      if (full === tok.keys || (strip !== full && strip === tok.keys)) {
-        const key = full === tok.keys ? full : strip;
-        if (userExact.length < MAX_USER_CANDS && (!hasLit || litMatchText(tok, w, key)))
-          userExact.push({ text: w, id, penalty: full === tok.keys ? 0 : P.apostrophe });
-      } else if (isLast && !allLit && userPartial.length < MAX_USER_CANDS) {
-        const key = full.startsWith(tok.keys) ? full : strip.startsWith(tok.keys) ? strip : null;
-        if (key && (!hasLit || litMatchText(tok, w, key)))
-          userPartial.push({ text: w.slice(0, tok.keys.length), id, partial: w, penalty: P.completion });
-      }
+      const id = m.bos + 1 + k, f = userMatch(w, tok, keys, partial);
+      if (!f) return;
+      if (!f.partial && userExact.length < MAX_USER_CANDS)
+        userExact.push({ text: w, id, penalty: f.full ? 0 : P.apostrophe });
+      else if (f.partial && userPartial.length < MAX_USER_CANDS)
+        userPartial.push({ text: w.slice(0, tok.keys.length), id, partial: w, penalty: P.completion });
     });
   }
   exact.push(...userExact);
@@ -450,7 +494,7 @@ function slotCandidates(m, tok, isLast, u) {
 function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
   const P = m.params;
   const u = start.user && start.user.bos === m.bos ? start.user : null;
-  const toks = tokenize(keys);
+  const toks = joinLearned(tokenize(keys), u);
   const slots = [];
   toks.forEach((t, i) => { if (t.type !== 'space') slots.push({ tok: t, tokIndex: i }); });
   const lastTokIsWord = toks.length && toks[toks.length - 1].type === 'word';
@@ -686,7 +730,7 @@ function userWord(m, u, w) {
 
 // Learn from text the person accepted (sent, copied): hyp as decoded, with their corrections.
 // Words still being completed and unmatched key strings are skipped; a word spelled exactly
-// that the dictionary lacks (letters and apostrophes only) becomes a learned word.
+// that the dictionary lacks (letters, apostrophes and digits: ke7aqa) becomes a learned word.
 function learn(m, u, result, hyp, start = {}) {
   if (!u || u.bos !== m.bos || !hyp) return;
   let prev = start.prev === undefined ? m.bos : start.prev;
@@ -694,7 +738,7 @@ function learn(m, u, result, hyp, start = {}) {
     const c = s.cands[hyp.path[j]];
     let id = c.id;
     if (c.number) { prev = AFTER_NUMBER; return; }
-    if (c.literal && /^[a-z']+$/.test(c.text) && c.text.length <= USER_WORD_LEN) id = userWord(m, u, c.text);
+    if (c.literal && /^[a-z'0-9]+$/.test(c.text) && c.text.length <= USER_WORD_LEN) id = userWord(m, u, c.text);
     else if (c.partial || id < 0) { prev = -1; return; }
     userBump(u, USER_ANY, id);
     if (prev >= 0) userBump(u, prev, id);

@@ -28,6 +28,11 @@ for (const f of ['test.txt', 'dev.txt']) {
 inputs.push(enc("Can you pick up the kids after school?"), enc("We're going to McDonald's tonight!"), '');
 if (learnMode) {
   inputs.length = 0;
+  // Call signs and words with digits: spelled once, then typed with the digit held or pressed.
+  // At the start (room in the table) and again at the end (full, so words get replaced).
+  const callsigns = ['keHaqa', '53H272', '537272', '53H2', '53', '4404053H272#', 'wDbcd', '9D222', 'wDbcd0keHaqa',
+    '9D2220537272#', 'Eever', 'E3837', '43837', '2B3', '2B32', '53H272H', 'H53H272', '53H#272'];
+  inputs.push(...callsigns);
   const users = path.join(__dirname, '../model/corpora/nus/users_dev.tsv'), known = new Set(m.words), seen = new Set();
   if (fs.existsSync(users)) for (const line of fs.readFileSync(users, 'utf8').split('\n')) {
     const msg = line.split('\t')[1];
@@ -38,6 +43,7 @@ if (learnMode) {
       return x;
     }).replace(/[.,!?]/g, '#')).join('0'));
   }
+  inputs.push(...callsigns);
 }
 
 // Seeded random so failures reproduce.

@@ -77,7 +77,8 @@ typedef struct {
 } op_model;
 
 /* What one person types, learned by op_learn and read by op_decode: words the dictionary
- * lacks (spelled once in exact mode, predicted after that; learned word k has id bos + 1 + k)
+ * lacks, call signs with digits included (spelled once in exact mode, predicted after that;
+ * learned word k has id bos + 1 + k)
  * and counts of each token and token pair they used. Plain data with no pointers, so it can be
  * saved to flash as bytes and loaded back; it belongs to the model it was made for (bos).
  * About 12 KB with the defaults; -DOP_USER_WORDS=64 -DOP_USER_PAIRS=256 gives ~3 KB. */
