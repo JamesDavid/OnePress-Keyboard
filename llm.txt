@@ -25,8 +25,8 @@ embedded project. Read it top to bottom before writing code. Repository layout:
 | Target | Model | Accuracy (held-out text messages) |
 |---|---|---|
 | Phones, web, desktop | `onepress.bin` (+ `onepress-nn.bin`) | 94.1% of words (95.1% with the network) |
-| ESP32 (4 MB+ flash), Meshtastic nodes | `onepress-m.bin` | 92.8% |
-| nRF52, radios, anything with ~250 KB free flash | `onepress-s.bin` | 88.3% |
+| ESP32 (4 MB+ flash), Meshtastic nodes | `onepress-m.bin` | 93.1% |
+| nRF52, radios, anything with ~250 KB free flash | `onepress-s.bin` | 88.9% |
 
 Learning from the user adds 1–3 points (see "Learning" below).
 
@@ -108,13 +108,13 @@ op_learn(&user, &dec, &model, &start);
   `op_render` returns the text length on success.
 - After `op_decode`, `dec.choice[j]` holds each slot's result (`id`, `kind`: OP_WORD,
   OP_PARTIAL for a completion still being typed, OP_PUNCT, OP_LITERAL, OP_UNKNOWN, OP_NUMBER,
-  OP_TIME).
+  OP_TIME, OP_COMPOUND for known words run together such as "lollypops", id OP_COMPOUND_ID + rank).
 - Locks: `op_lock locks[] = {{ slot, word_id }}` forces slot `slot` to `word_id` if it is a candidate.
 - Not thread-safe per decoder: use one `op_decoder` per thread. The model is read-only and can be shared.
 - Memory: lower the limits on small targets with compiler flags, e.g.
   `-DOP_MAX_BEAM=4 -DOP_MAX_SLOTS=48 -DOP_MAX_KEYS=160 -DOP_USER_WORDS=64 -DOP_USER_PAIRS=256`
-  gives a 6 KB decoder and a 3 KB user table. Code is about 15 KB at -Os with -DOP_NO_NN (the
-  neural part; 17 KB with it). Stack use is small
+  gives a 6 KB decoder and a 3 KB user table. Code is about 18 KB at -Os with -DOP_NO_NN (the
+  neural part; 20 KB with it). Stack use is small
   (a few hundred bytes to 1 KB in op_decode).
 - The model must be little-endian (ARM, x86, ESP32, RISC-V all are) and 4-byte aligned. It is
   read in place, so memory-mapped flash works with no copy.
@@ -261,7 +261,7 @@ shows the alternative of embedding it as base64.
 ## nRF52 and other small microcontrollers (radios, custom keypads)
 
 - Needs: model bytes readable at a pointer (internal flash, or memory-mapped QSPI/XIP flash),
-  about 15 KB code (-DOP_NO_NN), 6 KB RAM for the decoder with the small limits above, 3 KB for a
+  about 18 KB code (-DOP_NO_NN), 6 KB RAM for the decoder with the small limits above, 3 KB for a
   small user table.
 - Use `onepress-s.bin` (229 KB). On nRF52840 put it in internal flash if there is room, or in
   external QSPI flash mapped for execute-in-place.

@@ -50,12 +50,14 @@
 #define OP_NONE 0xFFFF          /* token id of an unknown word (decoder.js uses -1) */
 #define OP_TIME_ID 0xFFFA       /* id of a number read as a time (5:30); lock a slot to it, or to
                                    OP_NONE for the plain number (5.30) */
+#define OP_COMPOUND_ID 0xFFF0   /* ids of known words run together (lollypops), OP_COMPOUND_ID + 0..5 in
+                                   order of preference */
 #define OP_TIME_BEFORE 10       /* words after which a number is likely a time (at, by, until...) */
 
 enum { OP_OK = 0, OP_ERR_MODEL = -1, OP_ERR_TOO_LONG = -2, OP_ERR_SPACE = -3, OP_ERR_ARG = -4 };
 
 /* What each slot was decoded as. */
-enum { OP_WORD, OP_PARTIAL, OP_PUNCT, OP_LITERAL, OP_UNKNOWN, OP_NUMBER, OP_TIME };
+enum { OP_WORD, OP_PARTIAL, OP_PUNCT, OP_LITERAL, OP_UNKNOWN, OP_NUMBER, OP_TIME, OP_COMPOUND };
 
 enum { OP_P_QQ, OP_P_QN, OP_P_DQ, OP_P_CF, OP_P_DB, OP_P_CB, OP_P_EB,
        OP_P_APOSTROPHE, OP_P_COMPLETION, OP_P_LITERAL, OP_P_UNKNOWN, OP_N_PARAMS };
@@ -169,7 +171,8 @@ typedef struct {
 } op_tok;
 
 typedef struct {
-    uint16_t id;        /* token id; OP_NONE for OP_LITERAL / OP_UNKNOWN / OP_NUMBER, OP_TIME_ID for OP_TIME */
+    uint16_t id;        /* token id; OP_NONE for OP_LITERAL / OP_UNKNOWN / OP_NUMBER, OP_TIME_ID for OP_TIME,
+                           OP_COMPOUND_ID + rank for OP_COMPOUND */
     uint8_t kind;       /* OP_WORD, OP_PARTIAL, ... */
 } op_choice;
 

@@ -334,12 +334,61 @@ function slotCandidates(m, tok, isLast, u) {
     return [{ text: typed, id: -1, literal: true }];
   }
   if (!exact.length) {
-    // No word fits: the exact letters, else the QWERTY letters tapped, else each key's first.
-    const raw = [...tok.keys].map((k, i) => tok.lit[i] || tok.hint[i] || (KEY_LETTERS[k] || '?')[0]).join('');
+    // No word fits: known words run together (lollypops), else the exact letters, else the
+    // QWERTY letters tapped, else each key's first.
     const typed = tok.lit.every((l, i) => l !== null || tok.hint[i] !== null || tok.keys[i] === '#');
+    if (!typed) {
+      const cs = compounds(m, tok);
+      if (cs.length) return cs.map(c => ({ text: c.text, id: -1, compound: c.text }));
+    }
+    const raw = [...tok.keys].map((k, i) => tok.lit[i] || tok.hint[i] || (KEY_LETTERS[k] || '?')[0]).join('');
     exact.push({ text: raw, id: -1, unknown: true, typed });
   }
   return exact;
+}
+
+// A long word nothing matches may be known words run together (lollypops: lolly + pops). Every
+// split into 2 or 3 parts of at least COMPOUND_PART keys, each part one of the COMPOUND_WORDS
+// most frequent words for its keys that agree with the exact letters. Scored by the word pairs
+// inside it, each split costing COMPOUND_SPLIT nats; the COMPOUND_MAX best distinct spellings,
+// ties in the order tried (two parts before three, then by split points, then by word rank).
+// The C decoder recomputes these from the token when rendering.
+const COMPOUND_PART = 2, COMPOUND_WORDS = 3, COMPOUND_SPLIT = 4, COMPOUND_MAX = 6, COMPOUND_KEYS = 24;
+function compoundPart(m, tok, a, b) {
+  const keys = tok.keys.slice(a, b), sub = { lit: tok.lit.slice(a, b) }, out = [];
+  for (const id of exactMatches(m, keys)) {
+    if (out.length === COMPOUND_WORDS) break;
+    if (litMatch(m, sub, id, keys)) out.push({ id, pen: m.fullKeys[id] === keys ? 0 : m.params.apostrophe });
+  }
+  return out;
+}
+function compounds(m, tok) {
+  const n = tok.keys.length, best = [];
+  if (n < 2 * COMPOUND_PART || n > COMPOUND_KEYS) return best;
+  const add = (score, ids) => {
+    const text = ids.map(id => m.words[id]).join('');
+    const d = best.findIndex(c => c.text === text);
+    if (d >= 0) { if (best[d].score >= score) return; best.splice(d, 1); }
+    let k = best.length;
+    while (k > 0 && best[k - 1].score < score) k--;
+    if (k < COMPOUND_MAX) { best.splice(k, 0, { score, ids, text }); if (best.length > COMPOUND_MAX) best.pop(); }
+  };
+  const split = (ends) => {
+    const parts = [];
+    for (let i = 0, a = 0; i < ends.length; a = ends[i++]) {
+      parts.push(compoundPart(m, tok, a, ends[i]));
+      if (!parts[i].length) return;
+    }
+    const walk = (i, prev, score, ids) => {
+      if (i === parts.length) return add(score, ids);
+      for (const p of parts[i]) walk(i + 1, p.id, score + (i ? lp(m, prev, p.id) : m.uni[p.id]) + p.pen, ids.concat(p.id));
+    };
+    walk(0, -1, -(ends.length - 1) * COMPOUND_SPLIT * m.scale, []);
+  };
+  for (let i = COMPOUND_PART; i <= n - COMPOUND_PART; i++) split([i, n]);
+  for (let i = COMPOUND_PART; i <= n - 2 * COMPOUND_PART; i++)
+    for (let j = i + COMPOUND_PART; j <= n - COMPOUND_PART; j++) split([i, j, n]);
+  return best;
 }
 
 // ---- Neural word model (optional): a small GRU over the word model's vocabulary ----
@@ -758,7 +807,8 @@ function userWord(m, u, w) {
 
 // Learn from text the person accepted (sent, copied): hyp as decoded, with their corrections.
 // Words still being completed and unmatched key strings are skipped; a word spelled exactly, or
-// typed on QWERTY, that the dictionary lacks (letters, apostrophes, digits: ke7aqa) is learned.
+// typed on QWERTY, that the dictionary lacks (letters, apostrophes, digits: ke7aqa) is learned,
+// and so is a word read as known words run together (lollypops).
 function learn(m, u, result, hyp, start = {}) {
   if (!u || u.bos !== m.bos || !hyp) return;
   let prev = result.ctx ? result.ctx.prev : start.prev === undefined ? m.bos : start.prev;
@@ -766,7 +816,8 @@ function learn(m, u, result, hyp, start = {}) {
     const c = s.cands[hyp.path[j]];
     let id = c.id;
     if (c.number) { prev = AFTER_NUMBER; return; }
-    if ((c.literal || c.typed) && /^[a-z'0-9]+$/.test(c.text) && c.text.length <= USER_WORD_LEN) id = userWord(m, u, c.text);
+    if (c.compound && c.compound.length <= USER_WORD_LEN) id = userWord(m, u, c.compound);
+    else if ((c.literal || c.typed) && /^[a-z'0-9]+$/.test(c.text) && c.text.length <= USER_WORD_LEN) id = userWord(m, u, c.text);
     else if (c.partial || id < 0) { prev = -1; return; }
     userBump(u, USER_ANY, id);
     if (prev >= 0) userBump(u, prev, id);

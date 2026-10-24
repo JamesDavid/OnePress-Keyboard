@@ -512,6 +512,106 @@ static int punct_index(const op_model *m, char ch) {
     return 0;
 }
 
+/* Known words run together (lollypops: lolly + pops) for a word nothing matches: every split
+ * into 2 or 3 parts of at least COMPOUND_PART keys, each part one of its COMPOUND_WORDS most
+ * frequent words that agree with the exact letters, scored by the word pairs inside it, each
+ * split costing COMPOUND_SPLIT nats; the COMPOUND_MAX best distinct spellings. Same splits,
+ * order and ties as decoder.js compounds. */
+#define COMPOUND_PART 2
+#define COMPOUND_WORDS 3
+#define COMPOUND_SPLIT 4
+#define COMPOUND_MAX 6
+#define COMPOUND_KEYS 24
+typedef struct { int32_t score; uint8_t len; char text[64]; } compound;
+
+/* The words for keys k[0..kn), most frequent first, and their penalties; how many. */
+static int compound_part(const op_model *m, const char *k, const char *lit, int kn, uint16_t *id, int16_t *pen) {
+    int strip = !memchr(k, '#', (size_t)kn), starts, n = 0;
+    uint32_t a = lower_bound(m, m->key_idx, m->n_words, 0, k, kn);
+    uint32_t b = lower_bound(m, m->strip_idx, m->n_strip, 1, k, kn);
+    int a_ok = a < m->n_words && key_cmp(m, m->key_idx[a], 0, k, kn, &starts) == 0;
+    int b_ok = b < m->n_strip && key_cmp(m, m->strip_idx[b], 1, k, kn, &starts) == 0;
+    while ((a_ok || b_ok) && n < COMPOUND_WORDS) {
+        int from_strip = !a_ok || (b_ok && m->strip_idx[b] < m->key_idx[a]);
+        uint16_t w;
+        if (from_strip) {
+            w = m->strip_idx[b++];
+            b_ok = b < m->n_strip && key_cmp(m, m->strip_idx[b], 1, k, kn, &starts) == 0;
+        } else {
+            w = m->key_idx[a++];
+            a_ok = a < m->n_words && key_cmp(m, m->key_idx[a], 0, k, kn, &starts) == 0;
+        }
+        if (!lit_match(m, w, strip, lit, kn)) continue;
+        id[n] = w;
+        pen[n++] = from_strip ? m->param[OP_P_APOSTROPHE] : 0;
+    }
+    return n;
+}
+
+static void compound_add(const op_model *m, compound *best, int *nb, int32_t score, const uint16_t *ids, int np) {
+    compound c;
+    c.score = score;
+    c.len = 0;
+    for (int i = 0; i < np; i++) {
+        const char *w;
+        int wn = op_word(m, ids[i], &w);
+        memcpy(c.text + c.len, w, (size_t)wn);        /* at most 2 * COMPOUND_KEYS: fits */
+        c.len = (uint8_t)(c.len + wn);
+    }
+    for (int d = 0; d < *nb; d++) {
+        if (best[d].len != c.len || memcmp(best[d].text, c.text, c.len)) continue;
+        if (best[d].score >= score) return;
+        memmove(best + d, best + d + 1, (size_t)(*nb - d - 1) * sizeof *best);
+        (*nb)--;
+        break;
+    }
+    int k = *nb;
+    while (k > 0 && best[k - 1].score < score) k--;
+    if (k >= COMPOUND_MAX) return;
+    if (*nb == COMPOUND_MAX) (*nb)--;
+    memmove(best + k + 1, best + k, (size_t)(*nb - k) * sizeof *best);
+    best[k] = c;
+    (*nb)++;
+}
+
+/* Split k[0..kn) at ends[0..np) (the last is kn) and add each choice of words. */
+static void compound_split(const op_model *m, const char *k, const char *lit, const int *ends, int np,
+                           compound *best, int *nb) {
+    uint16_t id[3][COMPOUND_WORDS];
+    int16_t pen[3][COMPOUND_WORDS];
+    int cnt[3] = { 1, 1, 1 };
+    for (int i = 0, a = 0; i < np; a = ends[i++]) {
+        cnt[i] = compound_part(m, k + a, lit + a, ends[i] - a, id[i], pen[i]);
+        if (!cnt[i]) return;
+    }
+    int32_t base = -(np - 1) * COMPOUND_SPLIT * m->scale;
+    for (int x = 0; x < cnt[0]; x++) {
+        int32_t s0 = base + m->uni[id[0][x]] + pen[0][x];
+        for (int y = 0; y < cnt[1]; y++) {
+            int32_t s1 = s0 + lp(m, id[0][x], id[1][y]) + pen[1][y];
+            for (int z = 0; z < (np == 3 ? cnt[2] : 1); z++) {
+                uint16_t ids[3] = { id[0][x], id[1][y], np == 3 ? id[2][z] : 0 };
+                compound_add(m, best, nb, np == 3 ? s1 + lp(m, id[1][y], id[2][z]) + pen[2][z] : s1, ids, np);
+            }
+        }
+    }
+}
+
+static int compounds(const op_model *m, const char *k, const char *lit, int kn, compound *best) {
+    int nb = 0;
+    if (kn < 2 * COMPOUND_PART || kn > COMPOUND_KEYS) return 0;
+    for (int i = COMPOUND_PART; i <= kn - COMPOUND_PART; i++) {
+        int ends[2] = { i, kn };
+        compound_split(m, k, lit, ends, 2, best, &nb);
+    }
+    for (int i = COMPOUND_PART; i <= kn - 2 * COMPOUND_PART; i++)
+        for (int j = i + COMPOUND_PART; j <= kn - COMPOUND_PART; j++) {
+            int ends[3] = { i, j, kn };
+            compound_split(m, k, lit, ends, 3, best, &nb);
+        }
+    return nb;
+}
+
 static int slot_cands(const op_decoder *d, const op_model *m, const op_tok *t, int is_last, cand *out) {
     const op_user *u = d->user;
     if (t->type == TOK_NUM) {
@@ -597,7 +697,17 @@ static int slot_cands(const op_decoder *d, const op_model *m, const op_tok *t, i
         out[0] = (cand){ OP_NONE, OP_LITERAL, 0 };
         return 1;
     }
-    if (!n) out[n++] = (cand){ OP_NONE, OP_UNKNOWN, 0 };
+    if (!n) {
+        /* No word fits: known words run together, unless every letter is known (QWERTY). */
+        int typed = 1;
+        for (int i = 0; i < kn; i++) if (!lit[i] && !d->hints[t->off + i] && k[i] != '#') typed = 0;
+        if (!typed) {
+            compound cs[COMPOUND_MAX];
+            int nc = compounds(m, k, lit, kn, cs);
+            for (int r = 0; r < nc; r++) out[n++] = (cand){ (uint16_t)(OP_COMPOUND_ID + r), OP_COMPOUND, 0 };
+        }
+        if (!n) out[n++] = (cand){ OP_NONE, OP_UNKNOWN, 0 };
+    }
     return n;
 }
 
@@ -849,6 +959,9 @@ int op_decode(op_decoder *d, const op_model *m, const char *keys, int beam,
                     for (int i = 0; i < OP_TIME_BEFORE; i++) if (prev[h] != OP_NONE && prev[h] == m->time_before[i]) before = 1;
                     step = m->scale * ((before ? TIME_PREV : -TIME_ALONE) - (tk == '.' ? TIME_LITERAL : 0));
                     p = AFTER_NUMBER;
+                } else if (c[ci].kind == OP_COMPOUND) {
+                    step = P[OP_P_UNKNOWN];
+                    p = OP_NONE;
                 } else if (id == OP_NONE) {
                     step = c[ci].kind == OP_NUMBER ? 0 : c[ci].kind == OP_LITERAL ? P[OP_P_LITERAL] : P[OP_P_UNKNOWN];
                     p = c[ci].kind == OP_NUMBER ? (tk ? AFTER_DECIMAL : AFTER_NUMBER) : OP_NONE;
@@ -1040,6 +1153,14 @@ int op_render(const op_decoder *d, const op_model *m, const op_start *start, cha
             if (n + len >= cap) return OP_ERR_SPACE;
             memcpy(out + n, src, (size_t)len);
             n += len;
+        } else if (ch.kind == OP_COMPOUND) {
+            compound cs[COMPOUND_MAX];
+            int nc = compounds(m, d->keys + t->off, d->lits + t->off, t->len, cs), r = ch.id - OP_COMPOUND_ID;
+            if (r >= nc) return OP_ERR_ARG;
+            if (n + cs[r].len >= cap) return OP_ERR_SPACE;
+            memcpy(out + n, cs[r].text, cs[r].len);
+            n += cs[r].len;
+            call = call_sign(out + s, n - s);
         } else {
             /* Typed exactly, or no dictionary word fits: the exact letters, else the QWERTY
              * letters tapped, else each key's first letter. */
@@ -1147,6 +1268,12 @@ int op_learn(op_user *u, const op_decoder *d, const op_model *m, const op_start 
             }
             if (!ok) { prev = OP_NONE; continue; }
             id = user_word(u, m, w, t->len);
+        } else if (ch.kind == OP_COMPOUND) {
+            /* Known words run together: learn it as one word. */
+            compound cs[COMPOUND_MAX];
+            int nc = compounds(m, d->keys + t->off, d->lits + t->off, t->len, cs), r = ch.id - OP_COMPOUND_ID;
+            if (r >= nc || cs[r].len > OP_USER_WORD_LEN) { prev = OP_NONE; continue; }
+            id = user_word(u, m, cs[r].text, cs[r].len);
         } else if (ch.kind == OP_PARTIAL || id == OP_NONE) {
             prev = OP_NONE;
             continue;

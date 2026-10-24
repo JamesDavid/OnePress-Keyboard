@@ -27,6 +27,10 @@ for (const f of ['test.txt', 'dev.txt']) {
   if (fs.existsSync(p)) for (const s of fs.readFileSync(p, 'utf8').split('\n')) if (s) inputs.push(enc(s));
 }
 inputs.push(enc("Can you pick up the kids after school?"), enc("We're going to McDonald's tonight!"), '');
+// Known words run together (compounds), some with letters typed exactly or an apostrophe.
+const COMPOUNDS = [enc('lollypops'), enc('i love lollypops'), enc('snowmanparty'), enc('bestfriendforever'),
+  '5655976l77', 'l6559767767', enc('the bluebirdnest is'), '766#7468', '4663968727983', enc('kittycatz')];
+inputs.push(...COMPOUNDS);
 if (learnMode) {
   inputs.length = 0;
   // Call signs and words with digits: spelled once, then typed with the digit held or pressed.
@@ -38,7 +42,7 @@ if (learnMode) {
     '4663\tsee you at the qorvex|\t',
     // learned words given a casing by the app
     '@Qorvex', '767839', '4404767839#', 'qorvex', '@KE7aqa', '53H272', 'keHaqa0767839', '76783\tQORVEX said'];
-  inputs.push(...callsigns);
+  inputs.push(...callsigns, ...COMPOUNDS, ...COMPOUNDS);
   const users = path.join(__dirname, '../model/corpora/nus/users_dev.tsv'), known = new Set(m.words), seen = new Set();
   if (fs.existsSync(users)) for (const line of fs.readFileSync(users, 'utf8').split('\n')) {
     const msg = line.split('\t')[1];
