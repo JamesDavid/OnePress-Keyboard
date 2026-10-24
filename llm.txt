@@ -10,9 +10,12 @@ embedded project. Read it top to bottom before writing code. Repository layout:
 
 - `c/onepress.h`, `c/onepress.c`: the C decoder. Copy both files into the project; nothing else is needed.
 - `web/decoder.js`: the JavaScript decoder (browser global functions, or `require()` in Node).
-- `model/onepress.bin` (45k words, 1.69 MB), `model/onepress-m.bin` (20k words, 806 KB),
-  `model/onepress-s.bin` (5k words, 238 KB): the models, in the KPD2 format (`model/export_bin.py`
-  documents it). Every decoder reads the same files.
+- `model/onepress.bin` (45k words, 3.2 MB), `model/onepress-m.bin` (20k words, 1.0 MB),
+  `model/onepress-s.bin` (5k words, 229 KB): the word models, in the KPD2 format
+  (`model/export_bin.py` documents it). Every decoder reads the same files.
+- `model/onepress-nn.bin`: the optional neural word model for phones and the web (KPN1,
+  documented in `model/export_nn.py`).
+- `DATA.md`: the model files are CC BY-SA 4.0 (the code is MIT); ship the attribution in it.
 - `c/opdecode.c`: a small command-line program that shows the whole C API in use.
 - `web/keypad.html`: the reference user interface. Copy its behavior (SPEC.md section 4).
 - `SPEC.md`: the full specification.
@@ -21,11 +24,11 @@ embedded project. Read it top to bottom before writing code. Repository layout:
 
 | Target | Model | Accuracy (held-out text messages) |
 |---|---|---|
-| Phones, web, desktop | `onepress.bin` | 93.7% of words |
-| ESP32 (4 MB+ flash), Meshtastic nodes | `onepress-m.bin` | 92.5% |
-| nRF52, radios, anything with ~250 KB free flash | `onepress-s.bin` | 88.2% |
+| Phones, web, desktop | `onepress.bin` (+ `onepress-nn.bin`) | 94.1% of words (95.1% with the network) |
+| ESP32 (4 MB+ flash), Meshtastic nodes | `onepress-m.bin` | 92.8% |
+| nRF52, radios, anything with ~250 KB free flash | `onepress-s.bin` | 88.3% |
 
-Learning from the user adds about 3 points (see "Learning" below).
+Learning from the user adds 1–3 points (see "Learning" below).
 
 ## The key string: the one thing to get right
 
@@ -39,7 +42,7 @@ one character per press; on delete, remove the last character. Never store '1' o
 | `#` (punctuation; the model picks `. , ? !`; between letters it is an apostrophe) | `'#'` |
 | A held number key (the digit itself) | `'A'`-`'J'` for 0-9 (`'A'` + digit) |
 | Exact (multi-tap) mode: a letter | `'a'`-`'z'`, or `'\''` |
-| Exact mode: punctuation | `'.'`, `','`, `'?'`, `'!'` |
+| Exact mode: punctuation | `'.'`, `','`, `'?'`, `'!'`, `':'` |
 
 UI actions, not characters: `1` deletes the last character. `*` tap swaps the selected word for
 the next guess (use locks, below); `*` hold finishes the word being typed. Hold `#` toggles exact
@@ -47,7 +50,7 @@ mode, where repeated presses of one key within 900 ms cycle its letters and then
 (2 -> a, b, c, 2) and replace the last character instead of appending.
 
 Examples: `435560968` is "Hello you". `66069092904663` is "On my way home". `65#` is "Ok.".
-`#G#AAA#AA` (hold 6, hold 0...) is "$6,000.00". `280F#DA` is "At 5:30". `keHaqa` is "Ke7aqa".
+`#G#AAA#AA` (hold 6, hold 0...) is "$6,000.00". `280F#DA` is "At 5:30". `keHaqa` is "KE7AQA".
 
 ## How to drive it (every platform)
 
@@ -57,12 +60,24 @@ Examples: `435560968` is "Hello you". `66069092904663` is "On my way home". `65#
    point, so show the whole composition as provisional (marked/composing text) until it is
    committed.
 3. Commit when the user sends, leaves the field or moves the cursor: call learn, clear the key
-   string. Start the next composition with `prev` = the model's sentence start (`bos`) and
-   `cap` = 1 if the text before the cursor is empty or ends in `. ! ?`, otherwise `cap` = 0.
-4. Beam width 8 is what every shipped target uses. Keep compositions under `OP_MAX_KEYS` (256)
+   string.
+4. Context: pass the text before the cursor as `before` (C `start.before`, JS `{ before }`). In
+   a chat, pass the last few messages, each followed by a line break. The decoder takes the
+   starting context, capitalization and recently used words from it. Without it, set `prev` (the
+   model's `bos` at a sentence start) and `cap` yourself.
+5. On a QWERTY layout that sends keypad digits, also pass `hint`: the letter tapped for each
+   press (a space for presses that weren't letters). A word no dictionary word matches is then
+   shown, and learned, as typed.
+6. A finished sentence doesn't change once more is typed (only its final mark can, . to ,).
+7. Beam width 8 is what every shipped target uses. Keep compositions under `OP_MAX_KEYS` (256)
    presses; committing at each sentence end is fine.
-5. Alternatives for a word: the reference UI locks a slot to each candidate and re-decodes
+8. Alternatives for a word: the reference UI locks a slot to each candidate and re-decodes
    (`locks` in JS, `op_lock` in C), then ranks by score. Use that for the `*` key and a chip row.
+   A number that reads as a time has two candidates: lock to `OP_TIME_ID` for 5:30, `OP_NONE`
+   for 5.30.
+9. Capitalization is automatic (sentence starts, I, names and brands, "in May" vs "I may", call
+   signs in capitals). Learned words keep the casing stored in the user table; let the user
+   flip it (the web page's Aa chip edits `u.words[k]`; in C edit `user.word[k]`).
 
 ## C API (iOS, Android NDK, ESP32, nRF52, any C/C++ firmware)
 
@@ -77,7 +92,8 @@ static op_user user;        /* ~12 KB learned table; optional */
 if (op_model_open(&model, blob, blob_size) != OP_OK) { /* not a KPD2 file or misaligned */ }
 op_user_init(&user, &model);                 /* or load saved bytes, see Learning */
 
-op_start start = { model.bos, 1, &user };    /* prev token, capitalize first word, user or NULL */
+/* prev token and cap (used only when before is NULL), user, before, hint, network, its memory */
+op_start start = { model.bos, 1, &user, text_before_cursor, NULL, NULL, NULL };
 char out[1024];
 if (op_decode(&dec, &model, keys, 8, &start, NULL, 0) == OP_OK &&
     op_render(&dec, &model, &start, out, sizeof out) >= 0) {
@@ -91,20 +107,43 @@ op_learn(&user, &dec, &model, &start);
   or OP_MAX_SLOTS words), `OP_ERR_SPACE` -3 (output buffer too small), `OP_ERR_ARG` -4.
   `op_render` returns the text length on success.
 - After `op_decode`, `dec.choice[j]` holds each slot's result (`id`, `kind`: OP_WORD,
-  OP_PARTIAL for a completion still being typed, OP_PUNCT, OP_LITERAL, OP_UNKNOWN, OP_NUMBER).
+  OP_PARTIAL for a completion still being typed, OP_PUNCT, OP_LITERAL, OP_UNKNOWN, OP_NUMBER,
+  OP_TIME).
 - Locks: `op_lock locks[] = {{ slot, word_id }}` forces slot `slot` to `word_id` if it is a candidate.
 - Not thread-safe per decoder: use one `op_decoder` per thread. The model is read-only and can be shared.
 - Memory: lower the limits on small targets with compiler flags, e.g.
   `-DOP_MAX_BEAM=4 -DOP_MAX_SLOTS=48 -DOP_MAX_KEYS=160 -DOP_USER_WORDS=64 -DOP_USER_PAIRS=256`
-  gives a 6 KB decoder and a 3 KB user table. Code is about 11 KB at -Os. Stack use is small
+  gives a 6 KB decoder and a 3 KB user table. Code is about 15 KB at -Os with -DOP_NO_NN (the
+  neural part; 17 KB with it). Stack use is small
   (a few hundred bytes to 1 KB in op_decode).
 - The model must be little-endian (ARM, x86, ESP32, RISC-V all are) and 4-byte aligned. It is
   read in place, so memory-mapped flash works with no copy.
 
+## The neural word model (phones and web)
+
+`onepress-nn.bin` (6.3 MB) is a small recurrent network over the phone model's vocabulary. With
+it, every candidate is also scored by everything typed before it, which cuts the remaining word
+errors by about a sixth (held-out US/Canada messages: 94.1% -> 95.1%). It only works with
+`onepress.bin` (same vocabulary).
+
+```c
+static op_nn nn;
+static op_nn_work nn_work;                    /* ~38 KB working memory */
+op_nn_open(&nn, nn_blob, nn_size, &model);    /* 4-byte aligned, kept valid */
+start.nn = &nn; start.nn_work = &nn_work;
+```
+```js
+const nn = buildNN(new Uint8Array(await (await fetch('onepress-nn.bin')).arrayBuffer()), m);
+decode(m, keys, locks, 8, 1, { user, before, nn });
+```
+
+Cost: about 0.3 million multiply-adds per hypothesis per word (beam 8: ~2.4 M per word),
+integer only, so C and JS still agree exactly. Fine on any phone; not meant for microcontrollers.
+
 ## Learning from the user
 
 `op_user` / `newUser()` is a small fixed-size table: words the dictionary lacks (spelled once in
-exact mode, call signs with digits included, then predicted from their keys) and counts of the
+exact mode or typed on QWERTY, call signs with digits included, then predicted from their keys) and counts of the
 words and word pairs this person uses. Decoding reads it through `start.user`; call learn only on
 text the user accepted (sent). It is plain data with no pointers: save it with
 `fwrite(&user, sizeof user, 1, f)` and load it the same way, on the same build (same OP_USER_*
@@ -121,7 +160,8 @@ with `op_user_init` when you ship a new model. Offer the user a way to clear it.
   let user = JSON.parse(localStorage.getItem('onepress-user') || 'null');
   if (!user || user.bos !== m.bos) user = newUser(m);
 
-  const r = decode(m, keys, locks, 8, 1, { user });       // locks: {} or { [slot]: { keys, text } }
+  // before: text before the cursor, or the last messages one per line; hint: QWERTY letters
+  const r = decode(m, keys, locks, 8, 1, { user, before, hint });   // locks: {} or { [slot]: { keys, text } }
   const pieces = render(m, r, r.hyps[0]);                  // [{ text, slot, partial, unknown }]
   const text = pieces.map(p => p.text).join('');
   // p.partial is the full word being completed: show p.partial.slice(p.text.length) as ghost text.
@@ -151,7 +191,8 @@ shows the alternative of embedding it as base64.
   let user = UnsafeMutablePointer<op_user>.allocate(capacity: 1)
   guard op_model_open(model, blob, data.count) == 0 else { fatalError("bad model") }   // 0 is OP_OK
   op_user_init(user, model)
-  var start = op_start(prev: model.pointee.bos, cap: 1, user: UnsafePointer(user))
+  var start = op_start(prev: model.pointee.bos, cap: 1, user: UnsafePointer(user),
+                       before: nil, hint: nil, nn: nil, nn_work: nil)   // see "How to drive it" 
   var out = [CChar](repeating: 0, count: 1024)
   if op_decode(dec, model, keys, 8, &start, nil, 0) == 0,
      op_render(dec, model, &start, &out, Int32(out.count)) >= 0 {
@@ -161,8 +202,10 @@ shows the alternative of embedding it as base64.
 - In `UIInputViewController`, keep the last rendered string. On each press, find the common
   prefix with the new rendering, call `textDocumentProxy.deleteBackward()` once per character
   after it and `insertText` the rest (or use `setMarkedText` where the host app supports it).
-- Set `cap` from `textDocumentProxy.documentContextBeforeInput` (empty or ending in `. ! ?`).
-- Keyboard extensions have a tight memory limit; the 1.7 MB model plus 36 KB of state fits easily.
+- Pass `textDocumentProxy.documentContextBeforeInput` as `before` (keep the C string alive
+  during the call, e.g. with `withCString`).
+- Keyboard extensions have a tight memory limit; the 3.2 MB model, the 6.3 MB network and
+  ~80 KB of state fit easily.
 - Save `op_user` bytes in the App Group container so the app and the keyboard share it. "Allow
   Full Access" is not needed for any of this.
 - No Mac is needed to test the decoder itself: it is plain C (`tests/parity.js` checks it against JS).
@@ -176,20 +219,20 @@ shows the alternative of embedding it as base64.
   `AAssetManager_fromJava` + `AAssetManager_open(mgr, "onepress.bin", AASSET_MODE_BUFFER)` and
   `AAsset_getBuffer`; if that pointer is not 4-byte aligned, copy it into a `malloc` buffer
   (simplest: always copy, it is 1.7 MB once).
-- JNI surface: `init(assetManager)`, `decode(keys: String, cap: Boolean): String`,
+- JNI surface: `init(assetManager)`, `decode(keys: String, before: String, hint: String?): String`,
   `learn()`, `saveUser(): ByteArray`, `loadUser(bytes: ByteArray)`.
 - Show the composition with `currentInputConnection.setComposingText(text, 1)`; on commit call
-  `finishComposingText()` (or `commitText`) and then `learn()`. Read the text before the cursor
-  with `getTextBeforeCursor` to set `cap`.
+  `finishComposingText()` (or `commitText`) and then `learn()`. Pass
+  `getTextBeforeCursor(200, 0)` as `before`.
 - Persist the user table to `filesDir` (`saveUser()` bytes).
 
 ## ESP32 (ESP-IDF, Arduino, PlatformIO, Meshtastic)
 
-- Use `onepress-m.bin` (806 KB) on 4 MB+ flash, or `onepress-s.bin`.
+- Use `onepress-m.bin` (1.0 MB) on 4 MB+ flash, or `onepress-s.bin`.
 - Best: a raw data partition, memory-mapped (always aligned, no RAM used for the model):
   ```
   # partitions.csv
-  onepress, data, 0x40, , 900K
+  onepress, data, 0x40, , 1100K
   ```
   Flash it with `parttool.py write_partition --partition-name onepress --input onepress-m.bin`
   (or `esptool.py write_flash <offset> onepress-m.bin`), then:
@@ -209,15 +252,18 @@ shows the alternative of embedding it as base64.
 - Save `op_user` to LittleFS/SPIFFS (or an NVS blob) after each sent message.
 - Meshtastic: hook the keypad/rotary input where the canned-message / free-text module builds
   its message string. Keep the key string there, decode on each input event and draw the
-  rendered text; on send, transmit the rendered text and call `op_learn`. Hold the digit keys
-  for numbers and use exact mode (hold `#`) for call signs; once sent, a call sign is learned
-  and can be typed with one press per character.
+  rendered text; on send, transmit the rendered text and call `op_learn`. Pass the last few
+  messages of the channel (received ones too) as `before`, one per line, so names and words
+  from the conversation come first. Hold the digit keys for numbers and use exact mode (hold
+  `#`) for call signs; once sent, a call sign is learned, can be typed with one press per
+  character, and shows in capitals.
 
 ## nRF52 and other small microcontrollers (radios, custom keypads)
 
 - Needs: model bytes readable at a pointer (internal flash, or memory-mapped QSPI/XIP flash),
-  about 11 KB code, 6 KB RAM for the decoder with the small limits above, 3 KB for a small user table.
-- Use `onepress-s.bin` (238 KB). On nRF52840 put it in internal flash if there is room, or in
+  about 15 KB code (-DOP_NO_NN), 6 KB RAM for the decoder with the small limits above, 3 KB for a
+  small user table.
+- Use `onepress-s.bin` (229 KB). On nRF52840 put it in internal flash if there is room, or in
   external QSPI flash mapped for execute-in-place.
 - The decoder needs the model at a memory address. External SPI flash that cannot be memory-mapped
   is not supported yet (it would need a read callback in `op_model_open`).
@@ -233,7 +279,7 @@ shows the alternative of embedding it as base64.
   with `gcc -std=c99 -O2 -o build/opdecode c/onepress.c c/opdecode.c` and run `node tests/parity.js`.
 - `435560968` -> "Hello you", `66069092904663` -> "On my way home", `#G#AAA#AA` -> "$6,000.00".
 - Do not modify `onepress.c` in a port; change it upstream together with `decoder.js` (they must
-  stay identical, `node tests/parity.js` and `node tests/parity.js --learn` check it).
+  stay identical, `node tests/parity.js`, `--learn` and `--nn model/onepress-nn.bin` check it).
 
 ## Naming
 

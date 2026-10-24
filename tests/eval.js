@@ -15,6 +15,8 @@ if (limit) refs = refs.slice(0, limit);
 
 const m = D.buildModel(fs.readFileSync(modelFile));
 const nn = nnFile ? D.buildNN(fs.readFileSync(nnFile), m) : undefined;
+const nnWeight = opt('--nn-weight');            // tuning: override the file's weight (1/256)
+if (nn && nnWeight) nn.weight = +nnWeight;
 const enc = s => s.toLowerCase().replace(/'/g, '').replace(/[.,!?]/g, '#').replace(/ /g, '0')
   .replace(/[a-z]/g, c => D.wordKeys(c));
 const TOK = /[a-z]+(?:'[a-z]+)?|[.,!?]/g;

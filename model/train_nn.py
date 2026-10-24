@@ -17,7 +17,7 @@ ap.add_argument("corpora", nargs="*")
 ap.add_argument("--hidden", type=int, default=256)
 ap.add_argument("--embed", type=int, default=128)
 ap.add_argument("--epochs", type=int, default=3)
-ap.add_argument("--batch", type=int, default=128)
+ap.add_argument("--batch", type=int, default=64)
 ap.add_argument("--maxlen", type=int, default=40)
 ap.add_argument("--selfnorm", type=float, default=0.1)
 ap.add_argument("--dev", default="corpora/nus/dev.txt")
@@ -70,6 +70,7 @@ dev_ = "cuda" if torch.cuda.is_available() else "cpu"
 lm = LM().to(dev_)
 print(f"{sum(p.numel() for p in lm.parameters()) / 1e6:.1f}M parameters")
 opt = torch.optim.Adam(lm.parameters(), lr=2e-3)
+scaler = torch.amp.GradScaler(enabled=dev_ == "cuda")   # 16-bit math on the GPU: half the memory
 
 def batches(seqs, shuffle):
     order = list(range(len(seqs)))
@@ -87,15 +88,22 @@ def batches(seqs, shuffle):
 def run(seqs, train_mode):
     lm.train(train_mode)
     tot = cnt = zsum = 0.0
-    for x, m in batches(seqs, train_mode):
-        logits, _ = lm(x[:, :-1])
+    t0 = time.time()
+    for bi, (x, m) in enumerate(batches(seqs, train_mode)):
+        with torch.autocast(device_type=dev_, dtype=torch.float16, enabled=dev_ == "cuda"):
+            logits, _ = lm(x[:, :-1])
+        logits = logits.float()
         logz = torch.logsumexp(logits, -1)
         nll = (logz - logits.gather(-1, x[:, 1:, None])[..., 0]) * m
         loss = (nll.sum() + a.selfnorm * (logz ** 2 * m).sum()) / m.sum()
         if train_mode:
-            opt.zero_grad(); loss.backward()
+            opt.zero_grad()
+            scaler.scale(loss).backward()
+            scaler.unscale_(opt)
             nn.utils.clip_grad_norm_(lm.parameters(), 1.0)
-            opt.step()
+            scaler.step(opt); scaler.update()
+            if bi % 1000 == 0:
+                print(f"  batch {bi}: loss {loss.item():.2f}, {time.time() - t0:.0f}s", flush=True)
         tot += nll.sum().item(); cnt += m.sum().item(); zsum += (logz.abs() * m).sum().item()
     return math.exp(tot / cnt), zsum / cnt
 

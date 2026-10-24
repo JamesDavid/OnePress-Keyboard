@@ -28,7 +28,7 @@ jobs:
         run: |
           mkdir -p _site
           cp web/keypad.html _site/index.html
-          cp web/decoder.js llm.txt model/onepress.bin model/onepress-m.bin model/onepress-s.bin _site/
+          cp web/decoder.js llm.txt model/onepress.bin model/onepress-m.bin model/onepress-s.bin model/onepress-nn.bin _site/
       - uses: actions/upload-pages-artifact@v3
       - id: deployment
         uses: actions/deploy-pages@v4

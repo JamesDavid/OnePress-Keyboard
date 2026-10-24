@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Fit check</title>
+<style>body { font: 13px system-ui; margin: 8px; } iframe { border: 1px solid #888; margin: 4px; vertical-align: top; }</style>
+<div id="frames"></div>
+<pre id="log"></pre>
+<script>
+// Loads the keypad page at several viewport sizes and reports, for every tutorial step and for
+// the plain keyboard, whether everything down to the Send row fits without scrolling.
+const SIZES = [[360, 640], [375, 667], [390, 664], [390, 750], [412, 780], [430, 830], [1280, 680], [1280, 900]];
+const log = s => { document.getElementById('log').textContent += s + '\n'; };
+window.results = [];
+async function check([w, h]) {
+  const f = document.createElement('iframe');
+  f.width = w; f.height = h; f.src = '../web/keypad.html';
+  document.getElementById('frames').appendChild(f);
+  await new Promise(r => f.onload = r);
+  await new Promise(r => setTimeout(r, 1200));
+  const d = f.contentDocument, win = f.contentWindow;
+  const bottomOf = id => d.getElementById(id).getBoundingClientRect().bottom;
+  const out = [];
+  d.getElementById('tutOpen').click();
+  for (let step = 0; step < 8; step++) {
+    await new Promise(r => setTimeout(r, 50));
+    const over = Math.round(Math.max(bottomOf('copy'), bottomOf('pad')) - win.innerHeight);
+    out.push(`step ${step + 1}: ${over > 0 ? 'OVER by ' + over + 'px' : 'fits (' + -over + 'px spare)'}`);
+    d.getElementById('tutNext').click();
+  }
+  await new Promise(r => setTimeout(r, 50));
+  const over = Math.round(bottomOf('copy') - win.innerHeight);
+  out.push(`keyboard: ${over > 0 ? 'OVER by ' + over + 'px' : 'fits (' + -over + 'px spare)'}`);
+  d.getElementById('modeQw').click();
+  await new Promise(r => setTimeout(r, 50));
+  const over2 = Math.round(bottomOf('copy') - win.innerHeight);
+  out.push(`qwerty: ${over2 > 0 ? 'OVER by ' + over2 + 'px' : 'fits (' + -over2 + 'px spare)'}`);
+  d.getElementById('modePad').click();
+  const line = `${w}x${h}: ` + out.join(' | ');
+  window.results.push(line);
+  log(line);
+}
+(async () => { for (const s of SIZES) await check(s); window.done = true; })();
+</script>

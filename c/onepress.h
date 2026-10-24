@@ -127,9 +127,9 @@ typedef struct {
 typedef struct {
     uint16_t E, H, V, bos, unk, model_bos;
     int16_t weight;             /* how much its score counts, in 1/256 */
-    uint8_t se, sih, shh, sp;
     const int16_t *sig, *bias;
     const int8_t *emb, *wih, *whh, *proj;
+    const uint8_t *es, *is, *hs, *ps;   /* per-row shifts of emb, wih, whh, proj */
     const int32_t *bih, *bhh, *bproj;
 } op_nn;
 

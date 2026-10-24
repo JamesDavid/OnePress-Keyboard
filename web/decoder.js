@@ -344,16 +344,17 @@ function slotCandidates(m, tok, isLast, u) {
 
 // ---- Neural word model (optional): a small GRU over the word model's vocabulary ----
 // KPN1 file from model/export_nn.py; all integer, so the C decoder gives the same results.
-// With start.nn, every candidate also gets weight/256 * log P(word | everything before it),
-// which sees further back than the word pairs. Hypotheses then can't be merged by their last
-// word (the network remembers more), so the beam keeps the best paths as they are.
+// With start.nn, every candidate word also gets weight/256 * log P(word | everything before
+// it), which sees further back than the word pairs (punctuation is left to its rules, which do
+// better on real texts). Hypotheses are still merged by the word model's state, and the best of
+// each keeps its own network state: keeping them all apart crowds the beam with near-copies.
 function buildNN(bytes, m) {
   if (bytes.byteOffset % 4) bytes = new Uint8Array(bytes);
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (String.fromCharCode(...bytes.subarray(0, 4)) !== 'KPN1') throw new Error('not a KPN1 network');
   const u16 = o => dv.getUint16(o, true);
   const nn = { E: u16(6), H: u16(8), V: u16(10), bos: u16(12), unk: u16(14), weight: dv.getInt16(16, true),
-    se: bytes[18], sih: bytes[19], shh: bytes[20], sp: bytes[21], modelBos: u16(26), cache: new Map() };
+    modelBos: u16(26), cache: new Map() };
   if (m && nn.modelBos !== m.bos) throw new Error('this network belongs to another word model');
   if (nn.E > 256 || nn.H > 256) throw new Error('network too large');
   let off = 32;
@@ -364,10 +365,11 @@ function buildNN(bytes, m) {
     return a;
   };
   const { E, H, V } = nn;
-  Object.assign(nn, {
-    sig: take(Int16Array, 4096), emb: take(Int8Array, V * E), wih: take(Int8Array, 3 * H * E),
-    whh: take(Int8Array, 3 * H * H), bih: take(Int32Array, 3 * H), bhh: take(Int32Array, 3 * H),
-    proj: take(Int8Array, E * H), bproj: take(Int32Array, E), bias: take(Int16Array, V),
+  Object.assign(nn, {    // each int8 matrix is followed by one shift per row (value = q / 2^shift)
+    sig: take(Int16Array, 4096), emb: take(Int8Array, V * E), es: take(Uint8Array, V),
+    wih: take(Int8Array, 3 * H * E), is: take(Uint8Array, 3 * H), whh: take(Int8Array, 3 * H * H), hs: take(Uint8Array, 3 * H),
+    bih: take(Int32Array, 3 * H), bhh: take(Int32Array, 3 * H),
+    proj: take(Int8Array, E * H), ps: take(Uint8Array, E), bproj: take(Int32Array, E), bias: take(Int16Array, V),
   });
   if (off > bytes.length) throw new Error('truncated KPN1 network');
   return nn;
@@ -376,13 +378,14 @@ const NN_CLAMP = 524287;          // gate inputs are clamped so r * gate stays i
 function nnSig(nn, v) { return nn.sig[((v < -32768 ? -32768 : v > 32767 ? 32767 : v) + 32768) >> 4]; }
 // The state after token tok (state h, Q12); null h is the zero state.
 function nnStep(nn, h, tok) {
-  const { E, H, emb, wih, whh, bih, bhh } = nn, xo = tok * E, gsh = nn.sih + nn.se - 12;
+  const { E, H, emb, wih, whh, bih, bhh } = nn, xo = tok * E, et = nn.es[tok];
   const g = new Int32Array(6 * H), out = new Int16Array(H);
   for (let k = 0; k < 3 * H; k++) {
     let a = 0, b = 0;
     for (let j = 0, wo = k * E; j < E; j++) a += wih[wo + j] * emb[xo + j];
     if (h) for (let j = 0, ho = k * H; j < H; j++) b += whh[ho + j] * h[j];
-    const gi = (a >> gsh) + bih[k], gh = (b >> nn.shh) + bhh[k];
+    const sh = nn.is[k] + et;           // a is scaled by 2^sh; to Q12
+    const gi = (sh >= 12 ? a >> (sh - 12) : a * (1 << (12 - sh))) + bih[k], gh = (b >> nn.hs[k]) + bhh[k];
     g[k] = gi < -NN_CLAMP ? -NN_CLAMP : gi > NN_CLAMP ? NN_CLAMP : gi;
     g[3 * H + k] = gh < -NN_CLAMP ? -NN_CLAMP : gh > NN_CLAMP ? NN_CLAMP : gh;
   }
@@ -399,7 +402,7 @@ function nnProj(nn, h) {
   for (let e = 0; e < E; e++) {
     let a = 0;
     for (let j = 0, o = e * H; j < H; j++) a += proj[o + j] * h[j];
-    const v = (a >> nn.sp) + bproj[e];
+    const v = (a >> nn.ps[e]) + bproj[e];
     p[e] = v < -32767 ? -32767 : v > 32767 ? 32767 : v;
   }
   return p;
@@ -408,7 +411,7 @@ function nnProj(nn, h) {
 function nnScore(nn, p, tok) {
   let a = 0;
   for (let e = 0, o = tok * nn.E; e < nn.E; e++) a += p[e] * nn.emb[o + e];
-  const v = (a >> (nn.se + 4)) + nn.bias[tok];
+  const v = (a >> (nn.es[tok] + 4)) + nn.bias[tok];
   return v < -32767 ? -32767 : v > 32767 ? 32767 : v;      // so weight * score fits in int32
 }
 // State and projection after the token sequence key (ids joined by ','), cached across decodes.
@@ -505,7 +508,7 @@ function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
         let step = c.id < 0 ? (c.number ? 0 : c.literal ? P.literal : P.unknown) : tokenScore(m, u, h.prev, c.id, h.t) + (c.penalty || 0) +
           (ctx.recent.has(c.id) && (c.id > m.bos || m.uni[c.id] < RECENT_MAX_UNI * m.scale) ? Math.round(RECENT_BONUS * m.scale) : 0);
         if (c.time) step += m.scale * ((m.timeBefore.has(h.prev) ? TIME_PREV : -TIME_ALONE) - (timeKind(s.tok.keys) === '.' ? TIME_LITERAL : 0));
-        if (nn) step += (nn.weight * nnScore(nn, h.ns.p, nnTok(c.id))) >> 8;
+        if (nn && !(c.id >= m.n && c.id < m.bos)) step += (nn.weight * nnScore(nn, h.ns.p, nnTok(c.id))) >> 8;   // words only: the punctuation rules do better
         let prev = c.timeable ? AFTER_DECIMAL : c.number ? AFTER_NUMBER : c.id < 0 ? -1 : c.id;
         let first = h.first, cf = h.cf;
         if (c.id >= m.n && c.id < m.bos) {
@@ -549,13 +552,14 @@ function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
     beam = [];
     for (const h of next) {
       const k = ((h.t + 1) * 70000 + h.prev + 3) * 9 + qs(h.first) * 3 + qs(h.cf);
-      if (!nn && states.has(k)) continue;      // with the network, states differ by their whole past
+      if (states.has(k)) continue;      // with the network too: the best of each keeps its own network state
       states.add(k);
       beam.push(h);
       if (beam.length >= beamWidth) break;
     }
     if (nn) for (const h of beam) {
-      const t = nnTok(s.cands[h.path[j]].id);
+      const id = s.cands[h.path[j]].id;
+      const t = nnTok(id);
       h.nk = h.from.nk + ',' + t;
       h.ns = nnState(nn, h.nk, h.from.ns, t);
     }

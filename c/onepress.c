@@ -712,19 +712,22 @@ int op_nn_open(op_nn *nn, const void *data, size_t size, const op_model *m) {
     if (!nn || !b || ((uintptr_t)b & 3) || size < 32 || memcmp(b, "KPN1", 4) != 0 || rd16(b + 4) != 1) return OP_ERR_MODEL;
     nn->E = rd16(b + 6); nn->H = rd16(b + 8); nn->V = rd16(b + 10);
     nn->bos = rd16(b + 12); nn->unk = rd16(b + 14); nn->weight = (int16_t)rd16(b + 16);
-    nn->se = b[18]; nn->sih = b[19]; nn->shh = b[20]; nn->sp = b[21];
     nn->model_bos = rd16(b + 26);
-    if ((m && nn->model_bos != m->bos) || nn->E > OP_NN_MAX || nn->H > OP_NN_MAX || nn->sih + nn->se < 12) return OP_ERR_MODEL;
+    if ((m && nn->model_bos != m->bos) || nn->E > OP_NN_MAX || nn->H > OP_NN_MAX) return OP_ERR_MODEL;
     size_t off = 32, E = nn->E, H = nn->H, V = nn->V;
     #define TAKE(dst, T, n) do { off = (off + 3) & ~(size_t)3; if (off + (n) * sizeof(T) > size) return OP_ERR_MODEL; \
                                  dst = (const T *)(b + off); off += (n) * sizeof(T); } while (0)
     TAKE(nn->sig, int16_t, 4096);
     TAKE(nn->emb, int8_t, V * E);
+    TAKE(nn->es, uint8_t, V);
     TAKE(nn->wih, int8_t, 3 * H * E);
+    TAKE(nn->is, uint8_t, 3 * H);
     TAKE(nn->whh, int8_t, 3 * H * H);
+    TAKE(nn->hs, uint8_t, 3 * H);
     TAKE(nn->bih, int32_t, 3 * H);
     TAKE(nn->bhh, int32_t, 3 * H);
     TAKE(nn->proj, int8_t, E * H);
+    TAKE(nn->ps, uint8_t, E);
     TAKE(nn->bproj, int32_t, E);
     TAKE(nn->bias, int16_t, V);
     #undef TAKE
@@ -739,15 +742,16 @@ static int32_t clamp_gate(int32_t v) { return v < -NN_CLAMP ? -NN_CLAMP : v > NN
 
 /* out = the state after token tok from state h (NULL: the zero state); p = its projection. */
 static void nn_step(const op_nn *nn, int32_t *g, const int16_t *h, uint16_t tok, int16_t *out, int16_t *p) {
-    int E = nn->E, H = nn->H, gsh = nn->sih + nn->se - 12;
+    int E = nn->E, H = nn->H, et = nn->es[tok];
     const int8_t *x = nn->emb + (size_t)tok * E;
     for (int k = 0; k < 3 * H; k++) {
         int32_t a = 0, c = 0;
         const int8_t *wi = nn->wih + (size_t)k * E, *wh = nn->whh + (size_t)k * H;
         for (int j = 0; j < E; j++) a += wi[j] * x[j];
         if (h) for (int j = 0; j < H; j++) c += wh[j] * h[j];
-        g[k] = clamp_gate((a >> gsh) + nn->bih[k]);
-        g[3 * H + k] = clamp_gate((c >> nn->shh) + nn->bhh[k]);
+        int sh = nn->is[k] + et;    /* a is scaled by 2^sh; to Q12 */
+        g[k] = clamp_gate((sh >= 12 ? a >> (sh - 12) : a * (1 << (12 - sh))) + nn->bih[k]);
+        g[3 * H + k] = clamp_gate((c >> nn->hs[k]) + nn->bhh[k]);
     }
     for (int i = 0; i < H; i++) {
         int32_t r = nn_sig(nn, g[i] + g[3 * H + i]);
@@ -759,7 +763,7 @@ static void nn_step(const op_nn *nn, int32_t *g, const int16_t *h, uint16_t tok,
         int32_t a = 0;
         const int8_t *w = nn->proj + (size_t)e * H;
         for (int j = 0; j < H; j++) a += w[j] * out[j];
-        int32_t v = (a >> nn->sp) + nn->bproj[e];
+        int32_t v = (a >> nn->ps[e]) + nn->bproj[e];
         p[e] = (int16_t)(v < -32767 ? -32767 : v > 32767 ? 32767 : v);
     }
 }
@@ -768,7 +772,7 @@ static int32_t nn_score(const op_nn *nn, const int16_t *p, uint16_t tok) {
     int32_t a = 0;
     const int8_t *e = nn->emb + (size_t)tok * nn->E;
     for (int i = 0; i < nn->E; i++) a += p[i] * e[i];
-    int32_t v = (a >> (nn->se + 4)) + nn->bias[tok];
+    int32_t v = (a >> (nn->es[tok] + 4)) + nn->bias[tok];
     return v < -32767 ? -32767 : v > 32767 ? 32767 : v;
 }
 
@@ -852,7 +856,8 @@ int op_decode(op_decoder *d, const op_model *m, const char *keys, int beam,
                     step = token_score(m, d->user, prev[h], id, tri[h]) + c[ci].pen + recent_bonus(d, m, id);
                     p = id;
                 }
-                if (nn) step += (nn->weight * nn_score(nn, w->p[cur][h], NN_TOK(id))) >> 8;
+                if (nn && !(id >= m->n_words && id < m->bos))     /* words only: the punctuation rules do better */
+                    step += (nn->weight * nn_score(nn, w->p[cur][h], NN_TOK(id))) >> 8;
                 if (id != OP_NONE && id >= m->n_words && id < m->bos) {
                     /* Punctuation: a word-pair model can't see how the sentence began,
                      * so use the sentence's first word to judge question vs statement. */
@@ -910,7 +915,7 @@ int op_decode(op_decoder *d, const op_model *m, const char *keys, int beam,
         for (int i = 0; i < ne && nk < beam; i++) {
             const op_entry *e = &d->ent[i];
             int dup = 0;
-            for (int k = 0; k < nk && !dup && !nn; k++) {     /* with the network, states differ by their whole past */
+            for (int k = 0; k < nk && !dup; k++) {     /* with the network too: the best keeps its own state */
                 const op_entry *o = &d->ent[kept[k]];
                 dup = o->prev == e->prev && o->tri == e->tri && o->first == e->first && o->cf == e->cf;
             }

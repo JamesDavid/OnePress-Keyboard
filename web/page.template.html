@@ -192,7 +192,7 @@ body { padding-block: clamp(8px, 2.2dvh, 20px) clamp(10px, 3dvh, 28px); }
   .wrap, .pad { gap: 5px; }
   .k { padding: 1px 4px 2px; }
 }
-@media (max-height: 760px) {
+@media (max-height: 800px) {
   .status { display: none; }
   .lcd { height: clamp(4.2rem, 16dvh, 10.5rem); }
   .k { gap: 0; }
@@ -265,7 +265,7 @@ body { padding-block: clamp(8px, 2.2dvh, 20px) clamp(10px, 3dvh, 28px); }
     <p>Tap any word to see other words with the same keys. Picking one locks it, and the rest of the sentence re-decodes around it.</p>
     <p>The QWERTY keyboard sends only each letter's keypad number (shown in the corner), so the model decodes it exactly as if you'd used the keypad. When no word fits, it keeps the letters you tapped. Keys grow and shrink in place with how likely each letter is to come next. A computer keyboard works the same way, and Tab finishes the word.</p>
     <p><b>Neural</b> (Phone model) adds a small neural network that reads everything typed before each word, not just the last two words. It's downloaded once next to the page and runs here too.</p>
-    <p>Runs entirely in this page. <b>Model</b> picks the word model: Phone (45,000 words), ESP32 (20,000) and Radio (5,000) are the same files the C decoder runs on those devices. <b>Load .bin file…</b> opens any model built with <code>model/export_bin.py</code>. <b>Compare sizes</b> shows what each model makes of the same keys, with the words that differ from the selected model highlighted.</p>
+    <p>Runs entirely in this page. <b>Model</b> picks the word model: Phone (45,000 words), ESP32 / Meshtastic (20,000) and nRF52 / radio (5,000) are the same files the C decoder runs on those devices, so you can see how each would behave. <b>Load .bin file…</b> opens any model built with <code>model/export_bin.py</code>. <b>Compare sizes</b> shows what each model makes of the same keys, with the words that differ from the selected model highlighted.</p>
   </div>
 </div>
 
@@ -576,9 +576,10 @@ __DECODER__
 
   // ---- Models: three sizes are embedded; any KPD2 file can be loaded for testing ----
   const MODELS = [
-    { id: 'l', name: 'Phone', el: 'model-l' },
-    { id: 'm', name: 'ESP32', el: 'model-m' },
-    { id: 's', name: 'Radio', el: 'model-s' },
+    // name: short, for Compare sizes; device: what the menu says it stands for
+    { id: 'l', name: 'Phone', device: 'Phone / web', el: 'model-l' },
+    { id: 'm', name: 'ESP32', device: 'ESP32 / Meshtastic', el: 'model-m' },
+    { id: 's', name: 'Radio', device: 'nRF52 / radio', el: 'model-s' },
   ];
   const loaded = {};        // id -> { m, size, name }, built on first use
   // What this person has sent, per model (word ids differ between models). Kept in this
@@ -650,7 +651,7 @@ __DECODER__
     const len = $(spec.el).textContent.trim().length, size = Math.floor(len * 3 / 4);
     const head = atob($(spec.el).textContent.trim().slice(0, 16));
     const words = head.charCodeAt(8) | head.charCodeAt(9) << 8;
-    pick.append(new Option(`${spec.name} · ${Math.round(words / 1000)}k words · ${fmtSize(size)}`, spec.id));
+    pick.append(new Option(`${spec.device} · ${Math.round(words / 1000)}k words · ${fmtSize(size)}`, spec.id));
   }
   const fileOpt = new Option('Load .bin file…', 'file');
   pick.append(fileOpt);

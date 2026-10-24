@@ -4,19 +4,25 @@
 key once per letter (2 = abc, 3 = def, ...). A small word model reads the whole sentence and picks
 the letters, so `66 0 69 0 929 0 4663` becomes "On my way home".
 
+<p align="center"><img src="docs/demo.gif" alt="Typing on the OnePress keypad: each key pressed once per letter, and the words settle as the sentence goes on" width="360"></p>
+
 **[Try the demo →](https://jamesdavid.github.io/OnePress-Keyboard/)** It runs entirely in your
 browser, and a short tutorial starts on your first visit.
 
 - **Whole-sentence context.** Each new word can fix the ones before it: `4663` alone is "good",
-  after "on my way" it's "home".
-- **Small enough for microcontrollers.** One C99 file, no memory allocation, about 11 KB of code
+  after "on my way" it's "home". A finished sentence stays put once you start the next one.
+- **Small enough for microcontrollers.** One C99 file, no memory allocation, about 15 KB of code
   and 6–24 KB of RAM. The model is read straight from flash.
-- **Three model sizes** from 238 KB to 1.7 MB, for radios up to phones.
+- **Three model sizes** from 229 KB to 3.2 MB, for radios up to phones, and an optional neural
+  network for phones and the web.
 - **Learns from you.** Names, slang and call signs you spell once are guessed from their keys
-  after that, and your own word habits and punctuation get more likely.
+  after that, and your own word habits and punctuation get more likely. Recent messages count too.
+- **Capitals are automatic.** Sentence starts, names and brands (iPhone, McDonald's), the words
+  around a word ("in May" but "I may", "Will Smith"), and call signs (KE7AQA).
 - **Numbers, money and times.** Hold a number key for its digit: `# 6 # 000 # 00` gives
-  "$6,000.00", and "at 5 # 30" gives "at 5:30".
-- **Exact spelling** (multi-tap) for anything else, mixed freely with predicted words.
+  "$6,000.00", and "at 5 # 30" gives "at 5:30" (5.30 is one tap away).
+- **Exact spelling** (multi-tap) for anything else, mixed freely with predicted words. On a QWERTY
+  layout, a word it doesn't know keeps the letters you tapped.
 - **Identical decoders** in C and JavaScript, checked against each other on 11,000 inputs.
 
 ## Keys
@@ -33,17 +39,18 @@ Apostrophes are optional ("dont" gives "don't").
 
 ## Accuracy
 
-Measured on real text messages from people the model never saw (NUS SMS corpus, US/Canada
+Measured on real text messages from people the models never saw (NUS SMS corpus, US/Canada
 users, `node tests/eval.js`):
 
-| Model | Words | Size | Words right | Ambiguous words right | For |
+| Model | Size | Words right | Ambiguous words right | Punctuation right | For |
 |---|---|---|---|---|---|
-| `onepress.bin` | 45k | 1.69 MB | 93.7% | 91.5% | phones, web |
-| `onepress-m.bin` | 20k | 806 KB | 92.5% | 90.9% | ESP32, Meshtastic |
-| `onepress-s.bin` | 5k | 238 KB | 88.2% | 90.9% | radios, nRF52 |
+| `onepress.bin` + `onepress-nn.bin` | 3.2 MB + 6.3 MB | **95.1%** | 93.5% | 50.6% | phones, web |
+| `onepress.bin` (45k words) | 3.2 MB | 94.1% | 92.1% | 49.8% | phones, web |
+| `onepress-m.bin` (20k words) | 1.0 MB | 92.8% | 91.2% | 47.2% | ESP32, Meshtastic |
+| `onepress-s.bin` (5k words) | 229 KB | 88.3% | 91.2% | 46.7% | radios, nRF52 |
 
-With learning, replaying each person's messages in order (`node tests/learn_eval.js`): words go
-from 90.0% to 93.0%, and punctuation from 57.5% to 65.5%.
+With learning, replaying each person's messages in order (`node tests/learn_eval.js`, all 84 test
+users): words go from 90.2% to 93.1%, and punctuation from 58.6% to 66.8%.
 
 ## Use it in your project
 
@@ -70,17 +77,23 @@ render(m, r, r.hyps[0]).map(p => p.text).join('');   // "On my way home"
 ```
 
 **[llm.txt](llm.txt)** is a step-by-step integration guide for iOS keyboard extensions, Android
-input methods, the web, ESP32 (Meshtastic) and other microcontrollers. It's written so you can
-hand it to a coding assistant.
+input methods, the web, ESP32 (Meshtastic) and other microcontrollers: context from the text
+before the cursor, learning, QWERTY layouts and the neural model. It's written so you can hand it
+to a coding assistant.
 
 ## How it works
 
 A key string such as `66069092904663` is split into words. Each word's keys match a handful of
 dictionary words (`4663`: good, home, gone, hood, ...). A beam search over the sentence scores
-each choice with word-pair probabilities (a bigram model with backoff), so every word is chosen
-in the context of its neighbours. Punctuation is chosen the same way, with a few rules about
-questions. The model is a single binary file (KPD2) with sorted key indexes, so lookups are
-binary searches straight from flash. See [SPEC.md](SPEC.md) for the details.
+each choice with word-pair and word-triple probabilities, so every word is chosen in the context
+of its neighbours. Punctuation is chosen the same way, with a few rules about questions. The
+model is a single binary file (KPD2) with sorted key indexes, so lookups are binary searches
+straight from flash.
+
+On phones and the web, a small recurrent neural network (KPN1, 8-bit integer weights) can also
+score every candidate given everything typed before it. It runs inside the same search, in integer
+arithmetic, so the C and JavaScript decoders still agree exactly. See [SPEC.md](SPEC.md) for the
+details.
 
 ## Repository
 
@@ -89,11 +102,12 @@ binary searches straight from flash. See [SPEC.md](SPEC.md) for the details.
 | `c/` | C99 decoder (`onepress.h`, `onepress.c`) and a command-line test driver |
 | `web/decoder.js` | JavaScript decoder (the reference) |
 | `web/page.template.html` | Demo page source; `web/keypad.html` is the built page |
-| `model/` | Model build pipeline and the three `.bin` models |
-| `tests/` | Accuracy, learning and C/JS parity tests |
+| `model/` | Model build pipeline, the three `.bin` word models and the neural model |
+| `tests/` | Accuracy, learning, layout and C/JS parity tests |
 | `python/` | An experimental version that uses a large language model |
 | `SPEC.md` | Full specification |
 | `llm.txt` | Integration guide |
+| `DATA.md` | Where the training data comes from, and its terms |
 
 ## Build and test
 
@@ -101,18 +115,14 @@ binary searches straight from flash. See [SPEC.md](SPEC.md) for the details.
 gcc -std=c99 -O2 -Wall -Wextra -o build/opdecode c/onepress.c c/opdecode.c
 node tests/parity.js              # C and JS give identical output
 node tests/parity.js --learn      # ... while learning
+node tests/parity.js --nn model/onepress-nn.bin   # ... with the neural model
 node tests/eval.js                # held-out accuracy (needs the corpora: model/fetch_corpora.sh)
-cd model && ./build.sh            # rebuild the models and the demo page (pip install wordfreq)
+cd model && ./build.sh            # rebuild the word models and the demo page (pip install wordfreq)
 ```
-
-## Data
-
-The vocabulary and word frequencies come from [wordfreq](https://github.com/rspeer/wordfreq). Word
-pairs are counted from NLTK corpora (Brown, webtext, Gutenberg, movie reviews, names), the
-[NUS SMS Corpus](https://github.com/kite1988/nus-sms-corpus) (Tao Chen and Min-Yen Kan, 2013) and a
-small set of hand-written everyday messages. The corpora are downloaded by
-`model/fetch_corpora.sh` and are not stored in this repository; each has its own terms of use.
 
 ## License
 
-No license has been chosen yet.
+The code is [MIT](LICENSE). The model files are
+[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/), because their word frequencies come
+from [wordfreq](https://github.com/rspeer/wordfreq); you can use them in any app, with credit.
+[DATA.md](DATA.md) lists every source, its terms, and the attribution to include.
