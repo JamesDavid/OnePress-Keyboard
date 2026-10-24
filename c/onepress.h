@@ -12,7 +12,8 @@
  *
  * Key strings use the same characters as decoder.js: '2'-'9' predictive letters, '0'
  * space, '#' punctuation (an apostrophe between letters), and from exact mode the literal
- * characters 'a'-'z', '\'', '.', ',', '?', '!' and 'A'-'J' for the digits 0-9.
+ * characters 'a'-'z', '\'', '.', ',', '?', '!' and 'A'-'J' for the digits 0-9 (exact mode or
+ * a held number key). Digits form numbers: #6#000#00 renders "$6,000.00".
  *
  * Memory: sizeof(op_decoder) is about 20 KB with the defaults below. Small targets can
  * lower the limits, e.g. -DOP_MAX_BEAM=4 -DOP_MAX_SLOTS=48 -DOP_MAX_KEYS=160 for ~5 KB.
@@ -42,7 +43,7 @@
 enum { OP_OK = 0, OP_ERR_MODEL = -1, OP_ERR_TOO_LONG = -2, OP_ERR_SPACE = -3, OP_ERR_ARG = -4 };
 
 /* What each slot was decoded as. */
-enum { OP_WORD, OP_PARTIAL, OP_PUNCT, OP_LITERAL, OP_UNKNOWN };
+enum { OP_WORD, OP_PARTIAL, OP_PUNCT, OP_LITERAL, OP_UNKNOWN, OP_NUMBER };
 
 enum { OP_P_QQ, OP_P_QN, OP_P_DQ, OP_P_CF, OP_P_DB, OP_P_CB, OP_P_EB,
        OP_P_APOSTROPHE, OP_P_COMPLETION, OP_P_LITERAL, OP_P_UNKNOWN, OP_N_PARAMS };
@@ -84,7 +85,7 @@ typedef struct {
 } op_tok;
 
 typedef struct {
-    uint16_t id;        /* token id, or OP_NONE for OP_LITERAL / OP_UNKNOWN */
+    uint16_t id;        /* token id, or OP_NONE for OP_LITERAL / OP_UNKNOWN / OP_NUMBER */
     uint8_t kind;       /* OP_WORD, OP_PARTIAL, ... */
 } op_choice;
 

@@ -50,12 +50,16 @@ Apostrophes are optional: `3668` also yields "don't". A stripped-apostrophe matc
 All input is stored as one string; the decoder re-tokenizes it on every change. Characters:
 
 - `2`–`9`, `0`, `#` — predictive presses as above.
-- From exact mode: literal `a`–`z`, `'`, `.`, `,`, `?`, `!`, and `A`–`J` for the digits 0–9.
+- From exact mode or a held number key: literal `a`–`z`, `'`, `.`, `,`, `?`, `!`, and `A`–`J` for the digits 0–9.
 
 Tokenizer rules (`tokenize` in decoder.js):
-- Word characters: `2`–`9`, `a`–`z`, `'`, `A`–`J`. Consecutive word characters form one word token with `keys` (the keypad digits) and `lit[]` (the exact character per position, or null).
+- Letter characters: `2`–`9`, `a`–`z`, `'`. Consecutive letter characters form one word token with `keys` (the keypad digits) and `lit[]` (the exact character per position, or null).
 - `0` → space token. Literal `. , ? !` → punctuation token with a fixed value.
-- Predictive `#` → apostrophe if the previous token is a word and the next character is a word character, else a punctuation token.
+- Predictive `#` → apostrophe if the previous token is a word and the next character is a letter character, else a punctuation token.
+- Digits (`A`–`J`) end a word and start a **number** token, so "4" + `3837` is "4ever" and the letters are decoded on their own. A number continues through more digits and through `#`, `.` or `,` followed by a digit. A predictive `#` right before a number (at the start, after a space or after punctuation) is `$`.
+- A predictive separator `#` inside a number becomes `,` when the groups read as thousands (first group 1–3 digits, then groups of 3, optionally a last group of another length), else `.`: `#6#000#00` → "$6,000.00", `1#500` → "1,500", `3#14` → "3.14", `192#168#1#1` → "192.168.1.1". Literal `.` and `,` stay as typed.
+- Digits stay inside a word when they follow an exactly spelled letter, and pure digits followed by an exactly spelled letter become one word, so call signs typed in exact mode work: `ke7aqa`, `2e0abc`, "90's".
+- A number has one candidate and scores 0; the next word is scored as after an unknown word (unigram).
 
 ### Exact (multi-tap) mode
 

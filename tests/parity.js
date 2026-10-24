@@ -2,7 +2,7 @@
 //   node tests/parity.js [path/to/opdecode] [--beam N] [--fuzz N] [--model onepress.bin]
 // Inputs: every held-out NUS message (if model/corpora/nus exists), the regression sentences,
 // and random key strings that mix predictive keys with exact-mode letters, apostrophes,
-// digits and punctuation.
+// digits (numbers, call signs) and punctuation.
 const fs = require('fs'), path = require('path'), { execFileSync } = require('child_process');
 const D = require(path.join(__dirname, '../web/decoder.js'));
 
@@ -43,7 +43,8 @@ for (let i = 0; i < nFuzz; i++) {
     } else if (r === 7) {
       for (let j = 1 + rnd(5); j > 0; j--) k += pick("abcdefghijklmnopqrstuvwxyz'"); // spelled exactly
     } else if (r === 8) {
-      k += pick(['#', '.', ',', '?', '!', '##', 'A', 'BC', '2A3', '#0#']);
+      k += pick(['#', '.', ',', '?', '!', '##', 'A', 'BC', '2A3', '#0#', '#G#AAA#AA', 'BJC#BGI#B#B',
+        'D.BE', 'B,FAA', 'E3837', 'keHaqa', 'CeAabc', "JA's", '#B#', 'F##B', 'G#', '53H252']);
     } else {
       k += pick('23456789') + pick(['', 'a', '#', "'"]) + pick('23456789');
     }

@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { TOK_WORD, TOK_PUNCT, TOK_SPACE };
+enum { TOK_WORD, TOK_PUNCT, TOK_SPACE, TOK_NUM };
 enum { N_SECTIONS = 15 };
 
 static const char KEY_OF[26] = "22233344455566677778889999";
@@ -140,9 +140,10 @@ static int same_letters(const char *a, int an, const char *b, int bn) {
 
 /* ---- tokenizer ---- */
 
-static int is_word_char(char ch) {
-    return (ch >= '2' && ch <= '9') || (ch >= 'a' && ch <= 'z') || ch == '\'' || (ch >= 'A' && ch <= 'J');
+static int is_letter_key(char ch) {     /* a press that can be part of a word's letters */
+    return (ch >= '2' && ch <= '9') || (ch >= 'a' && ch <= 'z') || ch == '\'';
 }
+static int is_digit_lit(char ch) { return ch >= 'A' && ch <= 'J'; }
 static char key_of(char ch) {
     if (ch >= 'a' && ch <= 'z') return KEY_OF[ch - 'a'];
     if (ch == '\'') return '#';
@@ -150,29 +151,64 @@ static char key_of(char ch) {
 }
 static char lit_of(char ch) {
     if ((ch >= 'a' && ch <= 'z') || ch == '\'') return ch;
-    if (ch >= 'A' && ch <= 'J') return (char)('0' + (ch - 'A'));
+    if (is_digit_lit(ch)) return (char)('0' + (ch - 'A'));
     return 0;
 }
 
+/* Digits end a word and run on as a number through more digits and through '#', '.' or ','
+ * between digits; a '#' just before a number is '$'. Digits next to exactly spelled letters
+ * stay in the word (call signs). A number's span of keys[] holds '$', '0'-'9', '.', ',' and
+ * 's' for a separator format_number chooses. See decoder.js tokenize. */
 static int tokenize(op_decoder *d, const char *keys) {
     int n = (int)strlen(keys), nk = 0;
     if (n > OP_MAX_KEYS) return OP_ERR_TOO_LONG;
     d->n_toks = 0;
     for (int i = 0; i < n; i++) {
-        char ch = keys[i];
+        char ch = keys[i], nxt = i + 1 < n ? keys[i + 1] : 0;
         op_tok *last = d->n_toks ? &d->toks[d->n_toks - 1] : NULL;
         op_tok *t = &d->toks[d->n_toks];
         if (ch == '0') {
             t->type = TOK_SPACE; d->n_toks++;
+        } else if ((ch == '#' || ch == '.' || ch == ',') && last && last->type == TOK_NUM &&
+                   d->keys[nk - 1] >= '0' && d->keys[nk - 1] <= '9' && is_digit_lit(nxt)) {
+            d->keys[nk] = ch == '#' ? 's' : ch; d->lits[nk++] = 0; last->len++;
         } else if (ch == '#') {
-            if (last && last->type == TOK_WORD && i + 1 < n && is_word_char(keys[i + 1])) {
+            if (last && last->type == TOK_WORD && is_letter_key(nxt)) {
                 d->keys[nk] = '#'; d->lits[nk++] = 0; last->len++;
             } else {
                 t->type = TOK_PUNCT; t->lit = 0; d->n_toks++;
             }
         } else if (ch == '.' || ch == ',' || ch == '?' || ch == '!') {
             t->type = TOK_PUNCT; t->lit = ch; d->n_toks++;
-        } else if (is_word_char(ch)) {
+        } else if (is_digit_lit(ch)) {
+            char dg = lit_of(ch);
+            const op_tok *before = d->n_toks >= 2 ? &d->toks[d->n_toks - 2] : NULL;
+            if (last && last->type == TOK_NUM) {
+                d->keys[nk] = dg; d->lits[nk++] = 0; last->len++;
+            } else if (last && last->type == TOK_WORD && d->lits[nk - 1]) {
+                d->keys[nk] = ch; d->lits[nk++] = dg; last->len++;
+            } else {
+                if (last && last->type == TOK_PUNCT && !last->lit && keys[i - 1] == '#' &&
+                    !(before && (before->type == TOK_WORD || before->type == TOK_NUM))) {
+                    t = last;               /* the '#' becomes the number's '$' */
+                    t->len = 1;
+                    d->keys[nk] = '$'; d->lits[nk++] = 0;
+                } else {
+                    t->len = 0; d->n_toks++;
+                }
+                t->type = TOK_NUM; t->off = (uint16_t)(nk - t->len);
+                d->keys[nk] = dg; d->lits[nk++] = 0; t->len++;
+            }
+        } else if (is_letter_key(ch)) {
+            if (last && last->type == TOK_NUM && lit_of(ch)) {
+                /* Digits followed by an exactly spelled letter are one word (2e0abc, 90's). */
+                int pure = 1;
+                for (int k = last->off; k < nk; k++) if (d->keys[k] < '0' || d->keys[k] > '9') pure = 0;
+                if (pure) {
+                    last->type = TOK_WORD;
+                    for (int k = last->off; k < nk; k++) { d->lits[k] = d->keys[k]; d->keys[k] = (char)('A' + (d->keys[k] - '0')); }
+                }
+            }
             if (!(last && last->type == TOK_WORD)) {
                 t->type = TOK_WORD; t->off = (uint16_t)nk; t->len = 0; d->n_toks++;
                 last = t;
@@ -181,6 +217,32 @@ static int tokenize(op_decoder *d, const char *keys) {
         }
     }
     return OP_OK;
+}
+
+/* Write a number's text (see decoder.js formatNumber): each 's' is ',' when the groups read
+ * as thousands, else '.'. Returns its length, or OP_ERR_SPACE. */
+static int format_number(const char *k, int kn, char *out, int cap) {
+    int commas = 1, group = 0, glen = 0, n = 0;
+    for (int i = 0; i < kn; i++) {
+        char c = k[i];
+        if (c >= '0' && c <= '9') glen++;
+        else if (c != '$') {
+            if (group == 0 ? glen > 3 : glen != 3) commas = 0;
+            group++; glen = 0;
+        }
+    }
+    if (group == 0 && glen > 3) commas = 0;
+    for (int i = 0; i < kn; i++) {
+        char c = k[i];
+        if (c == 's') {
+            int next = 0;
+            for (int j = i + 1; j < kn && k[j] >= '0' && k[j] <= '9'; j++) next++;
+            c = commas && next == 3 ? ',' : '.';
+        }
+        if (n + 1 >= cap) return OP_ERR_SPACE;
+        out[n++] = c;
+    }
+    return n;
 }
 
 /* ---- candidates ---- */
@@ -193,6 +255,7 @@ static int punct_index(const op_model *m, char ch) {
 }
 
 static int slot_cands(const op_decoder *d, const op_model *m, const op_tok *t, int is_last, cand *out) {
+    if (t->type == TOK_NUM) { out[0] = (cand){ OP_NONE, OP_NUMBER, 0 }; return 1; }
     if (t->type == TOK_PUNCT) {
         if (t->lit) { out[0] = (cand){ (uint16_t)(m->n_words + punct_index(m, t->lit)), OP_PUNCT, 0 }; return 1; }
         for (int i = 0; i < m->n_punct; i++) out[i] = (cand){ (uint16_t)(m->n_words + i), OP_PUNCT, 0 };
@@ -316,7 +379,7 @@ int op_decode(op_decoder *d, const op_model *m, const char *keys, int beam,
                 uint8_t f = first[h], g = cf[h];
                 int32_t step;
                 if (id == OP_NONE) {
-                    step = c[ci].kind == OP_LITERAL ? P[OP_P_LITERAL] : P[OP_P_UNKNOWN];
+                    step = c[ci].kind == OP_NUMBER ? 0 : c[ci].kind == OP_LITERAL ? P[OP_P_LITERAL] : P[OP_P_UNKNOWN];
                     p = OP_NONE;
                 } else {
                     step = lp(m, prev[h], id) + c[ci].pen;
@@ -412,6 +475,13 @@ int op_render(const op_decoder *d, const op_model *m, const op_start *start, cha
             if (n + 1 >= cap) return OP_ERR_SPACE;
             out[n++] = m->punct[ch.id - m->n_words];
             cap_next = out[n - 1] != ',';
+            continue;
+        }
+        if (t->type == TOK_NUM) {
+            int len = format_number(d->keys + t->off, t->len, out + n, cap - n);
+            if (len < 0) return len;
+            n += len;
+            cap_next = 0;
             continue;
         }
         int s = n, len;

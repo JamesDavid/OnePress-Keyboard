@@ -92,12 +92,13 @@ function prefixCandidates(m, prefix, limit, pred) {
 }
 
 // The key string holds predictive presses ('2'-'9', '0' space, '#') and, from exact
-// (multi-tap) mode, literal characters: 'a'-'z', "'", '.', ',', '?', '!',
-// and 'A'-'J' for the digits 0-9.
+// (multi-tap) mode or a held number key, literal characters: 'a'-'z', "'", '.', ',', '?',
+// '!', and 'A'-'J' for the digits 0-9.
 const LIT_PUNCT = new Set(['.', ',', '?', '!']);
-function isWordChar(ch) {
-  return (ch >= '2' && ch <= '9') || (ch >= 'a' && ch <= 'z') || ch === "'" || (ch >= 'A' && ch <= 'J');
+function isLetterKey(ch) {          // a press that can be part of a word's letters
+  return (ch >= '2' && ch <= '9') || (ch >= 'a' && ch <= 'z') || ch === "'";
 }
+function isDigitLit(ch) { return ch >= 'A' && ch <= 'J'; }
 function keyOf(ch) {               // the keypad key a stored character stands for
   if (ch >= 'a' && ch <= 'z') return KEYMAP[ch];
   if (ch === "'") return '#';
@@ -105,29 +106,66 @@ function keyOf(ch) {               // the keypad key a stored character stands f
 }
 function litOf(ch) {               // the exact character, or null for a predictive press
   if ((ch >= 'a' && ch <= 'z') || ch === "'") return ch;
-  if (ch >= 'A' && ch <= 'J') return String(ch.charCodeAt(0) - 65);
+  if (isDigitLit(ch)) return String(ch.charCodeAt(0) - 65);
   return null;
 }
 
-// Split the key string into tokens: {type:'word', keys, lit[]}, {type:'punct', lit?}, {type:'space'}
+// Split the key string into tokens: {type:'word', keys, lit[]}, {type:'punct', lit?},
+// {type:'space'}, {type:'number', keys}.
+// Digits end a word: "4" + 3837 is "4" then "ever". A number runs on through further digits
+// and through '#', '.' or ',' between digits; a '#' just before a number is '$', so
+// #6#000#00 is "$6,000.00" (see formatNumber). Digits next to exactly spelled letters stay in
+// the word, for call signs like ke7aqa.
 function tokenize(keys) {
-  // A predictive '#' between two word characters is an apostrophe; otherwise punctuation.
   const toks = [];
   for (let i = 0; i < keys.length; i++) {
-    const ch = keys[i];
+    const ch = keys[i], nxt = keys[i + 1] || '';
     const last = toks[toks.length - 1];
     if (ch === '0') toks.push({ type: 'space' });
-    else if (ch === '#') {
-      if (last && last.type === 'word' && isWordChar(keys[i + 1] || '')) { last.keys += '#'; last.lit.push(null); }
+    else if ((ch === '#' || ch === '.' || ch === ',') && last && last.type === 'number' &&
+             /[0-9]$/.test(last.keys) && isDigitLit(nxt)) {
+      last.keys += ch === '#' ? 's' : ch;       // 's': a separator for formatNumber to choose
+    } else if (ch === '#') {
+      // A predictive '#' between two letters is an apostrophe; otherwise punctuation.
+      if (last && last.type === 'word' && isLetterKey(nxt)) { last.keys += '#'; last.lit.push(null); }
       else toks.push({ type: 'punct' });
     } else if (LIT_PUNCT.has(ch)) {
       toks.push({ type: 'punct', lit: ch });
-    } else if (isWordChar(ch)) {
-      if (last && last.type === 'word') { last.keys += keyOf(ch); last.lit.push(litOf(ch)); }
+    } else if (isDigitLit(ch)) {
+      const d = litOf(ch), before = toks[toks.length - 2];
+      if (last && last.type === 'number') last.keys += d;
+      else if (last && last.type === 'word' && last.lit[last.lit.length - 1] !== null) { last.keys += ch; last.lit.push(d); }
+      else if (last && last.type === 'punct' && !last.lit && keys[i - 1] === '#' &&
+               !(before && (before.type === 'word' || before.type === 'number'))) {
+        toks[toks.length - 1] = { type: 'number', keys: '$' + d };
+      } else toks.push({ type: 'number', keys: d });
+    } else if (isLetterKey(ch)) {
+      if (last && last.type === 'number' && litOf(ch) !== null && /^[0-9]+$/.test(last.keys)) {
+        // Digits followed by an exactly spelled letter are one word (2e0abc, 90's).
+        toks[toks.length - 1] = { type: 'word', keys: [...last.keys].map(c => String.fromCharCode(65 + +c)).join(''),
+          lit: [...last.keys] };
+      }
+      const cur = toks[toks.length - 1];
+      if (cur && cur.type === 'word') { cur.keys += keyOf(ch); cur.lit.push(litOf(ch)); }
       else toks.push({ type: 'word', keys: keyOf(ch), lit: [litOf(ch)] });
     }
   }
   return toks;
+}
+
+// A number's text. Each 's' separator becomes ',' when the groups read as thousands (a first
+// group of 1-3 digits, then groups of 3, with an optional last group of another length after
+// a '.'), otherwise '.': 6s000s00 -> 6,000.00, 1s500 -> 1,500, 3s14 -> 3.14, 10s0s0s1 -> 10.0.0.1.
+function formatNumber(keys) {
+  const g = keys.replace('$', '').split(/[s.,]/).map(x => x.length);
+  let commas = g[0] <= 3;
+  for (let k = 1; k < g.length - 1; k++) if (g[k] !== 3) commas = false;
+  let out = '', k = 0;
+  for (const ch of keys) {
+    if (ch === 's') { k++; out += commas && g[k] === 3 ? ',' : '.'; }
+    else { if (ch === '.' || ch === ',') k++; out += ch; }
+  }
+  return out;
 }
 
 // Does dictionary word `id` (matched through key string `key`) agree with the exact letters?
@@ -142,6 +180,7 @@ function litMatch(m, tok, id, key) {
 // Candidates for each slot: [{text, id, partial, penalty}]
 function slotCandidates(m, tok, isLast) {
   const P = m.params;
+  if (tok.type === 'number') return [{ text: formatNumber(tok.keys), id: -1, number: true }];
   if (tok.type === 'punct') {
     if (tok.lit) return [{ text: tok.lit, id: m.n + m.punct.indexOf(tok.lit), exact: true }];
     return m.punct.map((p, i) => ({ text: p, id: m.n + i }));
@@ -203,7 +242,7 @@ function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
     for (const h of beam) {
       for (let ci = 0; ci < s.cands.length; ci++) {
         const c = s.cands[ci];
-        let step = c.id < 0 ? (c.literal ? P.literal : P.unknown) : lp(m, h.prev, c.id) + (c.penalty || 0);
+        let step = c.id < 0 ? (c.number ? 0 : c.literal ? P.literal : P.unknown) : lp(m, h.prev, c.id) + (c.penalty || 0);
         let prev = c.id < 0 ? -1 : c.id;
         let first = h.first, cf = h.cf;
         if (c.id >= m.n) {
@@ -255,7 +294,9 @@ function render(m, result, hyp, start = {}) {
     const j = bySlotTok.get(i);
     const c = slots[j].cands[hyp.path[j]];
     let text = c.text;
-    if (t.type === 'word') {
+    if (t.type === 'number') {
+      capNext = false;
+    } else if (t.type === 'word') {
       const shown = c.id >= 0 && m.display[c.id];
       if (shown) text = c.partial ? shown.slice(0, text.length) : shown;
       if (text === 'i' || text.startsWith("i'")) text = 'I' + text.slice(1);
@@ -326,4 +367,4 @@ function nextLetterProbs(m, result, hyp, start = {}) {
   return sum > 0 ? p : null;
 }
 
-if (typeof module !== 'undefined') module.exports = { buildModel, decode, render, nextLetterProbs, exactMatches, wordKeys, tokenize };
+if (typeof module !== 'undefined') module.exports = { buildModel, decode, render, nextLetterProbs, exactMatches, wordKeys, tokenize, formatNumber };
