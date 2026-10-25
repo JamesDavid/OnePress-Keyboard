@@ -25,7 +25,7 @@ for tag, f in [("L", "onepress.bin"), ("M", "onepress-m.bin"), ("S", "onepress-s
 # Other languages, fetched when picked: a menu group each, in the three sizes that exist.
 LANGS = [("es", "Español"), ("de", "Deutsch"), ("pt", "Português"), ("fr", "Français"), ("it", "Italiano"),
          ("nl", "Nederlands"), ("sv", "Svenska"), ("pl", "Polski"), ("cs", "Čeština"), ("tr", "Türkçe"),
-         ("ru", "Русский"), ("el", "Ελληνικά")]
+         ("ru", "Русский"), ("el", "Ελληνικά"), ("ar", "العربية")]
 SIZES = [("", "Phone / web"), ("-m", "ESP32"), ("-s", "Radio")]
 scripts, menu = [], []
 for code, name in LANGS:

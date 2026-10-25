@@ -30,7 +30,7 @@ curl -sSfL -o corpora/chat/tc_valid_rare.json "https://raw.githubusercontent.com
 "${PYTHON:-$(command -v python || command -v python3)}" prep_chat.py corpora/chat
 echo "corpora ready in model/corpora"
 # Other languages (onepress-<lang>.bin, build_langs.sh): Tatoeba sentences, CC BY 2.0 FR
-for l in spa:es deu:de por:pt fra:fr ita:it nld:nl swe:sv pol:pl ces:cs tur:tr rus:ru ell:el; do
+for l in spa:es deu:de por:pt fra:fr ita:it nld:nl swe:sv pol:pl ces:cs tur:tr rus:ru ell:el ara:ar; do
   t=${l%%:*}; c=${l##*:}
   mkdir -p corpora/$c
   curl -sSfL -o corpora/$c/${t}_sentences.tsv.bz2 "https://downloads.tatoeba.org/exports/per_language/$t/${t}_sentences.tsv.bz2"

@@ -8,7 +8,8 @@ inverted ¿ ¡ are dropped: the decoder adds them), and splits them by sentence 
 test.txt, 1 in 20 to dev.txt, the rest to train.txt (cased, for word pairs and capitalization).
 œ and æ become oe and ae, as people often type them; a hyphen between letters is kept before
 the language's hyphen words (langdata.py: French est-ce, Portuguese dá-me) and otherwise becomes
-a space (the keypad has no hyphen key).
+a space (the keypad has no hyphen key). Arabic loses its short vowel marks and tatweel, and its
+؟ ، ؛ become ? , ,.
 """
 import bz2, hashlib, os, re, sys
 from langdata import HYPHENS
@@ -28,6 +29,9 @@ def clean(t):
         return None                                    # a hyphen not between letters
     if re.search("[\u0370-\u03ff]", t):                 # Greek: ; is the question mark, · a semicolon
         t = t.replace(";", "?").replace("\u0387", ",").replace("\u00b7", ",")
+    if re.search("[\u0600-\u06ff]", t):                 # Arabic: its own ? , ; and the short vowel marks
+        t = t.replace("\u061f", "?").replace("\u060c", ",").replace("\u061b", ",")   # and tatweel, which
+        t = re.sub("[\u0640\u064b-\u065f\u0670]", "", t)        # texts leave out (the decoder shows \u061f \u060c)
     t = t.replace("\u00a0", " ").replace("\u202f", " ")         # French spaces before ? ! :
     t = re.sub(r"\s+", " ", t).strip()
     if BAD.search(t):

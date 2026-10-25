@@ -237,7 +237,7 @@ body { padding-block: clamp(8px, 2.2dvh, 20px) clamp(10px, 3dvh, 28px); }
   <div class="learned"><span id="learned"></span><button type="button" id="forget">Forget</button></div>
 
   <section class="lcd" aria-label="Decoded text">
-    <div class="out" id="out" aria-live="polite"></div>
+    <div class="out" id="out" dir="auto" aria-live="polite"></div>
     <div class="keys-line"><span id="keysShown"></span><span id="exampleTag"></span></div>
   </section>
 
@@ -268,7 +268,7 @@ body { padding-block: clamp(8px, 2.2dvh, 20px) clamp(10px, 3dvh, 28px); }
     <p>Tap any word to see other words with the same keys. Picking one locks it, and the rest of the sentence re-decodes around it.</p>
     <p>The QWERTY keyboard sends only each letter's keypad number (shown in the corner), so the model decodes it exactly as if you'd used the keypad. When no word fits, it keeps the letters you tapped. Keys grow and shrink in place with how likely each letter is to come next. A computer keyboard works the same way, and Tab finishes the word.</p>
     <p><b>Neural</b> (Phone model) adds a small neural network that reads everything typed before each word, not just the last two words. It's downloaded once next to the page and runs here too.</p>
-    <p>Runs entirely in this page. <b>Model</b> picks the word model: Phone (45,000 words), ESP32 / Meshtastic (29,000) and nRF52 / radio (5,000) are the same files the C decoder runs on those devices, so you can see how each would behave. The other languages (Español, Deutsch, Português, Français, Italiano, Nederlands, Svenska, Polski, Čeština, Türkçe, Русский, Ελληνικά), each in the same three sizes, download when first picked: accents come out on their own (type the plain letter's key: á on 2, ł on 5), Greek and Russian use their usual phone keypads (Russian 2 абвг, Greek 2 αβγ), German nouns are capitalized, Spanish questions open with ¿, and in French and Italian <b>#</b> between letters makes the apostrophe of l'homme or dov'è. <b>Load .bin file…</b> opens any model built with <code>model/export_bin.py</code>. <b>Compare sizes</b> shows what each model makes of the same keys, with the words that differ from the selected model highlighted.</p>
+    <p>Runs entirely in this page. <b>Model</b> picks the word model: Phone (45,000 words), ESP32 / Meshtastic (29,000) and nRF52 / radio (5,000) are the same files the C decoder runs on those devices, so you can see how each would behave. The other languages (Español, Deutsch, Português, Français, Italiano, Nederlands, Svenska, Polski, Čeština, Türkçe, Русский, Ελληνικά, العربية), each in the same three sizes, download when first picked: accents come out on their own (type the plain letter's key: á on 2, ł on 5), Greek, Russian and Arabic use their usual phone keypads (Russian 2 абвг, Greek 2 αβγ, Arabic 2 بتث) and Arabic is shown right to left with ؟ and ،, German nouns are capitalized, Spanish questions open with ¿, and in French and Italian <b>#</b> between letters makes the apostrophe of l'homme or dov'è. <b>Load .bin file…</b> opens any model built with <code>model/export_bin.py</code>. <b>Compare sizes</b> shows what each model makes of the same keys, with the words that differ from the selected model highlighted.</p>
   </div>
 </div>
 
@@ -312,6 +312,9 @@ body { padding-block: clamp(8px, 2.2dvh, 20px) clamp(10px, 3dvh, 28px); }
 <script type="application/octet-stream" id="model-el" data-file="onepress-el.bin" data-size="1487156" data-words="45000"></script>
 <script type="application/octet-stream" id="model-el-m" data-file="onepress-el-m.bin" data-size="638796" data-words="20000"></script>
 <script type="application/octet-stream" id="model-el-s" data-file="onepress-el-s.bin" data-size="153332" data-words="5000"></script>
+<script type="application/octet-stream" id="model-ar" data-file="onepress-ar.bin" data-size="1668152" data-words="45000"></script>
+<script type="application/octet-stream" id="model-ar-m" data-file="onepress-ar-m.bin" data-size="626336" data-words="20000"></script>
+<script type="application/octet-stream" id="model-ar-s" data-file="onepress-ar-s.bin" data-size="146040" data-words="5000"></script>
 <script>
 // Keypad decoder: word unigram + bigram model, beam search over word slots.
 // Reads the KPD2 binary model (model/export_bin.py). Scores are integers (1/scale nats), so
@@ -339,6 +342,11 @@ const CHARTABLE = [   // [first code point, keys, plain Latin letters, capital, 
    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,-32,-32,-32,-32,-32,-32,-32,-32,-32,-32,-32,-32,-32,-32,-32,-32,-32,-32,-32,-32,-32,-32,-32,-32,-32,-32,-32,-32,-32,-32,-32,-32,-80,-80,0,-80,-80,0,-80,-80,0,0,0,0,-80,-80,-80,0],
    [80,80,0,80,80,0,80,80,0,0,0,0,80,80,80,0,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
    [21,20,0,16,0,0,0,-1,0,0,0,0,14,11,21,0,0,0,0,0,0,0,0,0,0,-1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,-1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,-27,-28,0,-32,0,0,0,-1,0,0,0,0,-34,-37,-27,0]],
+  [0x0620, '0333333322226665555444499990000008888877777',
+   '0000000000000000000000000000000000000000000',
+   [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+   [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+   [0,0,5,4,0,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0]],
 ];
 // CHARTABLE generated by model/chartable.py: end
 function charInfo(c) {
@@ -368,8 +376,8 @@ const PARAMS = ['qQ', 'qN', 'dQ', 'cF', 'dB', 'cB', 'eB', 'apostrophe', 'complet
   'slipSub', 'slipDup', 'flags'];    // optional: older files stop at 'unknown' (defaults below)
 // params.flags: FLAG_I capitalizes "i" (English), FLAG_INVERTED opens a question or exclamation
 // with ¿ / ¡ (Spanish), FLAG_GREEK_Q shows the question mark as ; (Greek), FLAG_FR_SPACE puts a
-// narrow no-break space before ? ! : (French).
-const FLAG_I = 1, FLAG_INVERTED = 2, FLAG_GREEK_Q = 4, FLAG_FR_SPACE = 8;
+// narrow no-break space before ? ! : (French), FLAG_ARABIC shows ? and , as ؟ and ، (Arabic).
+const FLAG_I = 1, FLAG_INVERTED = 2, FLAG_GREEK_Q = 4, FLAG_FR_SPACE = 8, FLAG_ARABIC = 16;
 const MAX_EXACT = 40, MAX_COMPLETIONS = 12;
 const AFTER_NUMBER = -2;           // beam state after a number (the model has no number token)
 const AFTER_DECIMAL = -3;          // after a number that could have been a time but was read as 5.30
@@ -1069,7 +1077,8 @@ function beforeTokens(s) {
   let w = '', bytes = 0;
   const flush = () => { if (w) out.push(bytes > 72 ? '\0' : w); w = ''; bytes = 0; };
   for (const c0 of s) {
-    const c = c0 === '\u2018' || c0 === '\u2019' ? "'" : c0, x = c.charCodeAt(0);
+    const c = c0 === '\u2018' || c0 === '\u2019' ? "'" : c0 === '\u061f' ? '?' : c0 === '\u060c' ? ',' : c0,
+      x = c.charCodeAt(0);                         // Arabic ؟ ، are ? ,
     let low = null;
     if ((x >= 97 && x <= 122) || (x >= 48 && x <= 57) || c === "'") low = c;
     else if (x >= 65 && x <= 90) low = String.fromCharCode(x + 32);
@@ -1312,6 +1321,7 @@ function render(m, result, hyp, start = {}) {
       prev = c.id < 0 ? -1 : c.text === ',' ? c.id : m.bos;
       if (text === '?' && (m.params.flags & FLAG_GREEK_Q)) text = ';';
       if ((m.params.flags & FLAG_FR_SPACE) && /^[?!:]$/.test(text)) text = '\u202f' + text;
+      if (m.params.flags & FLAG_ARABIC) text = text === '?' ? '\u061f' : text === ',' ? '\u060c' : text;
     }
     pieces.push({ text, slot: j, partial, unknown: c.unknown });
   });
@@ -1532,11 +1542,12 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
     tr: ["Bu akşam yemeğe geliyor musun?", "Eve doğru yoldayım.", "Nerede buluşuyoruz?", "Nasılsın?", "Yarın görüşürüz."],
     ru: ["Я уже еду домой.", "Где находится вокзал?", "Что ты делаешь сегодня вечером?", "Как дела?", "Увидимся завтра."],
     el: ["Είμαι στο δρόμο για το σπίτι.", "Πού είναι ο σταθμός;", "Τι κάνεις απόψε;", "Πώς είσαι;", "Τα λέμε αύριο."],
+    ar: ["أنا في الطريق إلى البيت.", "أين أنت؟", "ماذا تفعل الليلة؟", "كيف حالك؟", "أراك غدا."],
   };
   // A sentence as keypad presses: letters to their keys, spaces to 0, marks (and ' or - inside a
   // word) to #; ¿ ¡ and French spaces before marks are left out, as the decoder adds them.
   const enc = s => [...s.replace(/[¿¡]/g, '').replace(/[\u00a0\u202f]| (?=[?!:;])/g, '').toLowerCase()].map(c =>
-    c === ' ' ? '0' : '.,!?;'.includes(c) ? '#' : /^[2-9#]$/.test(wordKeys(c)) ? wordKeys(c) : '').join('');
+    c === ' ' ? '0' : '.,!?;؟،'.includes(c) ? '#' : /^[2-9#]$/.test(wordKeys(c)) ? wordKeys(c) : '').join('');
 
   let exact = false, tap = null;
   let m = null, keys = '', locks = {}, sel = null, result = null, best = null, exampleIdx = 0, isExample = false;
@@ -1609,6 +1620,7 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
     de: 'qwertzuiopü|asdfghjklöä|yxcvbnm', fr: 'azertyuiop|qsdfghjklm|wxcvbn', sv: 'qwertyuiopå|asdfghjklöä|zxcvbnm',
     cs: 'qwertzuiopú|asdfghjklů|yxcvbnm', tr: 'qwertyuıopğü|asdfghjklşi|zxcvbnmöç',
     ru: 'йцукенгшщзхъ|фывапролджэ|ячсмитьбю', el: 'ςερτυθιοπ|ασδφγηξκλ|ζχψωβνμ',
+    ar: 'ضصثقفغعهخحجد|شسيبلاتنمكط|ذئءؤرىةوزظ',
   };
   const lang = () => (MODELS.find(x => x.id === modelId) || { lang: 'en' }).lang;
   const layout = () => LAYOUTS[lang()] || LAYOUTS.en;
@@ -1734,6 +1746,7 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
     tr: { '2': 'abcç', '4': 'ghiğı', '6': 'mnoö', '7': 'pqrsş', '8': 'tuvü' },
     ru: { '2': 'абвг', '3': 'деёжз', '4': 'ийкл', '5': 'мноп', '6': 'рсту', '7': 'фхцч', '8': 'шщъы', '9': 'ьэюя' },
     el: { '2': 'αβγ', '3': 'δεζ', '4': 'ηθι', '5': 'κλμ', '6': 'νξο', '7': 'πρσς', '8': 'τυφ', '9': 'χψω' },
+    ar: { '2': 'بتثة', '3': 'اأإآءؤئ', '4': 'سشصض', '5': 'دذرز', '6': 'جحخ', '7': 'نهويى', '8': 'فقكلم', '9': 'طظعغ' },
   };
   const alphabet = () => ALPHABETS[lang()] || null;
   const cycleOf = d => { const a = alphabet(); return a && a[d] ? a[d] + CYCLE[d].slice(-1) : CYCLE[d]; };
@@ -1927,6 +1940,9 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
     { id: 'el', name: 'Phone / web', device: 'Phone / web', group: 'Ελληνικά', el: 'model-el', lang: 'el' },
     { id: 'el-m', name: 'ESP32', device: 'ESP32', group: 'Ελληνικά', el: 'model-el-m', lang: 'el' },
     { id: 'el-s', name: 'Radio', device: 'Radio', group: 'Ελληνικά', el: 'model-el-s', lang: 'el' },
+    { id: 'ar', name: 'Phone / web', device: 'Phone / web', group: 'العربية', el: 'model-ar', lang: 'ar' },
+    { id: 'ar-m', name: 'ESP32', device: 'ESP32', group: 'العربية', el: 'model-ar-m', lang: 'ar' },
+    { id: 'ar-s', name: 'Radio', device: 'Radio', group: 'العربية', el: 'model-ar-s', lang: 'ar' },
   ];
   const loaded = {};        // id -> { m, size, name }, built on first use
   // What this person has sent, per model (word ids differ between models). Kept in this

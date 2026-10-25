@@ -41,8 +41,9 @@ embedded project. Read it top to bottom before writing code. Repository layout:
 | Other languages: phones / ESP32 / radios | `onepress-<lang>.bin` / `-<lang>-m.bin` / `-<lang>-s.bin` | 96-98.7% (held-out Tatoeba sentences; SPEC.md lists each) |
 
 Languages (`<lang>`): es Spanish, de German, pt Portuguese, fr French, it Italian, nl Dutch,
-sv Swedish, pl Polish, cs Czech, tr Turkish, ru Russian, el Greek. Accented letters are typed
-on their plain letter's key; Russian and Greek use the usual phone keypad layouts (SPEC.md).
+sv Swedish, pl Polish, cs Czech, tr Turkish, ru Russian, el Greek, ar Arabic. Accented letters
+are typed on their plain letter's key; Russian, Greek and Arabic use the usual phone keypad
+layouts (SPEC.md). Arabic output is right to left: show it in a field with dir="auto" or rtl.
 
 Decoding is cheap: under 0.07 ms per key press on a desktop CPU for a 200-press message, so
 roughly 5-10 ms on a 64 MHz nRF52. Call decode with the whole key string on every press; it

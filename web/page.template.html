@@ -237,7 +237,7 @@ body { padding-block: clamp(8px, 2.2dvh, 20px) clamp(10px, 3dvh, 28px); }
   <div class="learned"><span id="learned"></span><button type="button" id="forget">Forget</button></div>
 
   <section class="lcd" aria-label="Decoded text">
-    <div class="out" id="out" aria-live="polite"></div>
+    <div class="out" id="out" dir="auto" aria-live="polite"></div>
     <div class="keys-line"><span id="keysShown"></span><span id="exampleTag"></span></div>
   </section>
 
@@ -268,7 +268,7 @@ body { padding-block: clamp(8px, 2.2dvh, 20px) clamp(10px, 3dvh, 28px); }
     <p>Tap any word to see other words with the same keys. Picking one locks it, and the rest of the sentence re-decodes around it.</p>
     <p>The QWERTY keyboard sends only each letter's keypad number (shown in the corner), so the model decodes it exactly as if you'd used the keypad. When no word fits, it keeps the letters you tapped. Keys grow and shrink in place with how likely each letter is to come next. A computer keyboard works the same way, and Tab finishes the word.</p>
     <p><b>Neural</b> (Phone model) adds a small neural network that reads everything typed before each word, not just the last two words. It's downloaded once next to the page and runs here too.</p>
-    <p>Runs entirely in this page. <b>Model</b> picks the word model: Phone (45,000 words), ESP32 / Meshtastic (29,000) and nRF52 / radio (5,000) are the same files the C decoder runs on those devices, so you can see how each would behave. The other languages (Español, Deutsch, Português, Français, Italiano, Nederlands, Svenska, Polski, Čeština, Türkçe, Русский, Ελληνικά), each in the same three sizes, download when first picked: accents come out on their own (type the plain letter's key: á on 2, ł on 5), Greek and Russian use their usual phone keypads (Russian 2 абвг, Greek 2 αβγ), German nouns are capitalized, Spanish questions open with ¿, and in French and Italian <b>#</b> between letters makes the apostrophe of l'homme or dov'è. <b>Load .bin file…</b> opens any model built with <code>model/export_bin.py</code>. <b>Compare sizes</b> shows what each model makes of the same keys, with the words that differ from the selected model highlighted.</p>
+    <p>Runs entirely in this page. <b>Model</b> picks the word model: Phone (45,000 words), ESP32 / Meshtastic (29,000) and nRF52 / radio (5,000) are the same files the C decoder runs on those devices, so you can see how each would behave. The other languages (Español, Deutsch, Português, Français, Italiano, Nederlands, Svenska, Polski, Čeština, Türkçe, Русский, Ελληνικά, العربية), each in the same three sizes, download when first picked: accents come out on their own (type the plain letter's key: á on 2, ł on 5), Greek, Russian and Arabic use their usual phone keypads (Russian 2 абвг, Greek 2 αβγ, Arabic 2 بتث) and Arabic is shown right to left with ؟ and ،, German nouns are capitalized, Spanish questions open with ¿, and in French and Italian <b>#</b> between letters makes the apostrophe of l'homme or dov'è. <b>Load .bin file…</b> opens any model built with <code>model/export_bin.py</code>. <b>Compare sizes</b> shows what each model makes of the same keys, with the words that differ from the selected model highlighted.</p>
   </div>
 </div>
 
@@ -301,11 +301,12 @@ __DECODER__
     tr: ["Bu akşam yemeğe geliyor musun?", "Eve doğru yoldayım.", "Nerede buluşuyoruz?", "Nasılsın?", "Yarın görüşürüz."],
     ru: ["Я уже еду домой.", "Где находится вокзал?", "Что ты делаешь сегодня вечером?", "Как дела?", "Увидимся завтра."],
     el: ["Είμαι στο δρόμο για το σπίτι.", "Πού είναι ο σταθμός;", "Τι κάνεις απόψε;", "Πώς είσαι;", "Τα λέμε αύριο."],
+    ar: ["أنا في الطريق إلى البيت.", "أين أنت؟", "ماذا تفعل الليلة؟", "كيف حالك؟", "أراك غدا."],
   };
   // A sentence as keypad presses: letters to their keys, spaces to 0, marks (and ' or - inside a
   // word) to #; ¿ ¡ and French spaces before marks are left out, as the decoder adds them.
   const enc = s => [...s.replace(/[¿¡]/g, '').replace(/[\u00a0\u202f]| (?=[?!:;])/g, '').toLowerCase()].map(c =>
-    c === ' ' ? '0' : '.,!?;'.includes(c) ? '#' : /^[2-9#]$/.test(wordKeys(c)) ? wordKeys(c) : '').join('');
+    c === ' ' ? '0' : '.,!?;؟،'.includes(c) ? '#' : /^[2-9#]$/.test(wordKeys(c)) ? wordKeys(c) : '').join('');
 
   let exact = false, tap = null;
   let m = null, keys = '', locks = {}, sel = null, result = null, best = null, exampleIdx = 0, isExample = false;
@@ -378,6 +379,7 @@ __DECODER__
     de: 'qwertzuiopü|asdfghjklöä|yxcvbnm', fr: 'azertyuiop|qsdfghjklm|wxcvbn', sv: 'qwertyuiopå|asdfghjklöä|zxcvbnm',
     cs: 'qwertzuiopú|asdfghjklů|yxcvbnm', tr: 'qwertyuıopğü|asdfghjklşi|zxcvbnmöç',
     ru: 'йцукенгшщзхъ|фывапролджэ|ячсмитьбю', el: 'ςερτυθιοπ|ασδφγηξκλ|ζχψωβνμ',
+    ar: 'ضصثقفغعهخحجد|شسيبلاتنمكط|ذئءؤرىةوزظ',
   };
   const lang = () => (MODELS.find(x => x.id === modelId) || { lang: 'en' }).lang;
   const layout = () => LAYOUTS[lang()] || LAYOUTS.en;
@@ -503,6 +505,7 @@ __DECODER__
     tr: { '2': 'abcç', '4': 'ghiğı', '6': 'mnoö', '7': 'pqrsş', '8': 'tuvü' },
     ru: { '2': 'абвг', '3': 'деёжз', '4': 'ийкл', '5': 'мноп', '6': 'рсту', '7': 'фхцч', '8': 'шщъы', '9': 'ьэюя' },
     el: { '2': 'αβγ', '3': 'δεζ', '4': 'ηθι', '5': 'κλμ', '6': 'νξο', '7': 'πρσς', '8': 'τυφ', '9': 'χψω' },
+    ar: { '2': 'بتثة', '3': 'اأإآءؤئ', '4': 'سشصض', '5': 'دذرز', '6': 'جحخ', '7': 'نهويى', '8': 'فقكلم', '9': 'طظعغ' },
   };
   const alphabet = () => ALPHABETS[lang()] || null;
   const cycleOf = d => { const a = alphabet(); return a && a[d] ? a[d] + CYCLE[d].slice(-1) : CYCLE[d]; };

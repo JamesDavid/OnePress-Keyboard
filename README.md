@@ -17,12 +17,15 @@ browser, and a short tutorial starts on your first visit.
   a key pressed twice. With 3% of presses slipping, 87–89% of words still come out right (82% without).
 - **Three model sizes** from 239 KB to 3.5 MB, for radios up to phones, and an optional neural
   network for phones and the web (6.3 MB, or 2.5 MB with almost the same gain).
-- **Thirteen languages:** English, Spanish, German, Portuguese, French, Italian, Dutch, Swedish,
-  Polish, Czech, Turkish, Russian and Greek, each in the three sizes. Accents are typed on their
-  plain letter's key and filled in for you (á on 2, ł on 5); Russian and Greek use their usual
-  phone keypads. German nouns are capitalized, Spanish questions open with ¿, and apostrophes
-  work as each language uses them (`l#homme` gives "l'homme", `tom#a` gives "Tom'a"). 96–98.7%
-  of words right on held-out sentences, against 83–95% for a classic keypad.
+- **Fourteen languages:** English, Spanish, German, Portuguese, French, Italian, Dutch, Swedish,
+  Polish, Czech, Turkish, Russian, Greek and Arabic, each in the three sizes. Accents are typed on
+  their plain letter's key and filled in for you (á on 2, ł on 5); Russian, Greek and Arabic use
+  their usual phone keypads, and Arabic is shown right to left with ؟ and ،. German nouns are
+  capitalized, Spanish questions open with ¿, apostrophes work as each language uses them
+  (`l#homme` gives "l'homme", `tom#a` gives "Tom'a"), and `#` joins words with a hyphen
+  (`well#known` gives "well-known"). 96–98.7% of words right on held-out sentences, against
+  83–95% for a classic keypad; Arabic, whose keypad puts far more common words on the same keys,
+  81–82% against 66%.
 - **Learns from you.** Names, slang and call signs you spell once are guessed from their keys
   after that, and your own word habits and punctuation get more likely. Recent messages count too.
 - **Capitals are automatic.** Sentence starts, names and brands (iPhone, McDonald's), the words
@@ -31,7 +34,7 @@ browser, and a short tutorial starts on your first visit.
   "$6,000.00", and "at 5 # 30" gives "at 5:30" (5.30 is one tap away).
 - **Exact spelling** (multi-tap) for anything else, mixed freely with predicted words.
 - **Letter keyboards too, in each language's layout** (QWERTY, QWERTZ, AZERTY, Russian, Greek,
-  ...). The letters you tap count, and a tap on a neighboring key is forgiven: in English 99.7%
+  Arabic, ...). The letters you tap count, and a tap on a neighboring key is forgiven: in English 99.7%
   of words right typing accurately, 96.8% with one letter in ten on the wrong key. A word it
   doesn't know keeps the letters you tapped.
 - **Words run together.** A long word it doesn't know is tried as known words written as one

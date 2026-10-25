@@ -1,8 +1,9 @@
 """The letters beyond a-z that the decoders know: for each code point of Latin-1 / Latin
-Extended-A and -B (U+00C0-U+024F), Greek (U+0370-U+03FF) and Cyrillic (U+0400-U+045F), its keypad
+Extended-A and -B (U+00C0-U+024F), Greek (U+0370-U+03FF), Cyrillic (U+0400-U+045F)
+and Arabic letters (U+0620-U+064A), its keypad
 key, the plain letter it matches when typed exactly or tapped on QWERTY (Latin letters only),
 its capital, its small letter (to lowercase the text before the cursor the same way in C), and
-for Greek and Cyrillic its plain letter (ά -> α, ё -> е), which a tapped or exact plain letter
+for Greek, Cyrillic and Arabic its plain letter (ά -> α, ё -> е, أ -> ا), which a tapped or exact plain letter
 matches as a plain Latin one matches an accented one.
 
     python model/chartable.py        rewrites the generated tables in web/decoder.js and
@@ -13,11 +14,13 @@ export_bin.py imports key_of() from here, so the models' key indexes agree with 
 Keys: Latin letters take their plain letter's key (á -> 2, ł -> 5, ş -> 7). Greek and Cyrillic
 use the usual phone layouts: Greek 2 αβγ 3 δεζ 4 ηθι 5 κλμ 6 νξο 7 πρσς 8 τυφ 9 χψω; Russian
 2 абвг 3 деёжз 4 ийкл 5 мноп 6 рсту 7 фхцч 8 шщъы 9 ьэюя (Ukrainian і ї go with и, є with е,
-ґ with г). Accented Greek letters take their plain letter's key.
+ґ with г). Accented Greek letters take their plain letter's key. Arabic, as on Arabic phones:
+2 بتث(ة) 3 ا(أإآءؤئ) 4 سشصض 5 دذرز 6 جحخ 7 نهوي(ى) 8 فقكلم 9 طظعغ; أ إ آ have the plain letter ا and
+ى has ي (an exact or tapped ا matches أ).
 """
 import os, re, unicodedata
 
-RANGES = [(0x00C0, 0x0250), (0x0370, 0x0400), (0x0400, 0x0460)]
+RANGES = [(0x00C0, 0x0250), (0x0370, 0x0400), (0x0400, 0x0460), (0x0620, 0x064B)]
 LATIN_KEYS = {c: k for k, letters in {"2": "abc", "3": "def", "4": "ghi", "5": "jkl", "6": "mno",
               "7": "pqrs", "8": "tuv", "9": "wxyz"}.items() for c in letters}
 # Latin letters with no decomposition to a plain letter.
@@ -29,6 +32,9 @@ LATIN_EXTRA = {"æ": "a", "ð": "d", "ø": "o", "þ": "t", "ß": "s", "đ": "d",
 GREEK = dict(zip("αβγδεζηθικλμνξοπρσςτυφχψω", "2223334445556667777888999"))
 CYRILLIC = {c: k for k, letters in {"2": "абвгґ", "3": "деёжзє", "4": "ийклії", "5": "мноп", "6": "рсту",
             "7": "фхцч", "8": "шщъы", "9": "ьэюя"}.items() for c in letters}
+ARABIC = {c: k for k, letters in {"2": "بتثة", "3": "اأإآءؤئ", "4": "سشصض", "5": "دذرز", "6": "جحخ",
+          "7": "نهويى", "8": "فقكلم", "9": "طظعغ"}.items() for c in letters}
+ARABIC_PLAIN = {"أ": "ا", "إ": "ا", "آ": "ا", "ى": "ي"}      # same key, written without the hamza/dots
 
 def lower_of(cp):
     """Small letter of code point cp (itself if none, or not a single letter in the ranges)."""
@@ -38,6 +44,8 @@ def lower_of(cp):
 def plain_of(cp):
     """Plain letter of a Greek or Cyrillic letter (ά -> α, ё -> е), or cp itself."""
     c = chr(cp)
+    if c in ARABIC_PLAIN:
+        return ord(ARABIC_PLAIN[c])
     if not c.isalpha() or not 0x370 <= cp < 0x460:
         return cp
     b = unicodedata.normalize("NFD", c)[0]
@@ -60,6 +68,8 @@ def entry(cp):
         return LATIN_KEYS[LATIN_EXTRA[low]], LATIN_EXTRA[low], upper
     if base in GREEK:
         return GREEK[base], "", upper
+    if c in ARABIC:
+        return ARABIC[c], "", cp
     if low in CYRILLIC or base in CYRILLIC:
         return CYRILLIC.get(low) or CYRILLIC[base], "", upper
     return "", "", cp

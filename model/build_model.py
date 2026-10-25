@@ -24,6 +24,11 @@ if "--lang" in sys.argv:
     LANG = sys.argv[i + 1]
     del sys.argv[i:i + 2]
 EN = LANG == "en"
+PAIRS_SEEN = 2
+if "--pairs-seen" in sys.argv:
+    i = sys.argv.index("--pairs-seen")
+    PAIRS_SEEN = int(sys.argv[i + 1])
+    del sys.argv[i:i + 2]
 ROOT = sys.argv[1]
 OUT = sys.argv[2]
 VOCAB_N = 45000
@@ -173,8 +178,9 @@ for text, wt, _ in streams:
             seen[(p1, cur)] += 2 if wt >= 25 else 1
 
 # Prune pairs seen only once. Weighting must not rescue them: one message weighted x3
-# shouldn't outvote a pair seen in many places.
-bigrams = {k: c for k, c in bi.items() if seen[k] >= 2}
+# shouldn't outvote a pair seen in many places. (--pairs-seen 1 keeps them: Arabic, where a
+# small corpus meets very ambiguous keys.)
+bigrams = {k: c for k, c in bi.items() if seen[k] >= PAIRS_SEEN}
 ctx = {}
 for (a, b), c in bigrams.items():
     ctx[a] = ctx.get(a, 0) + c
