@@ -5,7 +5,7 @@
 #include <string.h>
 
 enum { TOK_WORD, TOK_PUNCT, TOK_SPACE, TOK_NUM };
-enum { N_SECTIONS = 15, N_ALL_SECTIONS = 30 };     /* sections 15..29 are optional */
+enum { N_SECTIONS = 15, N_ALL_SECTIONS = 31 };     /* sections 15..30 are optional */
 
 static const char KEY_OF[26] = "22233344455566677778889999";
 static const char FIRST_LETTER[8] = "adgjmptw";     /* first letter of keys 2-9 */
@@ -105,6 +105,7 @@ int op_model_open(op_model *m, const void *data, size_t size) {
     m->elided = 0;
     for (uint16_t i = 0; i < m->n_words && !m->elided; i++) m->elided = m->word_off[i + 1] > m->word_off[i] && m->word_text[m->word_off[i + 1] - 1] == '\'';
     m->n_known = len[29] / 4;
+    m->cmp_bloom = len[30] >= 12 && len[30] >= 8 + ((const uint32_t *)sec[30])[0] / 8 ? (const uint32_t *)sec[30] : NULL;
     if (m->n_tri >= 0xFFFF || (n_sec > N_SECTIONS && (len[17] != 4u * (m->n_tri + 1) || len[18] != 2u * m->n_tri ||
         len[20] != len[19] || len[23] != 4u * (m->n_alt + 1))))
         return OP_ERR_MODEL;
@@ -611,7 +612,22 @@ static int punct_index(const op_model *m, char ch) {
 #define COMPOUND_WORDS 5
 #define COMPOUND_SPLIT 2
 #define COMPOUND_PAIR 2
-#define COMPOUND_KNOWN 10       /* nats for two parts known written as one (cmpKnown: "lollypops") */
+#define COMPOUND_KNOWN 10       /* nats for two parts known written as one (cmpBloom: "lollypops") */
+static uint32_t fmix32(uint32_t h) {
+    h ^= h >> 16; h *= 0x85ebca6bu; h ^= h >> 13; h *= 0xc2b2ae35u;
+    return h ^ (h >> 16);
+}
+/* Are words a and b known written as one? The Bloom filter, else (older files) the sorted list. */
+static int known_pair(const op_model *m, uint16_t a, uint16_t b) {
+    uint32_t key = (uint32_t)a << 16 | b;
+    if (!m->cmp_bloom) return find_u32(m->cmp_known, m->n_known, key) >= 0;
+    uint32_t nbits = m->cmp_bloom[0], h1 = fmix32(key), h2 = fmix32(key ^ 0x9e3779b9u) | 1;
+    for (uint32_t i = 0; i < m->cmp_bloom[1]; i++) {
+        uint32_t bit = (h1 + i * h2) % nbits;
+        if (!(m->cmp_bloom[2 + (bit >> 5)] & (1u << (bit & 31)))) return 0;
+    }
+    return 1;
+}
 #define COMPOUND_MAX 6
 #define COMPOUND_KEYS 24
 typedef struct { int32_t score; uint8_t len; char text[64]; } compound;
@@ -691,7 +707,7 @@ static void compound_split(const op_model *m, const char *k, const char *lit, co
             for (int y = 0; y < cnt[i + 1]; y++) {
                 int32_t g = lp(m, id[i][x], id[i + 1][y]) - m->uni[id[i + 1][y]];
                 pl[i][x][y] = g > 0 ? COMPOUND_PAIR * g : 0;
-                if (np == 2 && find_u32(m->cmp_known, m->n_known, (uint32_t)id[0][x] << 16 | id[1][y]) >= 0)
+                if (np == 2 && known_pair(m, id[0][x], id[1][y]))
                     pl[i][x][y] += COMPOUND_KNOWN * m->scale;
             }
     for (int i = np - 1; i >= 0; i--) {

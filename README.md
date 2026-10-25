@@ -15,12 +15,12 @@ browser, and a short tutorial starts on your first visit.
   and 7–27 KB of RAM. The model is read straight from flash.
 - **Forgives slips.** A word that no word matches is checked one slip away: a neighboring key, or
   a key pressed twice. With 3% of presses slipping, 87–89% of words still come out right (82% without).
-- **Three model sizes** from 239 KB to 4.0 MB, for radios up to phones, and an optional neural
+- **Three model sizes** from 239 KB to 3.5 MB, for radios up to phones, and an optional neural
   network for phones and the web (6.3 MB, or 2.5 MB with almost the same gain).
-- **Spanish, German, Portuguese and French too,** with accents, umlauts and ñ typed on their
-  base letter's key and filled in for you, German nouns capitalized, Spanish questions opened
-  with ¿, and French elisions (`l#homme` gives "l'homme"). 97.5–98.3% of words right on
-  held-out sentences.
+- **Spanish, German, Portuguese, French and Italian too,** with accents, umlauts and ñ typed on
+  their base letter's key and filled in for you, German nouns capitalized, Spanish questions
+  opened with ¿, and elisions (`l#homme` gives "l'homme", `dov#e` gives "dov'è"). 97.5–98.7% of
+  words right on held-out sentences.
 - **Learns from you.** Names, slang and call signs you spell once are guessed from their keys
   after that, and your own word habits and punctuation get more likely. Recent messages count too.
 - **Capitals are automatic.** Sentence starts, names and brands (iPhone, McDonald's), the words
@@ -56,11 +56,11 @@ split, words the model lacks spelled out). `node tests/eval.js`:
 
 | Model | Size | Texting: words | Texting: punctuation | Chat: words | Chat: punctuation | For |
 |---|---|---|---|---|---|---|
-| `onepress.bin` + `onepress-nn.bin` | 4.0 MB + 6.3 MB | **95.0%** | **55.4%** | **99.0%** | **70.9%** | phones, web |
-| `onepress.bin` + `onepress-nn-s.bin` | 4.0 MB + 2.5 MB | 94.9% | 52.7% | 98.9% | 70.2% | phones, web |
-| `onepress.bin` (45k words) | 4.0 MB | 94.1% | 49.8% | 98.6% | 67.7% | phones, web |
-| `onepress-m.bin` + `onepress-nn-m.bin` | 1.2 MB + 1.2 MB | 93.3% | 52.3% | 98.9% | 69.0% | ESP32 with flash to spare |
-| `onepress-m.bin` (20k words) | 1.2 MB | 93.2% | 47.3% | 98.6% | 65.2% | ESP32, Meshtastic |
+| `onepress.bin` + `onepress-nn.bin` | 3.5 MB + 6.3 MB | **95.0%** | **55.4%** | **99.0%** | **70.9%** | phones, web |
+| `onepress.bin` + `onepress-nn-s.bin` | 3.5 MB + 2.5 MB | 94.9% | 52.7% | 98.9% | 70.2% | phones, web |
+| `onepress.bin` (45k words) | 3.5 MB | 94.1% | 49.8% | 98.6% | 67.7% | phones, web |
+| `onepress-m.bin` + `onepress-nn-m.bin` | 1.5 MB + 1.7 MB | 94.4% | 49.7% | 98.8% | 69.2% | ESP32 with flash to spare |
+| `onepress-m.bin` (29k words) | 1.5 MB | 94.1% | 47.1% | 98.5% | 65.1% | ESP32, Meshtastic |
 | `onepress-s.bin` (5k words) | 239 KB | 89.0% | 46.6% | 98.5% | 64.9% | radios, nRF52 |
 | A classic one-word-at-a-time keypad | | 89.1% | 19% | 95.2% | 49% | |
 

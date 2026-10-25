@@ -10,17 +10,17 @@ embedded project. Read it top to bottom before writing code. Repository layout:
 
 - `c/onepress.h`, `c/onepress.c`: the C decoder. Copy both files into the project; nothing else is needed.
 - `web/decoder.js`: the JavaScript decoder (browser global functions, or `require()` in Node).
-- `model/onepress.bin` (45k words, 4.0 MB), `model/onepress-m.bin` (20k words, 1.2 MB),
+- `model/onepress.bin` (45k words, 3.5 MB), `model/onepress-m.bin` (29k words, 1.5 MB),
   `model/onepress-s.bin` (5k words, 239 KB): the English word models, and Spanish
   (`model/onepress-es.bin`, `-es-m.bin`, `-es-s.bin`), German (`onepress-de.bin`), Portuguese
-  (`onepress-pt.bin`) and French (`onepress-fr.bin`; # between letters is the apostrophe of
-  l'homme), in the KPD2 format (`model/export_bin.py` documents it). Every
+  (`onepress-pt.bin`), French (`onepress-fr.bin`) and Italian (`onepress-it.bin`; in both, #
+  between letters is the apostrophe of l'homme / dov'è), in the KPD2 format (`model/export_bin.py` documents it). Every
   decoder reads the same files. Accented letters (á, ñ, ü, ...) are typed with their base
   letter's key and come out on their own; the Spanish model also opens questions with ¿.
 - `model/onepress-nn.bin` (6.3 MB) or `model/onepress-nn-s.bin` (2.5 MB, almost the same gain):
   the optional neural word model for phones and the web, English only (KPN1, documented in
-  `model/export_nn.py`); `model/onepress-nn-m.bin` (1.2 MB) is the same for `onepress-m.bin` on
-  an ESP32 with flash to spare (+5 points of punctuation). A network only works with the model
+  `model/export_nn.py`); `model/onepress-nn-m.bin` (1.7 MB) is the same for `onepress-m.bin` on
+  an ESP32 with flash to spare (+2.7 points of punctuation). A network only works with the model
   it was trained for (op_nn_open checks).
 - `LICENSE`: the code is PolyForm Noncommercial 1.0.0. Personal, hobby, research, educational and
   noncommercial-organization use is free; a commercial product (paid or ad-supported app, device
@@ -37,10 +37,10 @@ embedded project. Read it top to bottom before writing code. Repository layout:
 | Target | Model | Accuracy (held-out text messages) |
 |---|---|---|
 | Phones, web, desktop | `onepress.bin` (+ `onepress-nn.bin` or `-nn-s.bin`) | 94.1% of words (95.0% / 94.9% with the network) |
-| ESP32 (4 MB+ flash), Meshtastic nodes | `onepress-m.bin` | 93.2% |
+| ESP32 (4 MB+ flash), Meshtastic nodes | `onepress-m.bin` | 94.1% |
 | nRF52, radios, anything with ~250 KB free flash | `onepress-s.bin` | 89.0% |
 | Spanish: phones / ESP32 / radios | `onepress-es.bin` / `-es-m.bin` / `-es-s.bin` | 97.9% / 97.6% / 97.5% (held-out Tatoeba sentences) |
-| German, Portuguese, French (phones, web) | `onepress-de.bin`, `-pt.bin`, `-fr.bin` | 97.5%, 98.3%, 98.2% |
+| German, Portuguese, French, Italian (phones, web) | `onepress-de.bin`, `-pt.bin`, `-fr.bin`, `-it.bin` | 97.5%, 98.3%, 98.2%, 98.7% |
 
 Decoding is cheap: under 0.07 ms per key press on a desktop CPU for a 200-press message, so
 roughly 5-10 ms on a 64 MHz nRF52. Call decode with the whole key string on every press; it
@@ -227,7 +227,7 @@ shows the alternative of embedding it as base64.
   after it and `insertText` the rest (or use `setMarkedText` where the host app supports it).
 - Pass `textDocumentProxy.documentContextBeforeInput` as `before` (keep the C string alive
   during the call, e.g. with `withCString`).
-- Keyboard extensions have a tight memory limit; the 4.0 MB model, the 6.3 MB network and
+- Keyboard extensions have a tight memory limit; the 3.5 MB model, the 6.3 MB network and
   ~100 KB of state fit easily.
 - Save the `op_user_save` bytes in the App Group container so the app and the keyboard share it. "Allow
   Full Access" is not needed for any of this.
@@ -251,7 +251,7 @@ shows the alternative of embedding it as base64.
 
 ## ESP32 (ESP-IDF, Arduino, PlatformIO, Meshtastic)
 
-- Use `onepress-m.bin` (1.2 MB) on 4 MB+ flash, or `onepress-s.bin`.
+- Use `onepress-m.bin` (1.5 MB) on 4 MB+ flash, or `onepress-s.bin`.
 - Best: a raw data partition, memory-mapped (always aligned, no RAM used for the model):
   ```
   # partitions.csv

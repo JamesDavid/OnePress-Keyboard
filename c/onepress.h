@@ -105,8 +105,9 @@ typedef struct {
     uint32_t n_cap_keep;
     const int8_t *cmp_head, *cmp_tail;   /* words run together: start / end lift in 1/4 nat, or NULL */
     uint8_t elided;             /* has words ending in an apostrophe (French l', qu'): see op_decode */
-    const uint32_t *cmp_known;          /* first << 16 | second of words known written as one */
+    const uint32_t *cmp_known;          /* first << 16 | second of words known written as one (older files) */
     uint32_t n_known;
+    const uint32_t *cmp_bloom;          /* the same as a Bloom filter: nBits, k, bits; or NULL */
 } op_model;
 
 /* What one person types, learned by op_learn and read by op_decode: words the dictionary

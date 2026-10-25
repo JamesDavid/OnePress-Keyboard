@@ -53,7 +53,9 @@ vidx = {w: i for i, w in enumerate(vocab)}
 # Elided words (French l' d' qu' ...) are words of their own, as wordfreq counts them ("l'homme"
 # is l + homme); the text is split the same way below, and the decoders split a word typed with
 # an apostrophe ("l#homme") that nothing else matches into the elided word and the rest.
-ELISIONS = {"fr": ["l", "d", "j", "qu", "n", "s", "c", "m", "t", "jusqu", "lorsqu", "puisqu", "quoiqu", "presqu"]}
+ELISIONS = {"fr": ["l", "d", "j", "qu", "n", "s", "c", "m", "t", "jusqu", "lorsqu", "puisqu", "quoiqu", "presqu"],
+            "it": ["l", "un", "dell", "all", "dall", "nell", "sull", "coll", "quest", "quell", "c", "d", "m", "t", "s",
+                   "v", "n", "com", "cos", "dov", "quand", "bell", "sant", "tutt", "nessun", "buon"]}
 ELIDED = {e + "'" for e in ELISIONS.get(LANG, [])}
 for w in sorted(ELIDED):
     if w not in vidx:

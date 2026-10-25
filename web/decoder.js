@@ -17,7 +17,7 @@ const SECTIONS = ['wordText', 'wordOff', 'keyIdx', 'stripIdx', 'dispId', 'dispOf
   'rowStart', 'bow', 'next', 'lp', 'qStart', 'punct', 'params',
   // optional (older files stop at params):
   'qSkip', 'triKey', 'triStart', 'triBow', 'triNext', 'triLp', 'capKey', 'altId', 'altOff', 'altText', 'capNextKey', 'capKeepKey',
-  'cmpHead', 'cmpTail', 'cmpKnown'];
+  'cmpHead', 'cmpTail', 'cmpKnown', 'cmpBloom'];
 const PARAMS = ['qQ', 'qN', 'dQ', 'cF', 'dB', 'cB', 'eB', 'apostrophe', 'completion', 'literal', 'unknown',
   'slipSub', 'slipDup', 'flags'];    // optional: older files stop at 'unknown' (defaults below)
 // params.flags: FLAG_I capitalizes "i" (English), FLAG_INVERTED opens a question or exclamation
@@ -75,6 +75,7 @@ function buildModel(bytes) {
     capKey: at('capKey', Uint32Array), capNextKey: at('capNextKey', Uint32Array),
     capKeepKey: at('capKeepKey', Uint32Array), alt,
     cmpHead: at('cmpHead', Int8Array), cmpTail: at('cmpTail', Int8Array), cmpKnown: at('cmpKnown', Uint32Array),
+    cmpBloom: at('cmpBloom', Uint32Array),
     punct: utf8.decode(at('punct', Uint8Array)).split(''),
     uni: at('uni', Int16Array), rowStart: at('rowStart', Uint32Array), bow: at('bow', Int16Array),
     next: at('next', Uint16Array), lp: at('lp', Int16Array), qStart: new Set(at('qStart', Uint16Array)),
@@ -500,10 +501,22 @@ function slotCandidates(m, tok, isLast, u) {
 // unigram plus the model's cmpHead / cmpTail lift (1/4 nat; none in older files), and two parts
 // the word pairs know get COMPOUND_PAIR x how much likelier the pair makes the second (ice
 // cream), never less, and two parts that wordfreq knows written as one (the model's cmpKnown:
-// "lollypops") COMPOUND_KNOWN. Each split costs COMPOUND_SPLIT nats. The COMPOUND_MAX best distinct spellings, ties in the order tried
+// "lollypops") COMPOUND_KNOWN. Each split costs COMPOUND_SPLIT nats. The known pairs are a Bloom
+// filter (cmpBloom; export_bin.py bloom_bits) or, in older files, a sorted list (cmpKnown). The COMPOUND_MAX best distinct spellings, ties in the order tried
 // (two parts before three, then by split points, then by word rank). The C decoder recomputes
 // these from the token when rendering.
 const COMPOUND_PART = 2, COMPOUND_WORDS = 5, COMPOUND_SPLIT = 2, COMPOUND_PAIR = 2, COMPOUND_KNOWN = 10, COMPOUND_MAX = 6, COMPOUND_KEYS = 24;
+const fmix32 = h => { h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); return (h ^ (h >>> 16)) >>> 0; };
+function knownPair(m, a, b) {
+  const key = (a * 65536 + b) >>> 0, B = m.cmpBloom;
+  if (B.length < 2) return inSorted(m.cmpKnown, key);
+  const nbits = B[0], h1 = fmix32(key), h2 = (fmix32((key ^ 0x9e3779b9) >>> 0) | 1) >>> 0;
+  for (let i = 0; i < B[1]; i++) {
+    const bit = ((h1 + Math.imul(i, h2)) >>> 0) % nbits;
+    if (!(B[2 + (bit >>> 5)] & (1 << (bit & 31)))) return false;
+  }
+  return true;
+}
 function compoundPart(m, tok, a, b) {
   const keys = tok.keys.slice(a, b), sub = { lit: tok.lit.slice(a, b) }, out = [];
   for (const id of exactMatches(m, keys)) {
@@ -537,7 +550,7 @@ function compounds(m, tok) {
       if (i === parts.length) return add(score, ids);
       for (const p of parts[i]) {
         const pair = i ? COMPOUND_PAIR * Math.max(0, lp(m, prev, p.id) - m.uni[p.id]) +
-          (parts.length === 2 && inSorted(m.cmpKnown, prev * 65536 + p.id) ? COMPOUND_KNOWN * m.scale : 0) : 0;
+          (parts.length === 2 && knownPair(m, prev, p.id) ? COMPOUND_KNOWN * m.scale : 0) : 0;
         walk(i + 1, p.id, score + compoundScore(m, p.id, i === 0, i === parts.length - 1) + p.pen + pair, ids.concat(p.id));
       }
     };

@@ -29,8 +29,8 @@ curl -sSfL -o corpora/chat/tc_valid_freq.json "https://raw.githubusercontent.com
 curl -sSfL -o corpora/chat/tc_valid_rare.json "https://raw.githubusercontent.com/alexa/Topical-Chat/master/conversations/valid_rare.json"
 "${PYTHON:-$(command -v python || command -v python3)}" prep_chat.py corpora/chat
 echo "corpora ready in model/corpora"
-# Other languages (onepress-es/de/pt/fr.bin): Tatoeba sentences, CC BY 2.0 FR
-for l in spa:es deu:de por:pt fra:fr; do
+# Other languages (onepress-es/de/pt/fr/it.bin): Tatoeba sentences, CC BY 2.0 FR
+for l in spa:es deu:de por:pt fra:fr ita:it; do
   t=${l%%:*}; c=${l##*:}
   mkdir -p corpora/$c
   curl -sSfL -o corpora/$c/${t}_sentences.tsv.bz2 "https://downloads.tatoeba.org/exports/per_language/$t/${t}_sentences.tsv.bz2"

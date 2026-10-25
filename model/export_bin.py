@@ -2,7 +2,7 @@
 
 Usage: python export_bin.py model.json onepress.bin [--vocab N] [--min-count C] [--ambig-only]
                            [--tri-min C] [--tri-contexts N] [--no-context-case] [--no-compounds]
-                           [--known-compounds ZIPF] [--no-slips]
+                           [--known-compounds ZIPF] [--compound-parts ZIPF] [--no-slips]
 
 Everything is little-endian, every section 4-byte aligned, and the decoder searches the
 file in place (from flash or a memory map), so nothing is parsed or allocated on load.
@@ -57,8 +57,47 @@ SECTIONS = [
                   #            together from known words (snow-man), in 1/4 nat; see compound_lifts
     "cmpTail",    # i8[nWords] ... to end one (snow-man)
     "cmpKnown",   # u32[] first << 16 | second, ascending: two words that wordfreq knows written as one
-                  #       (lolly + pops: "lollypops"); such a split gets COMPOUND_KNOWN in the decoders
+                  #       (lolly + pops: "lollypops"); such a split gets COMPOUND_KNOWN in the decoders.
+                  #       Older files only: cmpBloom replaced it
+    "cmpBloom",   # u32 nBits, u32 k, u32[nBits / 32]: the same pairs as a Bloom filter (about 10 bits
+                  #       a pair, under 1% false positives); see bloom_bits
 ]
+# Bloom filter of the known pairs: key = first << 16 | second, h1 = fmix32(key),
+# h2 = fmix32(key ^ 0x9e3779b9) | 1, bit (h1 + i * h2) mod nBits set for i < k (32-bit math).
+BLOOM_BITS, BLOOM_K = 10, 7
+def fmix32(h):
+    h ^= h >> 16; h = (h * 0x85EBCA6B) & 0xFFFFFFFF
+    h ^= h >> 13; h = (h * 0xC2B2AE35) & 0xFFFFFFFF
+    return h ^ (h >> 16)
+def bloom_bits(keys):
+    if not keys:
+        return b""
+    nbits = (len(keys) * BLOOM_BITS + 31) // 32 * 32
+    bits = [0] * (nbits // 32)
+    for key in keys:
+        h1, h2 = fmix32(key), fmix32(key ^ 0x9E3779B9) | 1
+        for i in range(BLOOM_K):
+            b = ((h1 + i * h2) & 0xFFFFFFFF) % nbits
+            bits[b >> 5] |= 1 << (b & 31)
+    return struct.pack(f"<II{len(bits)}I", nbits, BLOOM_K, *bits)
+
+def compound_parts(words, logp, vocab, lang, zipf):
+    """Words outside the `vocab` most frequent that are part of a wordfreq word of zipf >= zipf
+    made of two words of the full list (lolly of "lollypops"): kept so a small model can still
+    put such words together."""
+    import re, wordfreq
+    full = set(words)
+    top = {words[i] for i in sorted(range(len(words)), key=lambda i: (-logp[i], i))[:vocab]}
+    letters = "a-z" if lang == "en" else "a-z\u00df-\u00f6\u00f8-\u00ff"
+    parts = set()
+    for w in wordfreq.get_frequency_dict(lang, "large"):
+        if not re.fullmatch(f"[{letters}]{{4,24}}", w) or w in top or wordfreq.zipf_frequency(w, lang, "large") < zipf:
+            continue
+        for i in range(2, len(w) - 1):
+            a, b = w[:i], w[i:]
+            if a in full and b in full and not (a in top and b in top):
+                parts.update(x for x in (a, b) if x not in top)
+    return parts
 # Decoder constants, all in log-prob units. The punctuation ones come from model.json
 # punctParams when present (see tune_punct.js).
 # slipSub / slipDup (optional: older files stop at "unknown"): the penalty for a word one keypad
@@ -100,6 +139,11 @@ LANGS = {
             "allez", "aimes", "aimez", "connais", "connaissez", "ai", "dois", "devons", "pourrais", "pourriez"],
            ["salut", "bonjour", "bonsoir", "coucou", "alors", "bon", "ok", "oh", "ah", "eh", "et", "mais", "donc",
             "merci", "oui", "non", "bref", "dis", "écoute", "tiens"], 0),
+    "it": (["che", "cosa", "come", "dove", "quando", "perché", "quale", "quali", "chi", "quanto", "quanta",
+            "quanti", "quante", "puoi", "può", "possiamo", "hai", "ha", "avete", "sei", "siete", "vuoi", "volete",
+            "sai", "sapete", "ti", "vieni", "vai", "c'", "dov'", "com'", "cos'"],
+           ["ciao", "allora", "beh", "ok", "oh", "ah", "eh", "e", "ma", "quindi", "grazie", "sì", "no", "senti",
+            "scusa", "dai", "bene", "ecco"], 0),
     "pt": (["que", "quê", "como", "onde", "aonde", "quando", "porque", "qual", "quais", "quem", "quanto", "quanta",
             "quantos", "quantas", "você", "vocês", "pode", "podes", "podemos", "tem", "tens", "vai", "vais", "vamos",
             "está", "estás", "é", "há", "sabe", "sabes", "quer", "queres", "posso"],
@@ -125,7 +169,7 @@ def q(x):
     assert -32768 <= v <= 32767, x
     return v
 
-def reduce(M, vocab=0, min_count=0, ambig_only=False, tri_min=0, tri_contexts=65000):
+def reduce(M, vocab=0, min_count=0, ambig_only=False, tri_min=0, tri_contexts=65000, extra=()):
     """Shrink the model for small devices.
 
     vocab:      keep only the `vocab` most frequent words.
@@ -138,6 +182,8 @@ def reduce(M, vocab=0, min_count=0, ambig_only=False, tri_min=0, tri_contexts=65
     """
     words, n, nP = M["words"], len(M["words"]), len(M["punct"])
     keep = sorted(sorted(range(n), key=lambda i: (-M["logp"][i], i))[:vocab]) if 0 < vocab < n else list(range(n))
+    if extra:                                   # extra words to keep (compound parts)
+        keep = sorted(set(keep) | {i for i, w in enumerate(words) if w in extra})
     new = {old: i for i, old in enumerate(keep)}
     for p in range(nP + 1):
         new[n + p] = len(keep) + p
@@ -234,10 +280,16 @@ def main():
     ap.add_argument("--known-compounds", type=float, default=None, metavar="ZIPF",
                     help="list the words wordfreq knows as two vocabulary words run together, down to this zipf frequency")
     ap.add_argument("--no-slips", action="store_true", help="no words one keypad slip away")
+    ap.add_argument("--compound-parts", type=float, default=None, metavar="ZIPF",
+                    help="with --vocab, also keep the words that make up known compounds down to this zipf frequency")
     a = ap.parse_args()
     no_compounds, no_slips, known_zipf = a.no_compounds, a.no_slips, a.known_compounds      # (a is reused below)
-    M = reduce(json.load(open(a.model_json, encoding="utf-8")), a.vocab, a.min_count, a.ambig_only,
-               a.tri_min, min(a.tri_contexts, 65000))
+    M0 = json.load(open(a.model_json, encoding="utf-8"))
+    extra = compound_parts(M0["words"], M0["logp"], a.vocab, M0.get("lang", "en"), a.compound_parts) \
+        if a.compound_parts is not None and a.vocab else ()
+    M = reduce(M0, a.vocab, a.min_count, a.ambig_only, a.tri_min, min(a.tri_contexts, 65000), extra)
+    if extra:
+        print(f"kept {len(extra)} compound parts")
     if a.no_context_case:
         M = dict(M, capFlip=[], capNext=[], capKeep=[], alt={})
     out = a.out
@@ -333,7 +385,8 @@ def main():
     sec["altOff"] = struct.pack(f"<{len(alts) + 1}I", *aoff)
     sec["altText"] = b"".join(atext)
     ch, ct, kn = ([], [], []) if no_compounds else compound_lifts(words, M["logp"], lang, known_zipf)
-    sec["cmpKnown"] = struct.pack(f"<{len(kn)}I", *kn)
+    sec["cmpKnown"] = b""
+    sec["cmpBloom"] = bloom_bits(kn)
     sec["cmpHead"] = struct.pack(f"<{len(ch)}b", *ch)
     sec["cmpTail"] = struct.pack(f"<{len(ct)}b", *ct)
 
