@@ -476,12 +476,12 @@ static int tokenize(op_decoder *d, const char *keys, const char *hint) {
                 int pure = 1;
                 for (int k = last->off; k < nk; k++) if (d->keys[k] < '0' || d->keys[k] > '9') pure = 0;
                 if (pure) {
-                    last->type = TOK_WORD;
+                    last->type = TOK_WORD; last->lit = 0;
                     for (int k = last->off; k < nk; k++) { d->lits[k] = d->keys[k]; d->keys[k] = (char)('A' + (d->keys[k] - '0')); }
                 }
             }
             if (!(last && last->type == TOK_WORD)) {
-                t->type = TOK_WORD; t->off = (uint16_t)nk; t->len = 0; d->n_toks++;
+                t->type = TOK_WORD; t->lit = 0; t->off = (uint16_t)nk; t->len = 0; d->n_toks++;
                 last = t;
             }
             if (press < hn) d->hints[nk] = hcp[press];
@@ -667,12 +667,11 @@ static int word_fits(const op_decoder *d, const op_model *m, const op_tok *t, in
     return 0;
 }
 static int split_elisions(op_decoder *d, const op_model *m) {
-    if (!m->elided) return OP_OK;
     for (int i = 0; i < d->n_toks; i++) {
         op_tok *t = &d->toks[i];
         if (t->type != TOK_WORD) continue;
         const char *k = d->keys + t->off;
-        int p = 0, q, cut;                          /* cut: where the second word starts */
+        int p = 0, q, cut, hyphen = 0;              /* cut: where the second word starts */
         while (p < t->len && k[p] != '#') p++;
         if (p >= t->len - 1) continue;
         q = p + 1;                                  /* the next # after p, or the end */
@@ -681,20 +680,29 @@ static int split_elisions(op_decoder *d, const op_model *m) {
         e.off = (uint16_t)(t->off + p);
         e.len = (uint16_t)(q - p);
         if (p == 0) {                               /* an ending split off, and another # after it */
-            if (q >= t->len || !word_fits(d, m, &e, e.len, 2)) continue;
+            if (!m->elided || q >= t->len || !word_fits(d, m, &e, e.len, 2)) continue;
             cut = q;
         } else {
             if (word_fits(d, m, t, t->len, 0)) continue;
-            if (word_fits(d, m, t, p + 1, 1)) cut = p + 1;
-            else if (word_fits(d, m, &e, e.len, 2) && word_fits(d, m, t, p, 3)) cut = p;
-            else continue;
+            if (m->elided && word_fits(d, m, t, p + 1, 1)) cut = p + 1;
+            else if (!word_fits(d, m, t, p, 3)) continue;
+            else if (m->elided && word_fits(d, m, &e, e.len, 2)) cut = p;
+            else {                                  /* two words joined by a hyphen: well-known */
+                op_tok r = *t;
+                r.off = (uint16_t)(t->off + p + 1);
+                r.len = (uint16_t)(q - p - 1);
+                if (!r.len || !word_fits(d, m, &r, r.len, 3)) continue;
+                cut = p + 1;
+                hyphen = 1;
+            }
         }
         if (d->n_toks == OP_MAX_KEYS) return OP_ERR_TOO_LONG;
         memmove(t + 1, t, (size_t)(d->n_toks - i) * sizeof *t);
         d->n_toks++;
-        t[0].len = (uint16_t)cut;
+        t[0].len = (uint16_t)(cut - hyphen);        /* the # of a hyphen belongs to neither word */
         t[1].off = (uint16_t)(t[0].off + cut);
         t[1].len = (uint16_t)(t[1].len - cut);
+        t[1].lit = hyphen ? '-' : 0;                /* a word token's lit '-': shown after a hyphen */
         /* t[1] is looked at next: it may hold another elision */
     }
     return OP_OK;
@@ -1708,6 +1716,10 @@ int op_render(const op_decoder *d, const op_model *m, const op_start *start, cha
             cap_next = 0;
             prev = OP_NONE;
             continue;
+        }
+        if (t->lit == '-') {                        /* the second word of a hyphenated pair */
+            if (n + 1 >= cap) return OP_ERR_SPACE;
+            out[n++] = '-';
         }
         int s = n, len, call;
         if (ch.kind == OP_WORD || ch.kind == OP_PARTIAL) {

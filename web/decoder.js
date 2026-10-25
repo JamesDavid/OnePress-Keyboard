@@ -463,14 +463,17 @@ function slipCandidates(m, tok, have) {
 // ("l#homme") is an elided word (a dictionary word ending in an apostrophe: French l', qu')
 // followed by the rest, or a word followed by endings that start with an apostrophe or a hyphen
 // (Turkish "tom#a": 'a; French "a#t#il": -t -il). Decoded as separate words and shown joined
-// ("l'homme", "Tom'a", "a-t-il"). Words that are whole with their apostrophe (aujourd'hui) stay
-// whole. Models without such words never split.
+// ("l'homme", "Tom'a", "a-t-il"). Otherwise, if the words on both sides of the # are dictionary
+// words, they are two words joined by a hyphen (well#known: "well-known", peut#etre:
+// "peut-être"): the second token gets `hyphen` and is shown after a "-". Words that are whole
+// with their apostrophe (aujourd'hui, don't) stay whole.
 const isEnding = w => w[0] === "'" || w[0] === '-';
 function splitElisions(toks, m, u) {
   if (m.elided === undefined) m.elided = m.words.some(w => w.endsWith("'") || isEnding(w));
-  if (!m.elided) return toks;
-  const ending = t => exactMatches(m, t.keys).some(id => isEnding(m.words[id]) && litMatch(m, t, id, t.keys));
-  const part = (t, a, b) => ({ type: 'word', keys: t.keys.slice(a, b), lit: t.lit.slice(a, b), hint: t.hint.slice(a, b) });
+  const ending = t => m.elided && exactMatches(m, t.keys).some(id => isEnding(m.words[id]) && litMatch(m, t, id, t.keys));
+  const word = t => t.keys.length > 0 && exactMatches(m, t.keys).some(id => m.fullKeys[id] === t.keys && litMatch(m, t, id, t.keys));
+  const part = (t, a, b) => ({ type: 'word', keys: t.keys.slice(a, b), lit: t.lit.slice(a, b), hint: t.hint.slice(a, b),
+    hyphen: a === 0 ? t.hyphen : undefined });
   const out = [];
   for (let cur of toks) {
     while (cur.type === 'word') {
@@ -486,15 +489,17 @@ function splitElisions(toks, m, u) {
       if (exactMatches(m, cur.keys).some(id => litMatch(m, cur, id, cur.keys))) break;
       if (u && u.words.some(w => userMatch(w, cur, userTyped(cur.keys), false))) break;
       const a = part(cur, 0, p + 1);
-      if (exactMatches(m, a.keys).some(id => m.words[id].endsWith("'") && litMatch(m, a, id, a.keys))) {
+      if (m.elided && exactMatches(m, a.keys).some(id => m.words[id].endsWith("'") && litMatch(m, a, id, a.keys))) {
         out.push(a);
         cur = part(cur, p + 1);
         continue;
       }
       const q = cur.keys.indexOf('#', p + 1), w = part(cur, 0, p), e = part(cur, p, q < 0 ? undefined : q);
-      if (!ending(e) || !exactMatches(m, w.keys).some(id => m.fullKeys[id] === w.keys && litMatch(m, w, id, w.keys))) break;
+      if (!word(w)) break;
       out.push(w);
-      cur = part(cur, p);
+      if (ending(e)) { cur = part(cur, p); continue; }
+      if (!word(part(cur, p + 1, q < 0 ? undefined : q))) { out.pop(); break; }
+      cur = Object.assign(part(cur, p + 1), { hyphen: true });   // well-known
     }
     out.push(cur);
   }
@@ -970,9 +975,11 @@ function render(m, result, hyp, start = {}) {
       const full = shown || c.partial || text;
       if (shown) text = c.partial ? shown.slice(0, text.length) : shown;
       if (CALL_SIGN.test(full.toLowerCase())) text = text.toUpperCase();
+      const joined = t.hyphen ? '-' : '';         // the second word of a hyphenated pair
       if ((m.params.flags & FLAG_I) && (text === 'i' || text.startsWith("i'"))) text = 'I' + text.slice(1);
       // keep brand styling like iPhone / eBay at the start of a sentence
       if (capNext && !/^[a-z][A-Z]/.test(text)) text = capFirst(text);
+      text = joined + text;
       if ((capNext || markNext) && (m.params.flags & FLAG_INVERTED)) {
         // "Hola, ¿qué tal?": a greeting or filler followed by a comma passes the mark on.
         let k = i + 1;

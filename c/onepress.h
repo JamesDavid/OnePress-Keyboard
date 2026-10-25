@@ -186,7 +186,7 @@ typedef struct {
 
 typedef struct {
     uint8_t type;       /* internal token type */
-    char lit;           /* punctuation typed exactly, or 0 */
+    char lit;           /* punctuation typed exactly, or 0; a word joined to the one before by a hyphen: '-' */
     uint16_t off, len;  /* word: span of keys[] / lits[]; space: its position in the keys given */
 } op_tok;
 
