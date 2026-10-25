@@ -473,7 +473,7 @@ function slipCandidates(m, tok, have) {
 // "peut-être"): the second token gets `hyphen` and is shown after a "-". Words that are whole
 // with their apostrophe (aujourd'hui, don't) stay whole.
 const isEnding = w => w[0] === "'" || w[0] === '-';
-function splitElisions(toks, m, u) {
+function splitElisions(toks, m, u, near) {
   if (m.elided === undefined) m.elided = m.words.some(w => w.endsWith("'") || isEnding(w));
   const ending = t => m.elided && exactMatches(m, t.keys).some(id => isEnding(m.words[id]) && litMatch(m, t, id, t.keys));
   const word = t => t.keys.length > 0 && exactMatches(m, t.keys).some(id => m.fullKeys[id] === t.keys && litMatch(m, t, id, t.keys));
@@ -493,6 +493,8 @@ function splitElisions(toks, m, u) {
       }
       if (exactMatches(m, cur.keys).some(id => litMatch(m, cur, id, cur.keys))) break;
       if (u && u.words.some(w => userMatch(w, cur, userTyped(cur.keys), false))) break;
+      // Typed on a letter keyboard: a word the taps fit (a slip in "i'll" changes its digits)
+      if (isQwerty(cur) && qwertyCandidates(m, cur, false, near)[0].length) break;
       const a = part(cur, 0, p + 1);
       if (m.elided && exactMatches(m, a.keys).some(id => m.words[id].endsWith("'") && litMatch(m, a, id, a.keys))) {
         out.push(a);
@@ -503,7 +505,8 @@ function splitElisions(toks, m, u) {
       if (!word(w)) break;
       out.push(w);
       if (ending(e)) { cur = part(cur, p); continue; }
-      if (!word(part(cur, p + 1, q < 0 ? undefined : q))) { out.pop(); break; }
+      // an apostrophe typed exactly is one: exact spelling has no hyphen
+      if (cur.lit[p] !== null || !word(part(cur, p + 1, q < 0 ? undefined : q))) { out.pop(); break; }
       cur = Object.assign(part(cur, p + 1), { hyphen: true });   // well-known
     }
     out.push(cur);
@@ -811,13 +814,15 @@ function context(m, u, start) {
 // last finished sentence (a mark, a space, then more) is unchanged (keys, QWERTY letters, start,
 // its user and network, locks up to there, beam), the search resumes after that sentence
 // instead of starting over, with exactly the same result (m.resume holds the point). The C
-// decoder does the same.
+// decoder does the same. lastScores: for each candidate of the last slot (index into its
+// cands), the best score of a full hypothesis ending in it (null if none), as a decode with that
+// candidate locked would score it (up to the beam), so the alternatives cost no extra decodes.
 const lockKey = (locks, j) => JSON.stringify(Object.keys(locks).filter(k => +k <= j).sort().map(k => [k, locks[k].keys, locks[k].text]));
 function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
   const P = m.params;
   const u = start.user && start.user.bos === m.bos ? start.user : null;
   const ctx = context(m, u, start);
-  const toks = splitElisions(joinLearned(tokenize(keys, start.hint || ''), u), m, u);
+  const toks = splitElisions(joinLearned(tokenize(keys, start.hint || ''), u), m, u, layoutNear(start.layout));
   const slots = [];
   toks.forEach((t, i) => { if (t.type !== 'space') slots.push({ tok: t, tokIndex: i }); });
   const lastTokIsWord = toks.length && toks[toks.length - 1].type === 'word';
@@ -845,7 +850,7 @@ function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
   let beam = [{ score: 0, prev: ctx.prev, t: triFind(m, ctx.prev2, ctx.prev), first: ctx.first, cf: ctx.cf, path: [], nk: nnKey, ns: nnSt }];
   const hint = start.hint || '', fp = JSON.stringify([beamWidth, start.before, start.prev, start.cap, start.layout]);
   const uv = u ? u.version || 0 : -1, R = m.resume;
-  let j0 = 0;
+  let j0 = 0, lastScores = null;
   if (R && R.u === u && R.uv === uv && R.nn === nn && R.fp === fp && keys.length > R.keys.length &&
       keys.startsWith(R.keys) && hint.slice(0, R.keys.length) === R.hint && R.j < slots.length - 1 &&
       lockKey(locks, R.j) === R.locks) { beam = R.beam; j0 = R.j + 1; }
@@ -898,6 +903,10 @@ function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
     // looks at). The sort is stable, so ties
     // keep generation order; the C decoder relies on the same rule.
     next.sort((a, b) => b.score - a.score);
+    if (isFinal) {               // each last-slot candidate's best score (the page ranks guesses by it)
+      lastScores = new Array(s.cands.length).fill(null);
+      for (const h of next) if (lastScores[h.path[j]] === null) lastScores[h.path[j]] = h.score;
+    }
     const qs = f => f === null ? 0 : m.qStart.has(f) ? 1 : 2;
     const states = new Set();
     beam = [];
@@ -919,7 +928,7 @@ function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
     if (s.tok.type === 'punct' && !isFinal && sp && sp.type === 'space')
       m.resume = { u, uv, nn, fp, keys: keys.slice(0, sp.at + 1), hint: hint.slice(0, sp.at + 1), j, beam, locks: lockKey(locks, j) };
   });
-  return { toks, slots, hyps: beam.slice(0, nBest), ctx };
+  return { toks, slots, hyps: beam.slice(0, nBest), ctx, lastScores };
 }
 
 // Render a hypothesis to display text with automatic capitalization: sentence starts, I, each

@@ -48,7 +48,7 @@ def main(out, qwerty):
 
         shot(900)
         for k in (QWERTY if qwerty else KEYS):
-            sel = f'[data-qk="{"0" if k == " " else k}"]' if qwerty else f'[data-key="{k}"]'
+            sel = f'[data-qk="{"space" if k == " " else k}"]' if qwerty else f'[data-key="{k}"]'
             if qwerty and k == " ": k = "0"
             pg.evaluate(f"pressAt({sel!r}, 0.45, 1)")
             shot(70)

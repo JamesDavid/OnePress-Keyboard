@@ -259,7 +259,7 @@ body { padding-block: clamp(8px, 2.2dvh, 20px) clamp(10px, 3dvh, 28px); }
   </div>
 
   <div class="notes">
-    <p>Press each key once per letter. <b>0</b> is a space, <b>1</b> deletes, and <b>*</b> swaps the selected word for the next guess, and holding it finishes the word you're typing. <b>#</b> is punctuation: the model picks . , ! or ?, and between letters it's an apostrophe. Apostrophes are optional, so "dont" also gives "don't". <b>Hold any number key</b> to type that digit (hold 1 for "1", hold 0 for "0"). Digits end the word, so hold 4 then type 3837 for "4ever". <b>#</b> next to digits makes money and decimals: # 6 # 000 # 00 gives "$6,000.00". For call signs, spell them once in exact mode (ke7aqa) and send: after that one press per character works, 5 3 7 2 7 2, with the 7 tapped or held.</p>
+    <p>Press each key once per letter. <b>0</b> is a space, <b>1</b> deletes (on the keyboard, holding ⌫ deletes a word at a time), and <b>*</b> swaps the selected word for the next guess, and holding it finishes the word you're typing. <b>#</b> is punctuation: the model picks . , ! or ?, and between letters it's an apostrophe. Apostrophes are optional, so "dont" also gives "don't". <b>Hold any number key</b> to type that digit (hold 1 for "1", hold 0 for "0"). Digits end the word, so hold 4 then type 3837 for "4ever". <b>#</b> next to digits makes money and decimals: # 6 # 000 # 00 gives "$6,000.00". For call signs, spell them once in exact mode (ke7aqa) and send: after that one press per character works, 5 3 7 2 7 2, with the 7 tapped or held.</p>
     <p><b>Hold #</b> for exact spelling, for names and words the model doesn't know. Press a key repeatedly to cycle its letters and then its digit (2 = a, b, c, 2), and pause or press another key to move on. # cycles . , ? ! ' : and 0 gives a space, or the digit 0 on a second press. On QWERTY, exact mode types the letter you tap. Hold # again to go back to predictive.</p>
     <p>Capitals are automatic: sentence starts, I, names, places, brands and apps with their usual capitalization (iPhone, McDonald's, YouTube), the words around a word ("in May" but "I may", "Will Smith"), and call signs (KE7AQA). For a word it learned from you, tap it and <b>Aa</b> to capitalize it from then on.</p>
     <p>A number that could be a time offers both: 5 # 30 is 5.30 on its own and 5:30 after at, by or until, or with am or pm after it. Tap it to switch.</p>
@@ -791,7 +791,7 @@ function slipCandidates(m, tok, have) {
 // "peut-être"): the second token gets `hyphen` and is shown after a "-". Words that are whole
 // with their apostrophe (aujourd'hui, don't) stay whole.
 const isEnding = w => w[0] === "'" || w[0] === '-';
-function splitElisions(toks, m, u) {
+function splitElisions(toks, m, u, near) {
   if (m.elided === undefined) m.elided = m.words.some(w => w.endsWith("'") || isEnding(w));
   const ending = t => m.elided && exactMatches(m, t.keys).some(id => isEnding(m.words[id]) && litMatch(m, t, id, t.keys));
   const word = t => t.keys.length > 0 && exactMatches(m, t.keys).some(id => m.fullKeys[id] === t.keys && litMatch(m, t, id, t.keys));
@@ -811,6 +811,8 @@ function splitElisions(toks, m, u) {
       }
       if (exactMatches(m, cur.keys).some(id => litMatch(m, cur, id, cur.keys))) break;
       if (u && u.words.some(w => userMatch(w, cur, userTyped(cur.keys), false))) break;
+      // Typed on a letter keyboard: a word the taps fit (a slip in "i'll" changes its digits)
+      if (isQwerty(cur) && qwertyCandidates(m, cur, false, near)[0].length) break;
       const a = part(cur, 0, p + 1);
       if (m.elided && exactMatches(m, a.keys).some(id => m.words[id].endsWith("'") && litMatch(m, a, id, a.keys))) {
         out.push(a);
@@ -1129,13 +1131,15 @@ function context(m, u, start) {
 // last finished sentence (a mark, a space, then more) is unchanged (keys, QWERTY letters, start,
 // its user and network, locks up to there, beam), the search resumes after that sentence
 // instead of starting over, with exactly the same result (m.resume holds the point). The C
-// decoder does the same.
+// decoder does the same. lastScores: for each candidate of the last slot (index into its
+// cands), the best score of a full hypothesis ending in it (null if none), as a decode with that
+// candidate locked would score it (up to the beam), so the alternatives cost no extra decodes.
 const lockKey = (locks, j) => JSON.stringify(Object.keys(locks).filter(k => +k <= j).sort().map(k => [k, locks[k].keys, locks[k].text]));
 function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
   const P = m.params;
   const u = start.user && start.user.bos === m.bos ? start.user : null;
   const ctx = context(m, u, start);
-  const toks = splitElisions(joinLearned(tokenize(keys, start.hint || ''), u), m, u);
+  const toks = splitElisions(joinLearned(tokenize(keys, start.hint || ''), u), m, u, layoutNear(start.layout));
   const slots = [];
   toks.forEach((t, i) => { if (t.type !== 'space') slots.push({ tok: t, tokIndex: i }); });
   const lastTokIsWord = toks.length && toks[toks.length - 1].type === 'word';
@@ -1163,7 +1167,7 @@ function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
   let beam = [{ score: 0, prev: ctx.prev, t: triFind(m, ctx.prev2, ctx.prev), first: ctx.first, cf: ctx.cf, path: [], nk: nnKey, ns: nnSt }];
   const hint = start.hint || '', fp = JSON.stringify([beamWidth, start.before, start.prev, start.cap, start.layout]);
   const uv = u ? u.version || 0 : -1, R = m.resume;
-  let j0 = 0;
+  let j0 = 0, lastScores = null;
   if (R && R.u === u && R.uv === uv && R.nn === nn && R.fp === fp && keys.length > R.keys.length &&
       keys.startsWith(R.keys) && hint.slice(0, R.keys.length) === R.hint && R.j < slots.length - 1 &&
       lockKey(locks, R.j) === R.locks) { beam = R.beam; j0 = R.j + 1; }
@@ -1216,6 +1220,10 @@ function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
     // looks at). The sort is stable, so ties
     // keep generation order; the C decoder relies on the same rule.
     next.sort((a, b) => b.score - a.score);
+    if (isFinal) {               // each last-slot candidate's best score (the page ranks guesses by it)
+      lastScores = new Array(s.cands.length).fill(null);
+      for (const h of next) if (lastScores[h.path[j]] === null) lastScores[h.path[j]] = h.score;
+    }
     const qs = f => f === null ? 0 : m.qStart.has(f) ? 1 : 2;
     const states = new Set();
     beam = [];
@@ -1237,7 +1245,7 @@ function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
     if (s.tok.type === 'punct' && !isFinal && sp && sp.type === 'space')
       m.resume = { u, uv, nn, fp, keys: keys.slice(0, sp.at + 1), hint: hint.slice(0, sp.at + 1), j, beam, locks: lockKey(locks, j) };
   });
-  return { toks, slots, hyps: beam.slice(0, nBest), ctx };
+  return { toks, slots, hyps: beam.slice(0, nBest), ctx, lastScores };
 }
 
 // Render a hypothesis to display text with automatic capitalization: sentence starts, I, each
@@ -1555,6 +1563,7 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
   // keypad digit: shown, and learned on Send, when no word matches (start.hint). hintKeys is the
   // key string it was made for; where keys changed since, the letters are dropped.
   let hint = '', hintKeys = '';
+  let ghostShown = false;          // a completion is shown in gray after the word being typed
   function hintFor(k) {
     let l = 0;
     while (l < k.length && l < hintKeys.length && k[l] === hintKeys[l]) l++;
@@ -1645,9 +1654,17 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
     const r = document.createElement('div'); r.className = 'r';
     for (const c of row) {
       const b = document.createElement('button'); b.type = 'button';
-      if (c === '*') { b.className = 'qk fn'; b.textContent = 'next'; b.setAttribute('aria-label', 'next guess; hold to finish the word'); holdable(b, () => press('*'), autocomplete); }
-      else if (c === 'del') { b.className = 'qk fn'; b.textContent = '⌫'; b.setAttribute('aria-label', 'delete'); b.onclick = () => press('1'); }
-      else if (c === 'space') { b.className = 'qk space'; b.textContent = 'space'; b.onclick = () => press('0'); }
+      if (c === '*') {
+        // On a letter keyboard the taps are seldom wrong, so finishing the word is what saves
+        // presses: tap accepts the completion shown (gray), else gives the next guess; hold always
+        // gives the next guess. (The keypad's * is the other way round: there the next guess is
+        // the usual fix.)
+        b.className = 'qk fn'; b.id = 'qwNext'; b.textContent = 'next';
+        b.setAttribute('aria-label', 'accept the suggestion, or the next guess; hold for the next guess');
+        holdable(b, () => (ghostShown ? autocomplete() : press('*')), () => press('*'));
+      }
+      else if (c === 'del') { b.className = 'qk fn'; b.textContent = '⌫'; b.setAttribute('aria-label', 'delete; hold to delete words'); deleteKey(b); }
+      else if (c === 'space') { b.className = 'qk space'; b.textContent = 'space'; tapKey(b, () => press('0')); }
       else if (c === '#') { b.className = 'qk fn wide'; b.textContent = '. , ? !'; b.setAttribute('aria-label', 'punctuation or apostrophe; hold for exact spelling'); holdable(b, () => press('#'), toggleExact); }
       else if (c === '123') {
         b.className = 'qk fn'; b.textContent = symbols ? 'ABC' : '123';
@@ -1660,7 +1677,7 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
       } else {
         const d = wordKeys(c);
         b.className = 'qk l'; b.innerHTML = `${c}<sup>${d}</sup>`; b.setAttribute('aria-label', `${c}, key ${d}`);
-        b.onclick = () => (exact ? pressLiteral(c) : press(d, c));
+        tapKey(b, () => (exact ? pressLiteral(c) : press(d, c)));
       }
       b.dataset.qk = c;
       r.appendChild(b);
@@ -1683,6 +1700,24 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
 
 
   // ---- Tap vs hold (420 ms): next / finish word, # / exact mode, digit keys / the digit ----
+  // Letter keys and space act on the finger going down, as phone keyboards feel: a click needs the
+  // finger to come up on the same key, which fast typing (the next thumb down first) and keys
+  // resizing under the finger (sizeKeys) can break, dropping the press. Enter / Space on a
+  // focused key (detail 0) still works.
+  function tapKey(b, fn) {
+    b.addEventListener('pointerdown', e => { if (e.button) return; e.preventDefault(); fn(); });
+    b.addEventListener('click', e => { if (e.detail === 0) fn(); });
+  }
+  // Delete: one press deletes one letter; held, it deletes a word at a time.
+  function deleteKey(b) {
+    let timer = null;
+    const stop = () => { clearTimeout(timer); timer = null; };
+    const repeat = () => { deleteWord(); timer = setTimeout(repeat, 300); };
+    b.addEventListener('pointerdown', e => { if (e.button) return; e.preventDefault(); press('1'); stop(); timer = setTimeout(repeat, 450); });
+    for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) b.addEventListener(ev, stop);
+    b.addEventListener('click', e => { if (e.detail === 0) press('1'); });
+    b.addEventListener('contextmenu', e => e.preventDefault());
+  }
   function holdable(b, onTap, onHold) {
     let timer = null, held = false;
     const start = () => { held = false; clearTimeout(timer); timer = setTimeout(() => { held = true; b.classList.add('down'); onHold(); setTimeout(() => b.classList.remove('down'), 150); }, 420); };
@@ -1797,6 +1832,13 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
     isExample = false;
     keys = keys.slice(0, -1); sel = null; update();
   }
+  // The last word: the spaces after it, then everything back to the space before it (its
+  // punctuation too), as a phone keyboard's held delete does.
+  function deleteWord() {
+    if (!keys) return;
+    isExample = false; tap = null;
+    keys = keys.replace(/0+$/, '').replace(/[^0]+$/, ''); sel = null; update();
+  }
 
   function decodeNow() {
     result = decode(m, keys, locks, 8, 1, startFor(modelId));    // the beam the devices use
@@ -1815,6 +1857,15 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
   function alternatives(j) {
     const s = result.slots[j];
     const seen = new Map();
+    if (j === result.slots.length - 1 && !locks[j] && result.lastScores) {
+      // The word being typed: the decode already scored each candidate (no decode per guess).
+      s.cands.forEach((c, ci) => {
+        const label = c.partial || c.text, score = result.lastScores[ci];
+        if (c.unknown || score === null || (seen.has(label) && seen.get(label).score >= score)) return;
+        seen.set(label, { label, score, completion: c.partial ? c.partial : null });
+      });
+      return [...seen.values()].sort((a, b) => b.score - a.score).slice(0, 8);
+    }
     for (const c of s.all.slice(0, 30)) {
       const label = c.partial || c.text;
       if (seen.has(label) || c.unknown) continue;
@@ -1866,6 +1917,7 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
     showLearned();
     const out = $('out');
     out.textContent = '';
+    ghostShown = false;
     if (!keys) {
       const p = document.createElement('span');
       p.className = 'placeholder'; p.textContent = 'Start pressing keys…';
@@ -1883,6 +1935,7 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
         if (piece.partial) {
           const g = document.createElement('span');
           g.className = 'ghost'; g.textContent = piece.partial.slice(piece.text.length);
+          ghostShown = true;
           out.appendChild(g);
         }
       }
@@ -1892,6 +1945,8 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
     $('keysShown').textContent = keys || ' ';
     $('exampleTag').textContent = exact ? 'ABC · exact spelling' : (isExample ? 'Example' : (keys ? keys.length + ' presses' : ''));
     renderAlts();
+    const qn = $('qwNext');
+    if (qn) qn.textContent = ghostShown ? 'accept' : 'next';
     sizeKeys();
     renderCompare();
     tutCheck();
@@ -2259,7 +2314,7 @@ if (typeof module !== 'undefined') module.exports = { buildModel, decode, render
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     let k = e.key;
     if (k === 'Tab') { e.preventDefault(); flash('*'); autocomplete(); return; }
-    if (k === 'Backspace') { e.preventDefault(); flash('1'); backspace(); return; }
+    if (k === 'Backspace') { e.preventDefault(); flash('1'); (e.ctrlKey || e.altKey ? deleteWord : backspace)(); return; }
     if (exact && /^[a-zA-Z'.,!?]$/.test(k)) { e.preventDefault(); flash(/[a-z]/i.test(k) ? wordKeys(k.toLowerCase()) : '#', k.toLowerCase()); pressLiteral(k.toLowerCase()); return; }
     if (exact && /^[0-9]$/.test(k)) { e.preventDefault(); pressLiteral(String.fromCharCode(65 + +k)); return; }
     if (k === ' ') { if (exact) { e.preventDefault(); flash('0'); pressLiteral('0'); return; } k = '0'; }

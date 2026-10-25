@@ -4,7 +4,7 @@
 key once per letter (2 = abc, 3 = def, ...). A small word model reads the whole sentence and picks
 the letters, so `66 0 69 0 929 0 4663` becomes "On my way home".
 
-<p align="center"><img src="docs/demo.gif" alt="Typing on the OnePress keypad: each key pressed once per letter, and the words settle as the sentence goes on" width="360"></p>
+<p align="center"><img src="docs/demo.gif" alt="Typing on the OnePress keypad: each key pressed once per letter, and the words settle as the sentence goes on" width="300"> <img src="docs/demo-qwerty.gif" alt="Typing on the QWERTY keyboard: the decoder reads the taps and the sentence" width="300"></p>
 
 **[Try the demo →](https://jamesdavid.github.io/OnePress-Keyboard/)** It runs entirely in your
 browser, and a short tutorial starts on your first visit.
@@ -34,9 +34,13 @@ browser, and a short tutorial starts on your first visit.
   "$6,000.00", and "at 5 # 30" gives "at 5:30" (5.30 is one tap away).
 - **Exact spelling** (multi-tap) for anything else, mixed freely with predicted words.
 - **Letter keyboards too, in each language's layout** (QWERTY, QWERTZ, AZERTY, Russian, Greek,
-  Arabic, ...). The letters you tap count, and a tap on a neighboring key is forgiven: in English 99.7%
-  of words right typing accurately, 96.8% with one letter in ten on the wrong key. A word it
-  doesn't know keeps the letters you tapped.
+  Arabic, ...), arranged like the iOS keyboard. The letters you tap count, and a tap on a
+  neighboring key is forgiven: with one letter in ten on the wrong key, 96.8% of English words
+  still come out right, against 92.3% for one-word-at-a-time autocorrect. A word it doesn't know
+  keeps the letters you tapped.
+  - **accept / next:** where iOS has shift. Tap it to accept the suggested completion (shown in
+    gray), or for the next guess when there's none; hold it for the next guess.
+  - **Delete:** hold ⌫ to delete a word at a time.
 - **Words run together.** A long word it doesn't know is tried as known words written as one
   ("icecreamtruck", "snowmanparty", "lollypops"), ranked by the compounds wordfreq knows and how
   often each word starts or ends one, with the other splits a tap away.
@@ -54,11 +58,43 @@ browser, and a short tutorial starts on your first visit.
 
 Apostrophes are optional ("dont" gives "don't").
 
-## Accuracy
+## Accuracy, and how it compares
 
-Two held-out test sets: real text messages from people the models never saw (NUS SMS corpus,
-US/Canada users, with plenty of texting shorthand) and modern written chat (Topical-Chat's test
-split, words the model lacks spelled out). `node tests/eval.js`:
+Everything here is measured on text the models never saw. There are two English test sets:
+
+- **Texting:** real text messages from people the models never saw (NUS SMS corpus, US/Canada
+  users), full of shorthand.
+- **Chat:** modern written chat (Topical-Chat's test split).
+
+The scripts in `tests/` reproduce every number.
+
+### On a keypad: one press per letter
+
+| Method | Presses per letter | Texting: words right | Chat: words right | Texting: punctuation |
+|---|---|---|---|---|
+| Multi-tap (press 7 four times for "s") | **2.15**, plus a pause every ~10 letters | 100% | 100% | typed |
+| Classic predictive keypad (one word at a time) | 1 | 89.1% | 95.2% | 19% |
+| **OnePress** (`onepress.bin`) | 1 | **94.1%** | **98.6%** | **49.8%** |
+| **OnePress** + neural network | 1 | **95.0%** | **99.0%** | **55.4%** |
+
+**Compared with multi-tap:**
+- Multi-tap is always right, but it costs more than twice the presses.
+- You also have to wait whenever two letters in a row share a key.
+
+**Compared with a classic predictive keypad:** both take one press per letter, but the classic
+one picks each word alone, by how common it is. OnePress makes far fewer mistakes:
+
+| Wrong words per 100 | Classic keypad | OnePress | OnePress + network |
+|---|---|---|---|
+| Texting | 10.9 | 5.9 (46% fewer) | 5.0 (54% fewer) |
+| Chat | 4.8 | 1.4 (71% fewer) | 1.0 (79% fewer) |
+
+**Why it's better:**
+- **It reads the whole sentence.** `4663` is "good", "home" or "gone", and only the words around
+  it say which. A later word can still fix an earlier one, so "on my way" turns `4663` into
+  "home".
+- **It picks punctuation** from the sentence, so a question gets "?". A classic keypad only gives
+  "." unless you cycle through the marks.
 
 | Model | Size | Texting: words | Texting: punctuation | Chat: words | Chat: punctuation | For |
 |---|---|---|---|---|---|---|
@@ -70,12 +106,46 @@ split, words the model lacks spelled out). `node tests/eval.js`:
 | `onepress-s.bin` (5k words) | 239 KB | 89.0% | 46.6% | 98.5% | 64.9% | radios, nRF52 |
 | A classic one-word-at-a-time keypad | | 89.1% | 19% | 95.2% | 49% | |
 
-Spanish (`onepress-es.bin`, 1.9 MB): 97.9% of words right on held-out Tatoeba sentences, accents
-included (a classic keypad: 91.7%). QWERTY: 99.6% of words right typing accurately, 96.5% with
-one tap in ten on a neighboring key (`tests/qwerty_eval.js`).
+**Other languages** are measured on held-out Tatoeba sentences (`tests/eval.js --oov-exact`,
+against `tests/baseline.js`):
+- OnePress gets 96.1–98.7% of words right, against 83–95% for a classic keypad.
+- Arabic is much harder: its keypad puts far more common words on the same keys, and words are
+  written without short vowels. It gets 81–82%, against 66%.
+- The full table is in [SPEC.md](SPEC.md).
 
-With learning, replaying each person's messages in order (`node tests/learn_eval.js`, all 84 test
-users): words go from 90.2% to 93.1%, and punctuation from 58.6% to 66.8%.
+**With learning:** replaying each person's messages in order (`node tests/learn_eval.js`, all 84
+test users), words go from 90.2% to 93.1% and punctuation from 58.6% to 66.8%.
+
+### On a letter keyboard (QWERTY and others)
+
+Does the improvement hold on a full keyboard? **Yes, once taps miss.** To test it, each test
+message is typed on QWERTY with a share of letters landing on a neighboring key, and the same
+taps go to three methods:
+
+- **Raw:** the letters exactly as tapped, with no correction.
+- **Classic autocorrect:** one word at a time, it takes the most common dictionary word whose
+  letters are each the tapped one or a neighbor (`tests/qwerty_eval.js --baseline word`).
+- **OnePress:** the taps plus the whole sentence.
+
+| Letters on a neighboring key | Raw | Classic autocorrect | **OnePress** |
+|---|---|---|---|
+| Texting, 0% | 100% | 99.97% | 99.66% |
+| Texting, 3% | 87.4% | 97.2% | **98.7%** |
+| Texting, 10% | 67.4% | 92.3% | **96.8%** |
+| Chat, 0% | 100% | 99.81% | 99.41% |
+| Chat, 3% | 86.7% | 97.5% | **98.9%** |
+| Chat, 10% | 65.7% | 93.1% | **98.0%** |
+
+- **With slips:** OnePress makes 55–71% fewer wrong words than one-word-at-a-time correction.
+  The sentence tells it which neighbor you meant.
+- **With perfect typing:** it is 0.3–0.4 points worse. Now and then the sentence overrides a short
+  word typed correctly ("if" becomes "of").
+- **Why not trust the taps more:** that fixes perfect typing, but loses more than it gains once
+  even 3% of taps slip (tuned on the dev split).
+- **Real phone keyboards (Gboard, iOS) aren't measured here.** They use context too, so they sit
+  somewhere between the classic autocorrect column and OnePress.
+
+Every language's own layout is measured the same way, in [SPEC.md](SPEC.md).
 
 ## Use it in your project
 

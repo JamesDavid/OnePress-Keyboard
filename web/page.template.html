@@ -259,7 +259,7 @@ body { padding-block: clamp(8px, 2.2dvh, 20px) clamp(10px, 3dvh, 28px); }
   </div>
 
   <div class="notes">
-    <p>Press each key once per letter. <b>0</b> is a space, <b>1</b> deletes, and <b>*</b> swaps the selected word for the next guess, and holding it finishes the word you're typing. <b>#</b> is punctuation: the model picks . , ! or ?, and between letters it's an apostrophe. Apostrophes are optional, so "dont" also gives "don't". <b>Hold any number key</b> to type that digit (hold 1 for "1", hold 0 for "0"). Digits end the word, so hold 4 then type 3837 for "4ever". <b>#</b> next to digits makes money and decimals: # 6 # 000 # 00 gives "$6,000.00". For call signs, spell them once in exact mode (ke7aqa) and send: after that one press per character works, 5 3 7 2 7 2, with the 7 tapped or held.</p>
+    <p>Press each key once per letter. <b>0</b> is a space, <b>1</b> deletes (on the keyboard, holding ⌫ deletes a word at a time), and <b>*</b> swaps the selected word for the next guess, and holding it finishes the word you're typing. <b>#</b> is punctuation: the model picks . , ! or ?, and between letters it's an apostrophe. Apostrophes are optional, so "dont" also gives "don't". <b>Hold any number key</b> to type that digit (hold 1 for "1", hold 0 for "0"). Digits end the word, so hold 4 then type 3837 for "4ever". <b>#</b> next to digits makes money and decimals: # 6 # 000 # 00 gives "$6,000.00". For call signs, spell them once in exact mode (ke7aqa) and send: after that one press per character works, 5 3 7 2 7 2, with the 7 tapped or held.</p>
     <p><b>Hold #</b> for exact spelling, for names and words the model doesn't know. Press a key repeatedly to cycle its letters and then its digit (2 = a, b, c, 2), and pause or press another key to move on. # cycles . , ? ! ' : and 0 gives a space, or the digit 0 on a second press. On QWERTY, exact mode types the letter you tap. Hold # again to go back to predictive.</p>
     <p>Capitals are automatic: sentence starts, I, names, places, brands and apps with their usual capitalization (iPhone, McDonald's, YouTube), the words around a word ("in May" but "I may", "Will Smith"), and call signs (KE7AQA). For a word it learned from you, tap it and <b>Aa</b> to capitalize it from then on.</p>
     <p>A number that could be a time offers both: 5 # 30 is 5.30 on its own and 5:30 after at, by or until, or with am or pm after it. Tap it to switch.</p>
@@ -314,6 +314,7 @@ __DECODER__
   // keypad digit: shown, and learned on Send, when no word matches (start.hint). hintKeys is the
   // key string it was made for; where keys changed since, the letters are dropped.
   let hint = '', hintKeys = '';
+  let ghostShown = false;          // a completion is shown in gray after the word being typed
   function hintFor(k) {
     let l = 0;
     while (l < k.length && l < hintKeys.length && k[l] === hintKeys[l]) l++;
@@ -404,9 +405,17 @@ __DECODER__
     const r = document.createElement('div'); r.className = 'r';
     for (const c of row) {
       const b = document.createElement('button'); b.type = 'button';
-      if (c === '*') { b.className = 'qk fn'; b.textContent = 'next'; b.setAttribute('aria-label', 'next guess; hold to finish the word'); holdable(b, () => press('*'), autocomplete); }
-      else if (c === 'del') { b.className = 'qk fn'; b.textContent = '⌫'; b.setAttribute('aria-label', 'delete'); b.onclick = () => press('1'); }
-      else if (c === 'space') { b.className = 'qk space'; b.textContent = 'space'; b.onclick = () => press('0'); }
+      if (c === '*') {
+        // On a letter keyboard the taps are seldom wrong, so finishing the word is what saves
+        // presses: tap accepts the completion shown (gray), else gives the next guess; hold always
+        // gives the next guess. (The keypad's * is the other way round: there the next guess is
+        // the usual fix.)
+        b.className = 'qk fn'; b.id = 'qwNext'; b.textContent = 'next';
+        b.setAttribute('aria-label', 'accept the suggestion, or the next guess; hold for the next guess');
+        holdable(b, () => (ghostShown ? autocomplete() : press('*')), () => press('*'));
+      }
+      else if (c === 'del') { b.className = 'qk fn'; b.textContent = '⌫'; b.setAttribute('aria-label', 'delete; hold to delete words'); deleteKey(b); }
+      else if (c === 'space') { b.className = 'qk space'; b.textContent = 'space'; tapKey(b, () => press('0')); }
       else if (c === '#') { b.className = 'qk fn wide'; b.textContent = '. , ? !'; b.setAttribute('aria-label', 'punctuation or apostrophe; hold for exact spelling'); holdable(b, () => press('#'), toggleExact); }
       else if (c === '123') {
         b.className = 'qk fn'; b.textContent = symbols ? 'ABC' : '123';
@@ -419,7 +428,7 @@ __DECODER__
       } else {
         const d = wordKeys(c);
         b.className = 'qk l'; b.innerHTML = `${c}<sup>${d}</sup>`; b.setAttribute('aria-label', `${c}, key ${d}`);
-        b.onclick = () => (exact ? pressLiteral(c) : press(d, c));
+        tapKey(b, () => (exact ? pressLiteral(c) : press(d, c)));
       }
       b.dataset.qk = c;
       r.appendChild(b);
@@ -442,6 +451,24 @@ __DECODER__
 
 
   // ---- Tap vs hold (420 ms): next / finish word, # / exact mode, digit keys / the digit ----
+  // Letter keys and space act on the finger going down, as phone keyboards feel: a click needs the
+  // finger to come up on the same key, which fast typing (the next thumb down first) and keys
+  // resizing under the finger (sizeKeys) can break, dropping the press. Enter / Space on a
+  // focused key (detail 0) still works.
+  function tapKey(b, fn) {
+    b.addEventListener('pointerdown', e => { if (e.button) return; e.preventDefault(); fn(); });
+    b.addEventListener('click', e => { if (e.detail === 0) fn(); });
+  }
+  // Delete: one press deletes one letter; held, it deletes a word at a time.
+  function deleteKey(b) {
+    let timer = null;
+    const stop = () => { clearTimeout(timer); timer = null; };
+    const repeat = () => { deleteWord(); timer = setTimeout(repeat, 300); };
+    b.addEventListener('pointerdown', e => { if (e.button) return; e.preventDefault(); press('1'); stop(); timer = setTimeout(repeat, 450); });
+    for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) b.addEventListener(ev, stop);
+    b.addEventListener('click', e => { if (e.detail === 0) press('1'); });
+    b.addEventListener('contextmenu', e => e.preventDefault());
+  }
   function holdable(b, onTap, onHold) {
     let timer = null, held = false;
     const start = () => { held = false; clearTimeout(timer); timer = setTimeout(() => { held = true; b.classList.add('down'); onHold(); setTimeout(() => b.classList.remove('down'), 150); }, 420); };
@@ -556,6 +583,13 @@ __DECODER__
     isExample = false;
     keys = keys.slice(0, -1); sel = null; update();
   }
+  // The last word: the spaces after it, then everything back to the space before it (its
+  // punctuation too), as a phone keyboard's held delete does.
+  function deleteWord() {
+    if (!keys) return;
+    isExample = false; tap = null;
+    keys = keys.replace(/0+$/, '').replace(/[^0]+$/, ''); sel = null; update();
+  }
 
   function decodeNow() {
     result = decode(m, keys, locks, 8, 1, startFor(modelId));    // the beam the devices use
@@ -574,6 +608,15 @@ __DECODER__
   function alternatives(j) {
     const s = result.slots[j];
     const seen = new Map();
+    if (j === result.slots.length - 1 && !locks[j] && result.lastScores) {
+      // The word being typed: the decode already scored each candidate (no decode per guess).
+      s.cands.forEach((c, ci) => {
+        const label = c.partial || c.text, score = result.lastScores[ci];
+        if (c.unknown || score === null || (seen.has(label) && seen.get(label).score >= score)) return;
+        seen.set(label, { label, score, completion: c.partial ? c.partial : null });
+      });
+      return [...seen.values()].sort((a, b) => b.score - a.score).slice(0, 8);
+    }
     for (const c of s.all.slice(0, 30)) {
       const label = c.partial || c.text;
       if (seen.has(label) || c.unknown) continue;
@@ -625,6 +668,7 @@ __DECODER__
     showLearned();
     const out = $('out');
     out.textContent = '';
+    ghostShown = false;
     if (!keys) {
       const p = document.createElement('span');
       p.className = 'placeholder'; p.textContent = 'Start pressing keys…';
@@ -642,6 +686,7 @@ __DECODER__
         if (piece.partial) {
           const g = document.createElement('span');
           g.className = 'ghost'; g.textContent = piece.partial.slice(piece.text.length);
+          ghostShown = true;
           out.appendChild(g);
         }
       }
@@ -651,6 +696,8 @@ __DECODER__
     $('keysShown').textContent = keys || ' ';
     $('exampleTag').textContent = exact ? 'ABC · exact spelling' : (isExample ? 'Example' : (keys ? keys.length + ' presses' : ''));
     renderAlts();
+    const qn = $('qwNext');
+    if (qn) qn.textContent = ghostShown ? 'accept' : 'next';
     sizeKeys();
     renderCompare();
     tutCheck();
@@ -980,7 +1027,7 @@ __LANG_MENU__
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     let k = e.key;
     if (k === 'Tab') { e.preventDefault(); flash('*'); autocomplete(); return; }
-    if (k === 'Backspace') { e.preventDefault(); flash('1'); backspace(); return; }
+    if (k === 'Backspace') { e.preventDefault(); flash('1'); (e.ctrlKey || e.altKey ? deleteWord : backspace)(); return; }
     if (exact && /^[a-zA-Z'.,!?]$/.test(k)) { e.preventDefault(); flash(/[a-z]/i.test(k) ? wordKeys(k.toLowerCase()) : '#', k.toLowerCase()); pressLiteral(k.toLowerCase()); return; }
     if (exact && /^[0-9]$/.test(k)) { e.preventDefault(); pressLiteral(String.fromCharCode(65 + +k)); return; }
     if (k === ' ') { if (exact) { e.preventDefault(); flash('0'); pressLiteral('0'); return; } k = '0'; }

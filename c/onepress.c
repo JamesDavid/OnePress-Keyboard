@@ -673,6 +673,9 @@ static int word_fits(const op_decoder *d, const op_model *m, const op_tok *t, in
     }
     return 0;
 }
+static int is_qwerty(const op_decoder *d, const op_tok *t);
+static int qwerty_cands(const op_decoder *d, const op_model *m, const op_tok *t, int is_last,
+                        cand *out, cand *comp, int *n_comp);
 static int split_elisions(op_decoder *d, const op_model *m) {
     for (int i = 0; i < d->n_toks; i++) {
         op_tok *t = &d->toks[i];
@@ -691,6 +694,11 @@ static int split_elisions(op_decoder *d, const op_model *m) {
             cut = q;
         } else {
             if (word_fits(d, m, t, t->len, 0)) continue;
+            if (is_qwerty(d, t)) {                  /* a word the taps fit (a slip in "i'll" changes its digits) */
+                cand qc[OP_MAX_EXACT], qcomp[OP_MAX_COMPLETIONS];
+                int n_qc;
+                if (qwerty_cands(d, m, t, 0, qc, qcomp, &n_qc) > 0) continue;
+            }
             if (m->elided && word_fits(d, m, t, p + 1, 1)) cut = p + 1;
             else if (!word_fits(d, m, t, p, 3)) continue;
             else if (m->elided && word_fits(d, m, &e, e.len, 2)) cut = p;
@@ -698,7 +706,7 @@ static int split_elisions(op_decoder *d, const op_model *m) {
                 op_tok r = *t;
                 r.off = (uint16_t)(t->off + p + 1);
                 r.len = (uint16_t)(q - p - 1);
-                if (!r.len || !word_fits(d, m, &r, r.len, 3)) continue;
+                if (d->lits[t->off + p] || !r.len || !word_fits(d, m, &r, r.len, 3)) continue;   /* an exact ' stays one */
                 cut = p + 1;
                 hyphen = 1;
             }

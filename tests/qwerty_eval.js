@@ -6,6 +6,10 @@
 //   node tests/qwerty_eval.js [test.txt] [--miss 0.1] [--model onepress.bin] [--nn file]
 //                             [--layout "qwertzuiopü|asdfghjklöä|yxcvbnm"] [--limit N]
 // Words count as right when the decoded word is the intended one (case ignored).
+// --baseline raw: the letters as tapped, no correction. --baseline word: a classic autocorrect,
+// one word at a time with no context: the most frequent dictionary word of the same length whose
+// letters are each the tapped one or a neighbor (-8 nats per neighbor, as the decoder charges),
+// else the letters as tapped. Same taps and typos as the decoder's run.
 const fs = require('fs'), path = require('path');
 const D = require(path.join(__dirname, '../web/decoder.js'));
 const args = process.argv.slice(2);
@@ -13,6 +17,7 @@ const opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args.splice(i
 const miss = +opt('--miss', 0.1), limit = +opt('--limit', 0);
 const modelFile = opt('--model', path.join(__dirname, '../model/onepress.bin')), nnFile = opt('--nn');
 const layout = opt('--layout', 'qwertyuiop|asdfghjkl|zxcvbnm');
+const baseline = opt('--baseline');
 const params = opt('--params');                    // tuning: "near,far" in nats
 const testFile = args[0] || path.join(__dirname, '../model/corpora/nus/test_na.txt');
 const m = D.buildModel(fs.readFileSync(modelFile));
@@ -32,6 +37,30 @@ let refs = fs.readFileSync(testFile, 'utf8').split('\n').filter(Boolean);
 if (limit) refs = refs.slice(0, limit);
 const lower = m.words.some(w => w.includes('ı')) ? s => s.replace(/İ/g, 'i').replace(/I/g, 'ı').toLowerCase() : s => s.toLowerCase();
 const TOK = /[\p{L}]+(?:'[\p{L}]+)?(?:-[\p{L}]+)*|[.,!?]/gu;
+let byLen = null;
+function autocorrect(t) {
+  if (!t) return t;
+  if (!byLen) {
+    byLen = new Map();
+    m.words.forEach((x, i) => { if (/^\p{L}+$/u.test(x)) { if (!byLen.has(x.length)) byLen.set(x.length, []); byLen.get(x.length).push(i); } });
+  }
+  const nb = [...t].map(c => new Set(near(c)));
+  let best = t, bestScore = -Infinity;
+  for (const i of byLen.get(t.length) || []) {
+    const x = m.words[i];
+    let n = 0, j = 0;
+    for (; j < x.length; j++) {
+      const c = tapOf(x[j]) || x[j];
+      if (c === t[j]) continue;
+      if (!nb[j].has(c)) break;
+      n++;
+    }
+    if (j < x.length) continue;
+    const score = m.uni[i] / m.scale - 8 * n;
+    if (score > bestScore) { bestScore = score; best = x; }
+  }
+  return best;
+}
 let w = 0, wt = 0, typo = 0;
 for (const ref of refs) {
   let keys = '', hint = '', ok = true;
@@ -45,9 +74,17 @@ for (const ref of refs) {
     else if ('.,!?\'-'.includes(ch)) { keys += '#'; hint += ' '; }
   }
   if (!ok) continue;
-  const r = D.decode(m, keys, {}, 8, 1, { hint, nn, layout });
-  const out = lower(D.render(m, r, r.hyps[0]).map(p => p.text).join(''));
+  let out;
+  if (baseline) {                                // the message with each letter as tapped
+    let k = 0;
+    out = [...lower(ref)].map(c => /\p{L}/u.test(c) ? hint[k++] : (c === ' ' || ".,!?'-".includes(c) ? (k++, c) : c)).join('');
+    if (baseline === 'word') out = out.replace(/\p{L}+/gu, autocorrect);
+  }
+  else {
+    const r = D.decode(m, keys, {}, 8, 1, { hint, nn, layout });
+    out = lower(D.render(m, r, r.hyps[0]).map(p => p.text).join(''));
+  }
   const a = lower(ref).match(TOK) || [], b = out.match(TOK) || [];
   a.forEach((x, j) => { if (/\p{L}/u.test(x)) { wt++; w += x.replace(/'/g, '') === (b[j] || '').replace(/'/g, ''); } });
 }
-console.log(`${path.basename(testFile)}, ${(100 * miss).toFixed(0)}% of letters on a neighboring key (${typo} typos): words ${(100 * w / wt).toFixed(2)}% (${wt})`);
+console.log(`${baseline ? baseline + ' baseline, ' : ''}${path.basename(testFile)}, ${(100 * miss).toFixed(0)}% of letters on a neighboring key (${typo} typos): words ${(100 * w / wt).toFixed(2)}% (${wt})`);
