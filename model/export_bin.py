@@ -60,8 +60,10 @@ SECTIONS = [
 # punctParams when present (see tune_punct.js).
 # slipSub / slipDup (optional: older files stop at "unknown"): the penalty for a word one keypad
 # slip away (a neighboring key; a key pressed twice), 0 to leave those out (decoder.js slipCandidates).
+# flags (optional, an integer, not a log-prob): 1 capitalizes "i" (English), 2 opens a question or
+# exclamation with ¿ / ¡ (Spanish).
 PARAMS = ["qQ", "qN", "dQ", "cF", "dB", "cB", "eB", "apostrophe", "completion", "literal", "unknown",
-          "slipSub", "slipDup"]
+          "slipSub", "slipDup", "flags"]
 DEFAULTS = {"qQ": 2.5, "qN": -1.5, "dQ": -1.5, "cF": -3, "dB": 0, "cB": 0, "eB": 0,
             "apostrophe": math.log(0.5), "completion": math.log(0.5), "literal": -14, "unknown": -25,
             "slipSub": -12, "slipDup": -8}
@@ -74,11 +76,27 @@ QUESTION_STARTERS = ['what', 'where', 'when', 'why', 'who', 'whom', 'whose', 'wh
 QUESTION_SKIP = ['hello', 'hi', 'hey', 'hiya', 'yo', 'ok', 'okay', 'oh', 'well', 'so', 'and', 'but',
     'also', 'anyway', 'btw', 'dear', 'dude', 'babe', 'guys', 'lol', 'haha', 'hmm', 'um', 'uh', 'ah',
     'yeah', 'sorry', 'thanks', 'wow']
+# Per language (model.json "lang", from build_model.py --lang): question openers, words skipped
+# before them, and the flags param.
+LANGS = {
+    "en": (QUESTION_STARTERS, QUESTION_SKIP, 1),
+    "es": (["qué", "que", "cómo", "como", "dónde", "donde", "adónde", "cuándo", "cuando", "cuál", "cuáles",
+            "quién", "quiénes", "cuánto", "cuánta", "cuántos", "cuántas", "puedes", "puede", "podrías",
+            "podemos", "tienes", "tiene", "hay", "estás", "está", "eres", "es", "vas", "vamos", "quieres",
+            "sabes", "has", "te", "me", "hiciste", "viste", "fuiste", "crees", "verdad"],
+           ["hola", "bueno", "oye", "pues", "y", "pero", "entonces", "vale", "ok", "mira", "ah", "eh", "oh",
+            "jaja", "gracias", "perdón", "disculpa", "bien", "sí", "no", "ya", "también"], 2),
+}
 LAMBDA_K = 40   # lambda = c / (c + LAMBDA_K), Witten-Bell style
 TRI_K = int(__import__("os").environ.get("TRI_K", 40))      # the same for three-word contexts
 
 KEYMAP = {c: k for k, letters in {"2": "abc", "3": "def", "4": "ghi", "5": "jkl", "6": "mno",
           "7": "pqrs", "8": "tuv", "9": "wxyz", "#": "'"}.items() for c in letters}
+# Accented letters U+00C0-U+00FF take their base letter's key (decoder.js FOLD).
+FOLD = "aaaaaaaceeeeiiiidnooooo\0ouuuuyts" "aaaaaaaceeeeiiiidnooooo\0ouuuuyty"
+for x in range(0xC0, 0x100):
+    if FOLD[x - 0xC0] != "\0":
+        KEYMAP[chr(x)] = KEYMAP[FOLD[x - 0xC0]]
 
 def keys(w):
     return "".join(KEYMAP[c] for c in w)
@@ -157,17 +175,18 @@ def reduce(M, vocab=0, min_count=0, ambig_only=False, tri_min=0, tri_contexts=65
 # log over the unigram's, in 1/4 nat. Tuned on held-out wordfreq compounds: the right word first
 # 37% of the time (unigram and word pairs alone: 21%), in the 6 offered 68% (50%).
 COMPOUND_K = 0.03
-def compound_lifts(words, logp):
+def compound_lifts(words, logp, lang="en"):
     import re, wordfreq
     vocab = {w: i for i, w in enumerate(words)}
     head, tail = Counter(), Counter()
-    for w in wordfreq.get_frequency_dict("en", "large"):
-        if not re.fullmatch(r"[a-z]{4,24}", w) or w in vocab:
+    letters = "a-z" if lang == "en" else "a-z\u00df-\u00f6\u00f8-\u00ff"
+    for w in wordfreq.get_frequency_dict(lang, "large"):
+        if not re.fullmatch(f"[{letters}]{{4,24}}", w) or w in vocab:
             continue
         splits = [(w[:i], w[i:]) for i in range(2, len(w) - 1) if w[:i] in vocab and w[i:] in vocab]
         if not splits:
             continue
-        wt = max(wordfreq.zipf_frequency(w, "en", "large") - 1, 0.05) / len(splits)
+        wt = max(wordfreq.zipf_frequency(w, lang, "large") - 1, 0.05) / len(splits)
         for a, b in splits:
             head[vocab[a]] += wt
             tail[vocab[b]] += wt
@@ -200,6 +219,8 @@ def main():
     n = len(words)
     assert bos == n + len(P) and bos < 0xFFFF, "token ids must fit in u16"
     rank = {w: i for i, w in enumerate(words)}
+    lang = M.get("lang", "en")
+    starters, skip_words, flags = LANGS[lang]
 
     sec = {}
     text = [w.encode() for w in words]
@@ -268,7 +289,7 @@ def main():
         tkey.append(a << 16 | b)
         tbow.append(q(math.log(max(1 - p_sum, 1e-9) / max(1 - b_sum, 1e-9))))
         tstart.append(len(tnext))
-    sec["qSkip"] = u16(sorted(rank[w] for w in QUESTION_SKIP if w in rank))
+    sec["qSkip"] = u16(sorted(rank[w] for w in skip_words if w in rank))
     sec["triKey"] = struct.pack(f"<{len(tkey)}I", *tkey)
     sec["triStart"] = struct.pack(f"<{len(tstart)}I", *tstart)
     sec["triBow"] = i16(tbow)
@@ -285,7 +306,7 @@ def main():
     sec["altId"] = u16([i for i, _ in alts])
     sec["altOff"] = struct.pack(f"<{len(alts) + 1}I", *aoff)
     sec["altText"] = b"".join(atext)
-    ch, ct = ([], []) if no_compounds else compound_lifts(words, M["logp"])
+    ch, ct = ([], []) if no_compounds else compound_lifts(words, M["logp"], lang)
     sec["cmpHead"] = struct.pack(f"<{len(ch)}b", *ch)
     sec["cmpTail"] = struct.pack(f"<{len(ct)}b", *ct)
 
@@ -293,11 +314,12 @@ def main():
     sec["bow"] = i16(bow)
     sec["next"] = u16(nxt)
     sec["lp"] = i16(lps)
-    sec["qStart"] = u16(sorted(rank[w] for w in QUESTION_STARTERS if w in rank))
+    sec["qStart"] = u16(sorted(rank[w] for w in starters if w in rank))
     sec["punct"] = "".join(P).encode()
     params = dict(DEFAULTS, **M.get("punctParams", {}))
     if no_slips:
         params.update(slipSub=0, slipDup=0)
+    params["flags"] = flags / SCALE           # q() scales it back to the integer
     sec["params"] = i16([q(params[k]) for k in PARAMS])
 
     head = b"KPD2" + struct.pack("<HHHHHH", 1, SCALE, n, len(P), bos, len(SECTIONS))

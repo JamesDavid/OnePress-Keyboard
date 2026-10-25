@@ -30,9 +30,18 @@ const m = D.buildModel(fs.readFileSync(modelFile));
 const nn = nnFile ? D.buildNN(fs.readFileSync(nnFile), m) : undefined;
 const nnWeight = opt('--nn-weight');            // tuning: override the file's weight (1/256)
 if (nn && nnWeight) nn.weight = +nnWeight;
-const enc = s => s.toLowerCase().replace(/'/g, '').replace(/[.,!?]/g, '#').replace(/ /g, '0')
-  .replace(/[a-z]/g, c => D.wordKeys(c));
-const TOK = /[a-z]+(?:'[a-z]+)?|[.,!?]/g;
+// --oov-exact: words the model lacks are spelled in exact mode, as a person would, and not scored
+// (for test sets that keep them, like test_chat.txt).
+const oovExact = args.includes('--oov-exact');
+if (oovExact) args.splice(args.indexOf('--oov-exact'), 1);
+const known = new Set(m.words);
+const isOov = w => oovExact && !known.has(w) && !known.has(w.replace(/'/g, ''));
+// Letters include the accented ones (other languages); exact mode has no accents, so a word
+// the model lacks is spelled with its plain letters.
+const L = 'a-zß-öø-ÿ', plain = x => x.normalize('NFD').replace(/[̀-ͯ]/g, '');
+const enc = s => s.toLowerCase().split(' ').map(w => w.replace(new RegExp(`[${L}']+`), x => isOov(x) ? plain(x) : x.replace(/'/g, '')
+  .replace(new RegExp(`[${L}]`, 'g'), c => D.wordKeys(c)))).join('0').replace(/[.,!?]/g, '#');
+const TOK = new RegExp(`[${L}]+(?:'[${L}]+)?|[.,!?]`, 'g');
 const toks = s => s.toLowerCase().match(TOK) || [];
 
 let hyps;
@@ -45,7 +54,7 @@ else hyps = refs.map(s => {
 const ms = Date.now() - t0;
 if (outFile) fs.writeFileSync(outFile, hyps.join('\n') + '\n');
 
-const st = { sent: 0, w: 0, wt: 0, a: 0, at: 0, p: 0, pt: 0 };
+const st = { sent: 0, w: 0, wt: 0, a: 0, at: 0, p: 0, pt: 0, oov: 0 };
 const errs = new Map();
 refs.forEach((ref, i) => {
   const a = toks(ref), b = toks(hyps[i] || '');
@@ -53,6 +62,7 @@ refs.forEach((ref, i) => {
   a.forEach((x, j) => {
     const y = b[j], ok = x === y;
     if (/[.,!?]/.test(x)) { st.pt++; st.p += ok; return; }
+    if (isOov(x)) { st.oov++; return; }
     st.wt++; st.w += ok;
     if (D.exactMatches(m, D.wordKeys(x.replace(/'/g, ''))).length > 1) {
       st.at++; st.a += ok;
@@ -64,6 +74,7 @@ const pct = (a, b) => (100 * a / b).toFixed(2) + '%';
 console.log(`${path.basename(testFile)}: ${refs.length} messages${hypFile ? '' : `, ${(ms / refs.length).toFixed(1)} ms/msg`}`);
 console.log(`  sentences exact   ${pct(st.sent, refs.length)}`);
 console.log(`  words             ${pct(st.w, st.wt)}  (${st.wt})`);
+if (oovExact) console.log(`  spelled exactly   ${pct(st.oov, st.oov + st.wt)}  (${st.oov} words the model lacks, not scored)`);
 console.log(`  ambiguous words   ${pct(st.a, st.at)}  (${st.at})`);
 console.log(`  punctuation       ${pct(st.p, st.pt)}  (${st.pt})`);
 console.log('  top ambiguous errors: ' + [...errs].sort((x, y) => y[1] - x[1]).slice(0, 12)

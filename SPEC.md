@@ -21,7 +21,7 @@ This file is the hand-off for Claude Code. Read it first, then `web/decoder.js` 
 | Web source | `web/page.template.html`, `web/decoder.js` | Template has `__DECODER__`, `__MODEL_*__`, `__SIZE_*__` and `__WORDS_*__` placeholders; `web/build_page.py` (run by `model/build.sh`) fills them. `decoder.js` is the reference decoder. |
 | C decoder | `c/onepress.h`, `c/onepress.c` | Done. C99, no allocation, reads the model in place. Output identical to `decoder.js` (`tests/parity.js`). For iOS (call from Swift), Android (NDK) and firmware. |
 | Model pipeline | `model/` | Done. `build.sh` builds `model.json` (counts) and three KPD2 models: `onepress.bin` (45k words, three-word context, phones/web), `onepress-m.bin` (20k, ESP32), `onepress-s.bin` (5k, radios/nRF52). Data and licenses: `DATA.md`. |
-| Held-out evaluation | `tests/eval.js`, `model/prep_nus.py` | NUS SMS corpus split by user into train/dev/test. Tune on dev, report US/Canada test. |
+| Held-out evaluation | `tests/eval.js`, `model/prep_nus.py`, `model/prep_chat_test.py` | NUS SMS corpus split by user into train/dev/test (texting, with its shorthand). Tune on dev, report US/Canada test. Second test set: Topical-Chat's official test splits (modern written chat, `test_chat.txt`, 15,653 messages), which nothing trains on; its validation splits are `dev_chat.txt`. Unlike the NUS files it keeps words the model lacks; `--oov-exact` spells those in exact mode and scores the rest. |
 | Python LLM decoder | `python/keypad_decode.py` | Written, logic tested with a toy LM. **Never run against a real Hugging Face model.** |
 | iOS keyboard extension, container app, Xcode project | — | **Not started.** Needs a Mac. Use the C decoder (the old Swift port was removed). |
 | Android keyboard | — | Not started. Buildable on Windows; would use the C decoder via the NDK. |
@@ -119,7 +119,18 @@ Each person gets a small fixed-size table (`newUser` / `learn` in decoder.js, `o
 - **Decoding** (`start.nn`; C `op_nn_open`, `start.nn` + `start.nn_work`): the network reads BOS and the current line of `start.before`; each hypothesis carries its state; every word candidate gets `weight/256 ·` its log-probability (weight 320 = 1.25; numbers, unknown and learned words score as UNK). Punctuation is left to the rules (the network voted worse on NUS texts). Hypotheses are still merged by the word model's state and the best of each keeps its own network state: keeping them all apart crowded the beam and cost accuracy.
 - **Cost:** ~0.3M multiply-adds per kept hypothesis per word (beam 8 → ~2.4M), plus one 128-wide dot product per candidate. `op_nn_work` is ~38 KB. `-DOP_NO_NN` compiles it out.
 - **Effect** (held-out NUS): US/Canada words 94.14% → 95.14%, ambiguous 92.12% → 93.48%, punctuation 49.8% → 50.6%; all users words 91.84% → 93.16%, punctuation 59.4% → 58.5%. With learning, US/Canada words 95.67%.
+- **Punctuation:** each mark also gets `punctWeight/256 ·` its log-probability (KPN1 header offset 28; 384 = 1.5 in `onepress-nn.bin`, 0 in older files), on top of the punctuation rules. Tuned on NUS dev and chat dev: 0.5 to 1.5 all helped, 3 and above hurt. Held-out US/Canada: punctuation 50.6% → 55.4%, words 95.14% → 94.98% (the marks change the next word's context).
 - **Why not a pretrained model:** rescoring the decoder's alternatives with distilgpt2 (82M) or SmolLM2-135M gave similar gains (`tests/nn_export.js`, `tests/nn_rerank.py`), but at 15–20× the size; the 6M network beats distilgpt2 on all NUS users because it saw texting in training.
+
+### Other languages
+
+`build_model.py --lang xx` builds a model for another wordfreq language: no English extras (Gutenberg, movie reviews, names, messages.txt), words may hold accented letters, and the text comes from the corpora given (cased). `export_bin.py` reads the language from model.json for its question openers, the words skipped before them, and the `flags` param. Both decoders read accented Latin letters (U+00C0–U+00FF) in a model's words: each is typed with its base letter's key (á → 2, ñ → 6, ü → 8, ß → 7, the `FOLD` table), and an exact or QWERTY letter matches it through that base letter (exact mode has no accents, so `n` matches `ñ`). A sentence's first letter is capitalized accents included (é → É). `flags`: 1 capitalizes "i" (English; older files), 2 opens a question or exclamation with ¿ / ¡ (Spanish), placed after a leading greeting or filler and its comma ("Hola, ¿qué tal?").
+
+- **Spanish** (`onepress-es.bin`, 45k words, 1.9 MB): wordfreq Spanish plus Tatoeba's Spanish sentences (`prep_tatoeba.py`: 382k train, 22k dev, 22k test, split by sentence id). Held-out Tatoeba test: words 97.85% (accents count: "como" for "cómo" is wrong), ambiguous 97.06%, punctuation 76.9%, with 3.0% of words spelled out as the model lacks them; the classic most-frequent-word keypad gets 91.70% of words. Tatoeba sentences are short and tidy, so expect less on real chat.
+
+### Speed
+
+Every key press decodes the whole composition again. That is cheap: on a desktop CPU a 212-press, four-sentence message costs under 0.06 ms per press on average with the radio and ESP32 models at beam 4 (C, process start included), so a 64 MHz nRF52, perhaps 100–200 times slower, needs about 5–10 ms per press, and the longest prefix about twice that. Finished sentences are frozen, so restarting the search from the last one is possible if a target ever needs it.
 
 ---
 

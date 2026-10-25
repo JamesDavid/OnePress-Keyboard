@@ -4,13 +4,25 @@
 const KEYMAP = { a:'2',b:'2',c:'2',d:'3',e:'3',f:'3',g:'4',h:'4',i:'4',j:'5',k:'5',l:'5',
   m:'6',n:'6',o:'6',p:'7',q:'7',r:'7',s:'7',t:'8',u:'8',v:'8',w:'9',x:'9',y:'9',z:'9',"'":'#' };
 const KEY_LETTERS = { '#':"'", '2':'abc','3':'def','4':'ghi','5':'jkl','6':'mno','7':'pqrs','8':'tuv','9':'wxyz' };
+// Accented Latin letters (U+00C0-U+00FF: Spanish, French, German, ...) are typed with their base
+// letter's key, and an exact or QWERTY letter matches them through it (n matches ñ). The C
+// decoder has the same table (FOLD_C3).
+const FOLD = 'aaaaaaaceeeeiiiidnooooo\0ouuuuyts' + 'aaaaaaaceeeeiiiidnooooo\0ouuuuyty';   // U+00C0-U+00FF
+const fold = c => { const x = c.charCodeAt(0); return x >= 0xc0 && x <= 0xff && FOLD[x - 0xc0] !== '\0' ? FOLD[x - 0xc0] : c; };
+for (let x = 0xc0; x <= 0xff; x++) { const c = String.fromCharCode(x), f = fold(c); if (f !== c) KEYMAP[c] = KEYMAP[f]; }
+// Upper case of a word's first letter: a-z and the accented lowercase letters (not ß, ÿ, ÷).
+const capFirst = t => { const x = t.charCodeAt(0);
+  return (x >= 97 && x <= 122) || (x >= 0xe0 && x <= 0xfe && x !== 0xf7) ? String.fromCharCode(x - 32) + t.slice(1) : t; };
 const SECTIONS = ['wordText', 'wordOff', 'keyIdx', 'stripIdx', 'dispId', 'dispOff', 'dispText', 'uni',
   'rowStart', 'bow', 'next', 'lp', 'qStart', 'punct', 'params',
   // optional (older files stop at params):
   'qSkip', 'triKey', 'triStart', 'triBow', 'triNext', 'triLp', 'capKey', 'altId', 'altOff', 'altText', 'capNextKey', 'capKeepKey',
   'cmpHead', 'cmpTail'];
 const PARAMS = ['qQ', 'qN', 'dQ', 'cF', 'dB', 'cB', 'eB', 'apostrophe', 'completion', 'literal', 'unknown',
-  'slipSub', 'slipDup'];    // optional: older files stop at 'unknown' (defaults below)
+  'slipSub', 'slipDup', 'flags'];    // optional: older files stop at 'unknown' (defaults below)
+// params.flags: FLAG_I capitalizes "i" (English), FLAG_INVERTED opens a question or exclamation
+// with ¿ / ¡ (Spanish).
+const FLAG_I = 1, FLAG_INVERTED = 2;
 const MAX_EXACT = 40, MAX_COMPLETIONS = 12;
 const AFTER_NUMBER = -2;           // beam state after a number (the model has no number token)
 const AFTER_DECIMAL = -3;          // after a number that could have been a time but was read as 5.30
@@ -51,7 +63,8 @@ function buildModel(bytes) {
   const fullKeys = words.map(wordKeys);
   const raw = at('params', Int16Array), params = {};
   PARAMS.forEach((k, i) => { params[k] = raw[i]; });
-  if (raw.length < PARAMS.length) Object.assign(params, { slipSub: -12 * scale, slipDup: -8 * scale });
+  const OPTIONAL = { slipSub: -12 * scale, slipDup: -8 * scale, flags: FLAG_I };
+  for (let i = raw.length; i < PARAMS.length; i++) params[PARAMS[i]] = OPTIONAL[PARAMS[i]];
   return {
     words, display, fullKeys, n, bos, scale, params,
     timeIds: ['am', 'pm'].map(w => words.indexOf(w)).filter(i => i >= 0),
@@ -231,7 +244,7 @@ function litMatch(m, tok, id, key) { return litMatchText(tok, m.words[id], key);
 function litMatchText(tok, word, key) {
   const text = (key.includes('#') ? word : word.replace(/'/g, '')).toLowerCase();   // learned words may be cased
   for (let i = 0; i < tok.lit.length; i++) {
-    if (tok.lit[i] !== null && text[i] !== tok.lit[i]) return false;
+    if (tok.lit[i] !== null && fold(text[i] || '') !== tok.lit[i]) return false;
   }
   return true;
 }
@@ -314,8 +327,9 @@ function tapCost(m, tok, word) {
   let c = 0;
   for (let i = 0; i < tok.keys.length; i++) {
     const h = tok.hint[i];
-    if (h === null || w[i] === h) continue;
-    c += QWERTY_NEAR[h].includes(w[i]) ? QW_NEAR * q : QW_FAR * q;
+    const ch = fold(w[i] || '');
+    if (h === null || ch === h) continue;
+    c += ch && QWERTY_NEAR[h].includes(ch) ? QW_NEAR * q : QW_FAR * q;
   }
   return c;
 }
@@ -436,7 +450,7 @@ function slotCandidates(m, tok, isLast, u) {
   if (allLit) {
     // Spelled out exactly: always offer it as typed, even if it isn't in the word list.
     const typed = tok.lit.join('');
-    const known = exact.filter(c => c.text.toLowerCase().replace(/'/g, '') === typed.replace(/'/g, '') && c.text.length === typed.length);
+    const known = exact.filter(c => [...c.text.toLowerCase().replace(/'/g, '')].map(fold).join('') === typed.replace(/'/g, '') && c.text.length === typed.length);
     if (known.length) return known;
     return [{ text: typed, id: -1, literal: true }];
   }
@@ -511,8 +525,8 @@ function compounds(m, tok) {
 // ---- Neural word model (optional): a small GRU over the word model's vocabulary ----
 // KPN1 file from model/export_nn.py; all integer, so the C decoder gives the same results.
 // With start.nn, every candidate word also gets weight/256 * log P(word | everything before
-// it), which sees further back than the word pairs (punctuation is left to its rules, which do
-// better on real texts). Hypotheses are still merged by the word model's state, and the best of
+// it), which sees further back than the word pairs, and each punctuation mark punctWeight/256 *
+// its log P, on top of the punctuation rules (0 in older files: rules only). Hypotheses are still merged by the word model's state, and the best of
 // each keeps its own network state: keeping them all apart crowds the beam with near-copies.
 function buildNN(bytes, m) {
   if (bytes.byteOffset % 4) bytes = new Uint8Array(bytes);
@@ -520,7 +534,7 @@ function buildNN(bytes, m) {
   if (String.fromCharCode(...bytes.subarray(0, 4)) !== 'KPN1') throw new Error('not a KPN1 network');
   const u16 = o => dv.getUint16(o, true);
   const nn = { E: u16(6), H: u16(8), V: u16(10), bos: u16(12), unk: u16(14), weight: dv.getInt16(16, true),
-    modelBos: u16(26), cache: new Map() };
+    modelBos: u16(26), punctWeight: dv.getInt16(28, true), cache: new Map() };
   if (m && nn.modelBos !== m.bos) throw new Error('this network belongs to another word model');
   if (nn.E > 256 || nn.H > 256) throw new Error('network too large');
   let off = 32;
@@ -674,7 +688,7 @@ function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
         let step = c.id < 0 ? (c.number ? 0 : c.literal ? P.literal : P.unknown) : tokenScore(m, u, h.prev, c.id, h.t) + (c.penalty || 0) +
           (ctx.recent.has(c.id) && (c.id > m.bos || m.uni[c.id] < RECENT_MAX_UNI * m.scale) ? Math.round(RECENT_BONUS * m.scale) : 0);
         if (c.time) step += m.scale * ((m.timeBefore.has(h.prev) ? TIME_PREV : -TIME_ALONE) - (timeKind(s.tok.keys) === '.' ? TIME_LITERAL : 0));
-        if (nn && !(c.id >= m.n && c.id < m.bos)) step += (nn.weight * nnScore(nn, h.ns.p, nnTok(c.id))) >> 8;   // words only: the punctuation rules do better
+        if (nn) step += ((c.id >= m.n && c.id < m.bos ? nn.punctWeight : nn.weight) * nnScore(nn, h.ns.p, nnTok(c.id))) >> 8;
         let prev = c.timeable ? AFTER_DECIMAL : c.number ? AFTER_NUMBER : c.id < 0 ? -1 : c.id;
         let first = h.first, cf = h.cf;
         if (c.id >= m.n && c.id < m.bos) {
@@ -752,12 +766,25 @@ function capFlip(m, prev, id, next) {
     (next >= 0 && next < m.n && inSorted(m.capNextKey, id * 65536 + next));
 }
 
+// Spanish opens a question or exclamation with ¿ / ¡: the mark that ends the sentence going on
+// from token i (commas don't end it), if it has been typed yet.
+function invertedMark(toks, slots, bySlotTok, hyp, i) {
+  for (let k = i + 1; k < toks.length; k++) {
+    if (toks[k].type !== 'punct') continue;
+    const j = bySlotTok.get(k), t = slots[j].cands[hyp.path[j]].text;
+    if (t === '?') return '¿';
+    if (t === '!') return '¡';
+    if (t === '.') return '';
+  }
+  return '';
+}
+
 function render(m, result, hyp, start = {}) {
   const { toks, slots } = result;
   const bySlotTok = new Map();
   slots.forEach((s, j) => bySlotTok.set(s.tokIndex, j));
   const ctx = result.ctx || context(m, null, start);
-  let capNext = ctx.cap;
+  let capNext = ctx.cap, markNext = false;      // markNext: the inverted mark waits past "Hola,"
   let prev = ctx.prev;                                            // as decode's context
   const pieces = [];
   toks.forEach((t, i) => {
@@ -779,14 +806,23 @@ function render(m, result, hyp, start = {}) {
       const full = shown || c.partial || text;
       if (shown) text = c.partial ? shown.slice(0, text.length) : shown;
       if (CALL_SIGN.test(full.toLowerCase())) text = text.toUpperCase();
-      if (text === 'i' || text.startsWith("i'")) text = 'I' + text.slice(1);
+      if ((m.params.flags & FLAG_I) && (text === 'i' || text.startsWith("i'"))) text = 'I' + text.slice(1);
       // keep brand styling like iPhone / eBay at the start of a sentence
-      if (capNext && !/^[a-z][A-Z]/.test(text)) text = text.charAt(0).toUpperCase() + text.slice(1);
+      if (capNext && !/^[a-z][A-Z]/.test(text)) text = capFirst(text);
+      if ((capNext || markNext) && (m.params.flags & FLAG_INVERTED)) {
+        // "Hola, ¿qué tal?": a greeting or filler followed by a comma passes the mark on.
+        let k = i + 1;
+        while (k < toks.length && toks[k].type === 'space') k++;
+        const comma = k < toks.length && toks[k].type === 'punct' && slots[bySlotTok.get(k)].cands[hyp.path[bySlotTok.get(k)]].text === ',';
+        if (comma && m.qSkip.has(c.id)) markNext = true;
+        else { text = invertedMark(toks, slots, bySlotTok, hyp, i) + text; markNext = false; }
+      }
       if (c.partial) partial = CALL_SIGN.test(full.toLowerCase()) ? full.toUpperCase() : full;
       capNext = false;
       prev = c.id >= 0 && c.id < m.n && !c.partial ? c.id : -1;
     } else {
       capNext = /^[.!?]$/.test(text);
+      if (capNext) markNext = false;
       prev = c.id < 0 ? -1 : c.text === ',' ? c.id : m.bos;
     }
     pieces.push({ text, slot: j, partial, unknown: c.unknown });
@@ -818,7 +854,7 @@ function nextLetterProbs(m, result, hyp, start = {}) {
         if (seen.has(id) || key.length <= k.length) continue;
         seen.add(id);
         const text = key.includes('#') ? m.words[id] : m.words[id].replace(/'/g, '');
-        const c = text.charCodeAt(k.length) - 97;
+        const c = fold(text[k.length] || ' ').charCodeAt(0) - 97;
         if (c >= 0 && c < 26) p[c] += Math.exp(lp(m, prev, id) / S);
       }
     }
@@ -829,7 +865,7 @@ function nextLetterProbs(m, result, hyp, start = {}) {
     if (!m.firstLetter) {
       m.firstLetter = new Float64Array(26);
       for (let i = 0; i < m.n; i++) {
-        const c = m.words[i].charCodeAt(0) - 97;
+        const c = fold(m.words[i][0]).charCodeAt(0) - 97;
         if (c >= 0 && c < 26) m.firstLetter[c] += Math.exp(m.uni[i] / S);
       }
     }
@@ -839,7 +875,7 @@ function nextLetterProbs(m, result, hyp, start = {}) {
       for (let e = m.rowStart[prev]; e < m.rowStart[prev + 1]; e++) {
         const id = m.next[e];
         if (id >= m.n) continue;
-        const c = m.words[id].charCodeAt(0) - 97;
+        const c = fold(m.words[id][0]).charCodeAt(0) - 97;
         if (c >= 0 && c < 26) p[c] += Math.exp(m.lp[e] / S) - Math.exp((bow + m.uni[id]) / S);
       }
     }
@@ -973,7 +1009,7 @@ function learn(m, u, result, hyp, start = {}) {
     const c = s.cands[hyp.path[j]];
     let id = c.id;
     if (c.number) { prev = AFTER_NUMBER; return; }
-    if (c.compound && c.compound.length <= USER_WORD_LEN) id = userWord(m, u, c.compound);
+    if (c.compound && /^[a-z']+$/.test(c.compound) && c.compound.length <= USER_WORD_LEN) id = userWord(m, u, c.compound);
     else if ((c.literal || c.typed) && /^[a-z'0-9]+$/.test(c.text) && c.text.length <= USER_WORD_LEN) id = userWord(m, u, c.text);
     else if (c.partial || id < 0) { prev = -1; return; }
     userBump(u, USER_ANY, id);

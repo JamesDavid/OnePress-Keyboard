@@ -16,6 +16,7 @@ const nnFile = opt('--nn');
 if (learnMode) args.splice(args.indexOf('--learn'), 1);
 const beam = +opt('--beam', 8), nFuzz = +opt('--fuzz', 5000);
 const modelFile = opt('--model', path.join(__dirname, '../model/onepress.bin'));
+const textFile = opt('--text');
 const exe = args[0] || path.join(__dirname, '../build/opdecode' + (process.platform === 'win32' ? '.exe' : ''));
 const m = D.buildModel(fs.readFileSync(modelFile));
 
@@ -27,6 +28,16 @@ for (const f of ['test.txt', 'dev.txt']) {
   if (fs.existsSync(p)) for (const s of fs.readFileSync(p, 'utf8').split('\n')) if (s) inputs.push(enc(s));
 }
 inputs.push(enc("Can you pick up the kids after school?"), enc("We're going to McDonald's tonight!"), '');
+// --text file: its sentences too (e.g. corpora/es/dev.txt for a Spanish model), accents included,
+// some with the text before and QWERTY letters (plain).
+if (textFile) {
+  const plain = x => x.normalize('NFD').replace(/[̀-ͯ]/g, '');
+  for (const line of fs.readFileSync(textFile, 'utf8').split('\n').filter(Boolean).slice(0, 2000)) {
+    const low = line.toLowerCase().replace(/'/g, '');
+    const k = [...low].map(c => c === ' ' ? '0' : '.,!?'.includes(c) ? '#' : D.wordKeys(c) || '').join('');
+    inputs.push(k, k + '\t' + line.split(' ').slice(0, 3).join(' ') + '\t' + [...plain(low)].map(c => /[a-z]/.test(c) ? c : ' ').join(''));
+  }
+}
 // Known words run together (compounds), some with letters typed exactly or an apostrophe.
 const COMPOUNDS = [enc('lollypops'), enc('i love lollypops'), enc('snowmanparty'), enc('bestfriendforever'),
   '5655976l77', 'l6559767767', enc('the bluebirdnest is'), '766#7468', '4663968727983', enc('kittycatz')];

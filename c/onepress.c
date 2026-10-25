@@ -9,6 +9,8 @@ enum { N_SECTIONS = 15, N_ALL_SECTIONS = 29 };     /* sections 15..28 are option
 
 static const char KEY_OF[26] = "22233344455566677778889999";
 static const char FIRST_LETTER[8] = "adgjmptw";     /* first letter of keys 2-9 */
+#define FLAG_I 1                /* params[OP_P_FLAGS]: capitalize "i" (English) */
+#define FLAG_INVERTED 2         /* open a question / exclamation with an inverted mark (Spanish) */
 #define AFTER_NUMBER 0xFFFE     /* beam state after a number (the model has no number token) */
 #define AFTER_DECIMAL 0xFFFC    /* after a number that could have been a time but was read as 5.30 */
 #define TIME_BONUS 8            /* nats for "am"/"pm" right after a number or a time */
@@ -77,6 +79,7 @@ int op_model_open(op_model *m, const void *data, size_t size) {
         return OP_ERR_MODEL;
     m->param[OP_P_SLIP_SUB] = (int16_t)(-12 * m->scale);     /* defaults for files without them */
     m->param[OP_P_SLIP_DUP] = (int16_t)(-8 * m->scale);
+    m->param[OP_P_FLAGS] = FLAG_I;
     for (int i = 0; i < OP_N_PARAMS && 2u * i + 2 <= len[14]; i++) m->param[i] = (int16_t)rd16((const uint8_t *)sec[14] + 2 * i);
     m->q_skip = (const uint16_t *)sec[15];
     m->n_skip = len[15] / 2;
@@ -173,6 +176,37 @@ static int32_t lp3(const op_model *m, uint16_t t, uint16_t prev, uint16_t cur) {
     return m->tri_bow[t] + lp(m, prev, cur);
 }
 
+/* Accented Latin letters (U+00C0-U+00FF, UTF-8 C3 80-BF) are typed with their base letter's key,
+ * and an exact or QWERTY letter matches them through it. Same table as decoder.js FOLD. */
+static const char FOLD_C3[65] = "aaaaaaaceeeeiiiidnooooo\0ouuuuyts" "aaaaaaaceeeeiiiidnooooo\0ouuuuyty";
+
+/* The character of w at *i, lowercased and folded to a-z where it is a letter ('?' for other
+ * non-ASCII characters); moves *i past it. */
+static char next_ch(const char *w, int wn, int *i) {
+    unsigned char c = (unsigned char)w[(*i)++];
+    if (c < 0x80) return (char)(c >= 'A' && c <= 'Z' ? c + 32 : c);
+    if (c == 0xC3 && *i < wn) {
+        char f = FOLD_C3[((unsigned char)w[(*i)++] - 0x80) & 63];
+        return f ? f : '?';
+    }
+    while (*i < wn && ((unsigned char)w[*i] & 0xC0) == 0x80) (*i)++;
+    return '?';
+}
+/* Characters in w[0..wn), and the bytes taken by its first `chars` characters. */
+static int u8_len(const char *w, int wn) {
+    int n = 0;
+    for (int i = 0; i < wn; i++) n += ((unsigned char)w[i] & 0xC0) != 0x80;
+    return n;
+}
+static int u8_prefix(const char *w, int wn, int chars) {
+    int i = 0;
+    while (i < wn && chars-- > 0) {
+        i++;
+        while (i < wn && ((unsigned char)w[i] & 0xC0) == 0x80) i++;
+    }
+    return i;
+}
+
 /* Compare the keys of word `id` (apostrophes dropped if strip) with q[0..qn).
  * Returns <0, 0, >0 like strcmp; *starts is set when the word's keys begin with q. */
 static int key_cmp(const op_model *m, uint16_t id, int strip, const char *q, int qn, int *starts) {
@@ -181,7 +215,7 @@ static int key_cmp(const op_model *m, uint16_t id, int strip, const char *q, int
     for (int j = 0;; j++) {
         int c = -1;
         while (i < wn) {
-            char ch = w[i++];
+            char ch = next_ch(w, wn, &i);
             if (ch == '\'') { if (strip) continue; c = '#'; }
             else c = (ch >= 'a' && ch <= 'z') ? KEY_OF[ch - 'a'] : '?';
             break;
@@ -220,10 +254,11 @@ static int find_word(const op_model *m, const char *w) {
 
 /* Does word w (apostrophes dropped if strip) agree with the exact letters in lit[0..n)? */
 static int lit_match_text(const char *w, int wn, int strip, const char *lit, int n) {
-    int t = 0;
-    for (int i = 0; i < wn && t < n; i++) {
-        if (strip && w[i] == '\'') continue;
-        if (lit[t] && lit[t] != (w[i] >= 'A' && w[i] <= 'Z' ? w[i] + 32 : w[i])) return 0;   /* learned words may be cased */
+    int t = 0, i = 0;
+    while (i < wn && t < n) {
+        char ch = next_ch(w, wn, &i);       /* learned words may be cased */
+        if (strip && ch == '\'') continue;
+        if (lit[t] && lit[t] != ch) return 0;
         t++;
     }
     for (; t < n; t++) if (lit[t]) return 0;    /* word shorter than the exact letters */
@@ -283,8 +318,7 @@ static int same_letters(const char *a, int an, const char *b, int bn) {
         while (i < an && a[i] == '\'') i++;
         while (j < bn && b[j] == '\'') j++;
         if (i == an || j == bn) return i == an && j == bn;
-        char x = a[i++], y = b[j++];
-        if ((x >= 'A' && x <= 'Z' ? x + 32 : x) != (y >= 'A' && y <= 'Z' ? y + 32 : y)) return 0;
+        if (next_ch(a, an, &i) != next_ch(b, bn, &j)) return 0;
     }
 }
 
@@ -699,10 +733,9 @@ static int is_qwerty(const op_decoder *d, const op_tok *t) {
 static int32_t tap_cost(const op_model *m, const op_decoder *d, const op_tok *t, const char *w, int wn) {
     int strip = !memchr(d->keys + t->off, '#', (size_t)t->len), j = 0;
     int32_t c = 0, q = m->scale >> 2;
-    for (int i = 0; i < wn && j < t->len; i++) {
-        char ch = w[i];
+    for (int i = 0; i < wn && j < t->len;) {
+        char ch = next_ch(w, wn, &i);
         if (strip && ch == '\'') continue;
-        if (ch >= 'A' && ch <= 'Z') ch = (char)(ch + 32);
         char h = d->hints[t->off + j++];
         if (!h || ch == h) continue;
         c += strchr(QWERTY_NEAR[h - 'a'], ch) && ch ? QW_NEAR * q : QW_FAR * q;
@@ -772,7 +805,7 @@ static void qw_walk(qw_walk_state *w, int len) {
         int nb = prefix_best(m, w->pre, len, NULL, best);
         for (int j = 0; j < nb; j++) {
             int tn = op_word(m, best[j], &text);
-            if (tn <= len) continue;
+            if (u8_len(text, tn) <= len) continue;
             int32_t pen = m->param[OP_P_COMPLETION] + tap_cost(m, w->d, w->t, text, tn);
             qw_add(&w->comp, (cand){ best[j], OP_PARTIAL, pen }, m->uni[best[j]] + pen);
         }
@@ -955,7 +988,7 @@ static int slot_cands(const op_decoder *d, const op_model *m, const op_tok *t, i
         for (int e = 0; e < n; e++) {
             const char *w;
             int wn = tok_text(m, u, out[e].id, &w);
-            if (wn == kn && same_letters(w, wn, lit, kn)) out[kept++] = out[e];
+            if (u8_len(w, wn) == kn && same_letters(w, wn, lit, kn)) out[kept++] = out[e];
         }
         if (kept) return kept;
         out[0] = (cand){ OP_NONE, OP_LITERAL, 0 };
@@ -1087,6 +1120,7 @@ int op_nn_open(op_nn *nn, const void *data, size_t size, const op_model *m) {
     nn->E = rd16(b + 6); nn->H = rd16(b + 8); nn->V = rd16(b + 10);
     nn->bos = rd16(b + 12); nn->unk = rd16(b + 14); nn->weight = (int16_t)rd16(b + 16);
     nn->model_bos = rd16(b + 26);
+    nn->punct_weight = (int16_t)rd16(b + 28);
     if ((m && nn->model_bos != m->bos) || nn->E > OP_NN_MAX || nn->H > OP_NN_MAX) return OP_ERR_MODEL;
     size_t off = 32, E = nn->E, H = nn->H, V = nn->V;
     #define TAKE(dst, T, n) do { off = (off + 3) & ~(size_t)3; if (off + (n) * sizeof(T) > size) return OP_ERR_MODEL; \
@@ -1233,8 +1267,8 @@ int op_decode(op_decoder *d, const op_model *m, const char *keys, int beam,
                     step = token_score(m, d->user, prev[h], id, tri[h]) + c[ci].pen + recent_bonus(d, m, id);
                     p = id;
                 }
-                if (nn && !(id >= m->n_words && id < m->bos))     /* words only: the punctuation rules do better */
-                    step += (nn->weight * nn_score(nn, w->p[cur][h], NN_TOK(id))) >> 8;
+                if (nn)
+                    step += ((id >= m->n_words && id < m->bos ? nn->punct_weight : nn->weight) * nn_score(nn, w->p[cur][h], NN_TOK(id))) >> 8;
                 if (id != OP_NONE && id >= m->n_words && id < m->bos) {
                     /* Punctuation: a word-pair model can't see how the sentence began,
                      * so use the sentence's first word to judge question vs statement. */
@@ -1369,7 +1403,7 @@ static int call_sign(const char *w, int n) {
 }
 
 int op_render(const op_decoder *d, const op_model *m, const op_start *start, char *out, int cap) {
-    int n = 0, cap_next = d->ctx_cap;
+    int n = 0, cap_next = d->ctx_cap, mark_next = 0;     /* mark_next: the inverted mark waits past "Hola," */
     uint16_t prev = d->ctx_prev;                      /* as op_decode's context */
     (void)start;
     for (int i = 0, j = 0; i < d->n_toks; i++) {
@@ -1384,6 +1418,7 @@ int op_render(const op_decoder *d, const op_model *m, const op_start *start, cha
             if (n + 1 >= cap) return OP_ERR_SPACE;
             out[n++] = ch.kind == OP_LITERAL ? t->lit : m->punct[ch.id - m->n_words];
             cap_next = out[n - 1] == '.' || out[n - 1] == '!' || out[n - 1] == '?';
+            if (cap_next) mark_next = 0;
             prev = ch.kind == OP_LITERAL ? OP_NONE : out[n - 1] == ',' ? ch.id : m->bos;
             continue;
         }
@@ -1405,13 +1440,13 @@ int op_render(const op_decoder *d, const op_model *m, const op_start *start, cha
             if (k < d->n_toks && d->toks[k].type == TOK_WORD && d->choice[j].kind == OP_WORD) next = d->choice[j].id;
             int wn = tok_text(m, d->user, ch.id, &w), dn = display(m, prev, ch.id, next, &shown);
             call = dn >= 0 ? call_sign(shown, dn) : call_sign(w, wn);
-            len = wn;
-            if (ch.kind == OP_PARTIAL && len > t->len) len = t->len;   /* only what's typed so far */
+            int chars = u8_len(w, wn);
+            if (ch.kind == OP_PARTIAL && chars > t->len) chars = t->len;   /* only what's typed so far */
             if (dn >= 0) {
-                if (ch.kind == OP_WORD) len = dn;
-                else if (len > dn) len = dn;
+                len = ch.kind == OP_WORD ? dn : u8_prefix(shown, dn, chars);
                 src = shown;
             } else {
+                len = u8_prefix(w, wn, chars);
                 src = w;
             }
             if (n + len >= cap) return OP_ERR_SPACE;
@@ -1439,10 +1474,41 @@ int op_render(const op_decoder *d, const op_model *m, const op_start *start, cha
         }
         len = n - s;
         if (call) for (int k = s; k < n; k++) if (out[k] >= 'a' && out[k] <= 'z') out[k] = (char)(out[k] - 'a' + 'A');
-        if (len && out[s] == 'i' && (len == 1 || out[s + 1] == '\'')) out[s] = 'I';
+        if ((m->param[OP_P_FLAGS] & FLAG_I) && len && out[s] == 'i' && (len == 1 || out[s + 1] == '\'')) out[s] = 'I';
         /* Capitalize a sentence start, but keep brand styling like iPhone / eBay. */
         int brand = len >= 2 && out[s] >= 'a' && out[s] <= 'z' && out[s + 1] >= 'A' && out[s + 1] <= 'Z';
-        if (cap_next && !brand && len && out[s] >= 'a' && out[s] <= 'z') out[s] = (char)(out[s] - 'a' + 'A');
+        if (cap_next && !brand && len) {
+            unsigned char c0 = (unsigned char)out[s];
+            if (c0 >= 'a' && c0 <= 'z') out[s] = (char)(c0 - 32);
+            else if (c0 == 0xC3 && len >= 2 && (unsigned char)out[s + 1] >= 0xA0 && (unsigned char)out[s + 1] <= 0xBE &&
+                     (unsigned char)out[s + 1] != 0xB7) out[s + 1] = (char)((unsigned char)out[s + 1] - 0x20);   /* é -> É */
+        }
+        if ((cap_next || mark_next) && (m->param[OP_P_FLAGS] & FLAG_INVERTED)) {
+            /* Spanish opens a question / exclamation with ¿ / ¡: the mark ending this sentence.
+             * "Hola, ¿qué tal?": a greeting or filler followed by a comma passes it on. */
+            int k = i + 1, comma = 0;
+            while (k < d->n_toks && d->toks[k].type == TOK_SPACE) k++;
+            if (k < d->n_toks && d->toks[k].type == TOK_PUNCT)
+                comma = d->choice[j].kind != OP_LITERAL && m->punct[d->choice[j].id - m->n_words] == ',';
+            mark_next = comma && ch.id != OP_NONE && in_u16(m->q_skip, m->n_skip, ch.id);
+            char end = 0;
+            if (mark_next) end = 1;             /* not here */
+            for (int k = i + 1, jj = j; k < d->n_toks && !end; k++) {
+                const op_tok *tk = &d->toks[k];
+                if (tk->type == TOK_SPACE) continue;
+                op_choice c2 = d->choice[jj++];
+                if (tk->type != TOK_PUNCT) continue;
+                char p = c2.kind == OP_LITERAL ? tk->lit : m->punct[c2.id - m->n_words];
+                if (p == '.' || p == '!' || p == '?') end = p;
+            }
+            if (end == '?' || end == '!') {
+                if (n + 2 >= cap) return OP_ERR_SPACE;
+                memmove(out + s + 2, out + s, (size_t)(n - s));
+                out[s] = (char)0xC2;
+                out[s + 1] = (char)(end == '?' ? 0xBF : 0xA1);
+                n += 2;
+            }
+        }
         cap_next = 0;
         prev = ch.kind == OP_WORD && ch.id < m->n_words ? ch.id : OP_NONE;
     }
@@ -1601,7 +1667,9 @@ int op_learn(op_user *u, const op_decoder *d, const op_model *m, const op_start 
             /* Known words run together: learn it as one word. */
             compound cs[COMPOUND_MAX];
             int nc = compounds(m, d->keys + t->off, d->lits + t->off, t->len, cs), r = ch.id - OP_COMPOUND_ID;
-            if (r >= nc || cs[r].len > OP_USER_WORD_LEN) { prev = OP_NONE; continue; }
+            int plain = 1;              /* learned words are plain letters (keys typed one per letter) */
+            for (int k = 0; r < nc && k < cs[r].len; k++) if ((unsigned char)cs[r].text[k] >= 0x80) plain = 0;
+            if (r >= nc || cs[r].len > OP_USER_WORD_LEN || !plain) { prev = OP_NONE; continue; }
             id = user_word(u, m, cs[r].text, cs[r].len);
         } else if (ch.kind == OP_PARTIAL || id == OP_NONE) {
             prev = OP_NONE;

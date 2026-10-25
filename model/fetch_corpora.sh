@@ -22,5 +22,14 @@ mkdir -p corpora/chat
 curl -sSfL -o corpora/chat/tc.json "https://raw.githubusercontent.com/alexa/Topical-Chat/master/conversations/train.json"
 curl -sSfL -o corpora/chat/tm1.json "https://raw.githubusercontent.com/google-research-datasets/Taskmaster/master/TM-1-2019/self-dialogs.json"
 curl -sSfL -o corpora/chat/spc.csv "https://huggingface.co/datasets/google/Synthetic-Persona-Chat/resolve/main/data/Synthetic-Persona-Chat_train.csv"
+# Topical-Chat test and validation splits: held out, for tests/eval.js and tuning (prep_chat_test.py, after model.json exists)
+curl -sSfL -o corpora/chat/tc_test_freq.json "https://raw.githubusercontent.com/alexa/Topical-Chat/master/conversations/test_freq.json"
+curl -sSfL -o corpora/chat/tc_test_rare.json "https://raw.githubusercontent.com/alexa/Topical-Chat/master/conversations/test_rare.json"
+curl -sSfL -o corpora/chat/tc_valid_freq.json "https://raw.githubusercontent.com/alexa/Topical-Chat/master/conversations/valid_freq.json"
+curl -sSfL -o corpora/chat/tc_valid_rare.json "https://raw.githubusercontent.com/alexa/Topical-Chat/master/conversations/valid_rare.json"
 "${PYTHON:-$(command -v python || command -v python3)}" prep_chat.py corpora/chat
 echo "corpora ready in model/corpora"
+# Spanish (onepress-es.bin): Tatoeba sentences, CC BY 2.0 FR
+mkdir -p corpora/es
+curl -sSfL -o corpora/es/spa_sentences.tsv.bz2 "https://downloads.tatoeba.org/exports/per_language/spa/spa_sentences.tsv.bz2"
+"${PYTHON:-$(command -v python || command -v python3)}" prep_tatoeba.py corpora/es/spa_sentences.tsv.bz2 corpora/es

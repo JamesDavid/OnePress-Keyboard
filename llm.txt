@@ -11,8 +11,10 @@ embedded project. Read it top to bottom before writing code. Repository layout:
 - `c/onepress.h`, `c/onepress.c`: the C decoder. Copy both files into the project; nothing else is needed.
 - `web/decoder.js`: the JavaScript decoder (browser global functions, or `require()` in Node).
 - `model/onepress.bin` (45k words, 3.3 MB), `model/onepress-m.bin` (20k words, 1.1 MB),
-  `model/onepress-s.bin` (5k words, 239 KB): the word models, in the KPD2 format
-  (`model/export_bin.py` documents it). Every decoder reads the same files.
+  `model/onepress-s.bin` (5k words, 239 KB): the English word models, and `model/onepress-es.bin`
+  (Spanish, 45k words, 1.9 MB), in the KPD2 format (`model/export_bin.py` documents it). Every
+  decoder reads the same files. Accented letters (á, ñ, ü, ...) are typed with their base
+  letter's key and come out on their own; the Spanish model also opens questions with ¿.
 - `model/onepress-nn.bin`: the optional neural word model for phones and the web (KPN1,
   documented in `model/export_nn.py`).
 - `LICENSE`: the code is PolyForm Noncommercial 1.0.0. Personal, hobby, research, educational and
@@ -32,6 +34,10 @@ embedded project. Read it top to bottom before writing code. Repository layout:
 | Phones, web, desktop | `onepress.bin` (+ `onepress-nn.bin`) | 94.1% of words (95.1% with the network) |
 | ESP32 (4 MB+ flash), Meshtastic nodes | `onepress-m.bin` | 93.1% |
 | nRF52, radios, anything with ~250 KB free flash | `onepress-s.bin` | 89.0% |
+| Spanish (phones, web, ESP32) | `onepress-es.bin` | 97.9% (held-out Tatoeba sentences) |
+
+Decoding is cheap: every key press re-decodes the whole message, under 0.06 ms per press on a
+desktop CPU for a 200-press message, so roughly 5-10 ms on a 64 MHz nRF52.
 
 Learning from the user adds 1–3 points (see "Learning" below).
 
@@ -121,7 +127,7 @@ op_learn(&user, &dec, &model, &start);
   `-DOP_MAX_BEAM=4 -DOP_MAX_SLOTS=48 -DOP_MAX_KEYS=160 -DOP_USER_WORDS=64 -DOP_USER_PAIRS=256`
   gives a 7 KB decoder and a 3 KB user table. Code is about 25 KB at -Os; -DOP_NO_NN leaves out
   the neural part and -DOP_NO_QWERTY the QWERTY letter matching (keypad-only devices), about
-  21 KB with both. Stack use is small (a few hundred bytes to 2 KB in op_decode).
+  22 KB with both. Stack use is small (a few hundred bytes to 2 KB in op_decode).
 - The model must be little-endian (ARM, x86, ESP32, RISC-V all are) and 4-byte aligned. It is
   read in place, so memory-mapped flash works with no copy.
 
@@ -270,7 +276,7 @@ shows the alternative of embedding it as base64.
 ## nRF52 and other small microcontrollers (radios, custom keypads)
 
 - Needs: model bytes readable at a pointer (internal flash, or memory-mapped QSPI/XIP flash),
-  about 21 KB code (-DOP_NO_NN -DOP_NO_QWERTY), 7 KB RAM for the decoder with the small limits
+  about 22 KB code (-DOP_NO_NN -DOP_NO_QWERTY), 7 KB RAM for the decoder with the small limits
   above, 3 KB for a small user table.
 - Use `onepress-s.bin` (239 KB). On nRF52840 put it in internal flash if there is room, or in
   external QSPI flash mapped for execute-in-place.

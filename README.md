@@ -11,7 +11,7 @@ browser, and a short tutorial starts on your first visit.
 
 - **Whole-sentence context.** Each new word can fix the ones before it: `4663` alone is "good",
   after "on my way" it's "home". A finished sentence stays put once you start the next one.
-- **Small enough for microcontrollers.** One C99 file, no memory allocation, about 21 KB of code
+- **Small enough for microcontrollers.** One C99 file, no memory allocation, about 22 KB of code
   and 7–27 KB of RAM. The model is read straight from flash.
 - **Forgives slips.** A word that no word matches is checked one slip away: a neighboring key, or
   a key pressed twice. With 3% of presses slipping, 87–89% of words still come out right (82% without).

@@ -265,7 +265,7 @@ body { padding-block: clamp(8px, 2.2dvh, 20px) clamp(10px, 3dvh, 28px); }
     <p>Tap any word to see other words with the same keys. Picking one locks it, and the rest of the sentence re-decodes around it.</p>
     <p>The QWERTY keyboard sends only each letter's keypad number (shown in the corner), so the model decodes it exactly as if you'd used the keypad. When no word fits, it keeps the letters you tapped. Keys grow and shrink in place with how likely each letter is to come next. A computer keyboard works the same way, and Tab finishes the word.</p>
     <p><b>Neural</b> (Phone model) adds a small neural network that reads everything typed before each word, not just the last two words. It's downloaded once next to the page and runs here too.</p>
-    <p>Runs entirely in this page. <b>Model</b> picks the word model: Phone (45,000 words), ESP32 / Meshtastic (20,000) and nRF52 / radio (5,000) are the same files the C decoder runs on those devices, so you can see how each would behave. <b>Load .bin file…</b> opens any model built with <code>model/export_bin.py</code>. <b>Compare sizes</b> shows what each model makes of the same keys, with the words that differ from the selected model highlighted.</p>
+    <p>Runs entirely in this page. <b>Model</b> picks the word model: Phone (45,000 words), ESP32 / Meshtastic (20,000) and nRF52 / radio (5,000) are the same files the C decoder runs on those devices, so you can see how each would behave. Español is a Spanish model: accents come out on their own, and questions open with ¿. <b>Load .bin file…</b> opens any model built with <code>model/export_bin.py</code>. <b>Compare sizes</b> shows what each model makes of the same keys, with the words that differ from the selected model highlighted.</p>
   </div>
 </div>
 
@@ -273,6 +273,7 @@ body { padding-block: clamp(8px, 2.2dvh, 20px) clamp(10px, 3dvh, 28px); }
 <script type="application/octet-stream" id="model-l" data-file="onepress.bin" data-size="__SIZE_L__" data-words="__WORDS_L__">__MODEL_L__</script>
 <script type="application/octet-stream" id="model-m" data-file="onepress-m.bin" data-size="__SIZE_M__" data-words="__WORDS_M__">__MODEL_M__</script>
 <script type="application/octet-stream" id="model-s" data-file="onepress-s.bin" data-size="__SIZE_S__" data-words="__WORDS_S__">__MODEL_S__</script>
+<script type="application/octet-stream" id="model-es" data-file="onepress-es.bin" data-size="__SIZE_ES__" data-words="__WORDS_ES__">__MODEL_ES__</script>
 <script>
 __DECODER__
 </script>
@@ -583,9 +584,10 @@ __DECODER__
   // ---- Models: three sizes are embedded; any KPD2 file can be loaded for testing ----
   const MODELS = [
     // name: short, for Compare sizes; device: what the menu says it stands for
-    { id: 'l', name: 'Phone', device: 'Phone / web', el: 'model-l' },
-    { id: 'm', name: 'ESP32', device: 'ESP32 / Meshtastic', el: 'model-m' },
-    { id: 's', name: 'Radio', device: 'nRF52 / radio', el: 'model-s' },
+    { id: 'l', name: 'Phone', device: 'Phone / web', el: 'model-l', lang: 'en' },
+    { id: 'm', name: 'ESP32', device: 'ESP32 / Meshtastic', el: 'model-m', lang: 'en' },
+    { id: 's', name: 'Radio', device: 'nRF52 / radio', el: 'model-s', lang: 'en' },
+    { id: 'es', name: 'Español', device: 'Español (phone / web)', el: 'model-es', lang: 'es' },
   ];
   const loaded = {};        // id -> { m, size, name }, built on first use
   // What this person has sent, per model (word ids differ between models). Kept in this
@@ -714,7 +716,8 @@ __DECODER__
     box.textContent = '';
     const mine = keys && best ? plainText() : '';
     const myWords = mine.split(' ');
-    const ids = MODELS.map(x => x.id).concat(loaded.custom ? ['custom'] : []);
+    const lang = (MODELS.find(x => x.id === modelId) || { lang: 'en' }).lang;     // sizes of the same language
+    const ids = MODELS.filter(x => x.lang === lang).map(x => x.id).concat(loaded.custom ? ['custom'] : []);
     const missing = ids.filter(id => !loaded[id]);
     if (missing.length) {             // download the others first (only when comparing)
       box.textContent = 'Loading the other models…';

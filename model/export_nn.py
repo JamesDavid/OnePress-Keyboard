@@ -1,6 +1,6 @@
 """Export the neural word model (train_nn.py) to KPN1, the file the decoders read.
 
-Usage: python export_nn.py nn.pt model.json onepress-nn.bin [--weight 1.0]
+Usage: python export_nn.py nn.pt model.json onepress-nn.bin [--weight 1.25] [--punct-weight 1.5]
 
 Everything is integer so the C and JS decoders agree exactly: int8 weights with a power-of-two
 scale per row (value = q / 2^shift), a hidden state in Q12 (value * 4096), and a sigmoid table
@@ -9,7 +9,8 @@ stored in the file.
 Header (32 bytes, little-endian):
   "KPN1", u16 version (1), u16 E (embedding), u16 H (hidden), u16 V (tokens),
   u16 bos, u16 unk, i16 weight (in 1/256: how much the neural score counts),
-  u8[4] reserved, u32 reserved, u16 model bos (the KPD2 model's), u16 reserved, u16 reserved
+  u8[4] reserved, u32 reserved, u16 model bos (the KPD2 model's),
+  i16 punct weight (in 1/256: how much it counts for . , ! ?; 0 = not at all), u16 reserved
 then, each 4-byte aligned, in this order:
   sig   i16[4096]   sigmoid, Q12, of (i * 16 - 32768 + 8) / 4096  (x in [-8, 8))
   emb   i8[V][E]    token embeddings (shared by input and output), es[V] u8 row shifts
@@ -50,7 +51,8 @@ def main():
     ap.add_argument("nn_pt")
     ap.add_argument("model_json")
     ap.add_argument("out")
-    ap.add_argument("--weight", type=float, default=1.0)
+    ap.add_argument("--weight", type=float, default=1.25)          # tuned on NUS dev (tests/eval.js --nn-weight)
+    ap.add_argument("--punct-weight", type=float, default=1.5)     # tuned on NUS dev + chat dev
     a = ap.parse_args()
     ck = torch.load(a.nn_pt, map_location="cpu")
     st = {k: v.float().numpy() for k, v in ck["state"].items()}
@@ -75,8 +77,8 @@ def main():
         np.round(st["proj.bias"] * 4096).astype(np.int32).tobytes(),
         np.clip(np.round(st["bias"] * 256), -32767, 32767).astype(np.int16).tobytes(),
     ]
-    head = b"KPN1" + struct.pack("<HHHHHHhBBBBIHHH", 1, E, H, V, ck["BOS"], ck["UNK"], round(a.weight * 256),
-                                 0, 0, 0, 0, 0, M["bos"], 0, 0)
+    head = b"KPN1" + struct.pack("<HHHHHHhBBBBIHhH", 1, E, H, V, ck["BOS"], ck["UNK"], round(a.weight * 256),
+                                 0, 0, 0, 0, 0, M["bos"], round(a.punct_weight * 256), 0)
     assert len(head) == 32
     body = b""
     for s in sec:

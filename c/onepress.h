@@ -64,7 +64,7 @@ enum { OP_WORD, OP_PARTIAL, OP_PUNCT, OP_LITERAL, OP_UNKNOWN, OP_NUMBER, OP_TIME
 
 enum { OP_P_QQ, OP_P_QN, OP_P_DQ, OP_P_CF, OP_P_DB, OP_P_CB, OP_P_EB,
        OP_P_APOSTROPHE, OP_P_COMPLETION, OP_P_LITERAL, OP_P_UNKNOWN,
-       OP_P_SLIP_SUB, OP_P_SLIP_DUP,   /* optional in the file (older ones stop before them) */
+       OP_P_SLIP_SUB, OP_P_SLIP_DUP, OP_P_FLAGS,   /* optional in the file (older ones stop before them) */
        OP_N_PARAMS };
 
 typedef struct {
@@ -135,7 +135,8 @@ typedef struct {
 #define OP_NN_LINE 32           /* tokens of start->before's current line it reads first */
 typedef struct {
     uint16_t E, H, V, bos, unk, model_bos;
-    int16_t weight;             /* how much its score counts, in 1/256 */
+    int16_t weight;             /* how much its score counts for words, in 1/256 */
+    int16_t punct_weight;       /* ... and for punctuation (0 in older files: the rules alone) */
     const int16_t *sig, *bias;
     const int8_t *emb, *wih, *whh, *proj;
     const uint8_t *es, *is, *hs, *ps;   /* per-row shifts of emb, wih, whh, proj */

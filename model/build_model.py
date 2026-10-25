@@ -1,6 +1,10 @@
 """Build the word model (model.json) that export_bin.py turns into KPD2 files.
 
 Usage: python build_model.py corpora model.json data/messages.txt data/proper.txt [path:weight[:cased] ...]
+       python build_model.py corpora model-es.json - - corpora/es/train.txt:1:cased --lang es
+
+--lang (default en): the wordfreq language. Other languages take no English extras (Gutenberg,
+movie reviews, names, messages.txt; give - for the two files) and allow accented letters.
 
 - Vocabulary and unigram frequencies: wordfreq (data CC BY-SA 4.0), plus curated proper nouns
   (data/proper.txt) and first names from the NLTK names corpus.
@@ -14,25 +18,32 @@ import json, math, os, re, sys
 from collections import Counter
 from wordfreq import top_n_list, word_frequency
 
+LANG = "en"
+if "--lang" in sys.argv:
+    i = sys.argv.index("--lang")
+    LANG = sys.argv[i + 1]
+    del sys.argv[i:i + 2]
+EN = LANG == "en"
 ROOT = sys.argv[1]
 OUT = sys.argv[2]
 VOCAB_N = 45000
-WORD_RE = re.compile(r"^[a-z]+(?:'[a-z]+)?$")
+L = "a-z" if EN else "a-z\u00df-\u00f6\u00f8-\u00ff"            # lowercase letters of a word
+WORD_RE = re.compile(f"^[{L}]+(?:'[{L}]+)?$")
 PUNCT = [".", ",", "!", "?"]
 TRI_CTX_MIN = 12    # count word triples only after word pairs seen at least this often (weighted)
 
 # ---- vocabulary from wordfreq ----
-vocab = [w for w in top_n_list("en", 60000) if WORD_RE.match(w)][:VOCAB_N]
-freqs = [word_frequency(w, "en") for w in vocab]
+vocab = [w for w in top_n_list(LANG, 60000) if WORD_RE.match(w)][:VOCAB_N]
+freqs = [word_frequency(w, LANG) for w in vocab]
 
 # ---- proper nouns: curated brands/places + first names ----
 curated = {}
-for line in open(sys.argv[4], encoding="utf-8"):
+for line in (open(sys.argv[4], encoding="utf-8") if sys.argv[4] != "-" else []):
     if line.startswith("#"): continue
     for w in line.split():
         if WORD_RE.match(w.lower()): curated[w.lower()] = w
 names = set()
-for f in ["male.txt", "female.txt"]:
+for f in ["male.txt", "female.txt"] if EN else []:
     for line in open(os.path.join(ROOT, "names", f), encoding="latin-1"):
         n = line.strip()
         if n and WORD_RE.match(n.lower()) and word_frequency(n.lower(), "en") > 3e-7:
@@ -43,10 +54,10 @@ added = 0
 for w in list(curated) + sorted(names):
     if w not in vidx:
         vidx[w] = len(vocab); vocab.append(w)
-        freqs.append(max(word_frequency(w, "en"), 3e-7)); added += 1
+        freqs.append(max(word_frequency(w, LANG), 3e-7)); added += 1
 
 # ---- text streams: (text, weight, cased) ----
-tok_re = re.compile(r"[a-z]+(?:'[a-z]+)?|[.,!?]")
+tok_re = re.compile(f"[{L}]+(?:'[{L}]+)?|[.,!?]")
 def tokens(text):
     return tok_re.findall(text.lower().replace("’", "'").replace("‘", "'"))
 
@@ -54,16 +65,16 @@ streams = []
 gdir = os.path.join(ROOT, "gutenberg")
 for f in ["austen-emma.txt", "austen-persuasion.txt", "austen-sense.txt", "bryant-stories.txt",
           "burgess-busterbrown.txt", "carroll-alice.txt", "chesterton-ball.txt", "chesterton-brown.txt",
-          "chesterton-thursday.txt", "edgeworth-parents.txt", "melville-moby_dick.txt"]:
+          "chesterton-thursday.txt", "edgeworth-parents.txt", "melville-moby_dick.txt"] if EN else []:
     for para in open(os.path.join(gdir, f), encoding="latin-1").read().split("\n\n"):
         streams.append((para.replace("\n", " "), 1, True))
-for sub in ["pos", "neg"]:
+for sub in ["pos", "neg"] if EN else []:
     d = os.path.join(ROOT, "movie_reviews", sub)
     for f in os.listdir(d):
         for line in open(os.path.join(d, f), encoding="latin-1"):
             streams.append((line, 1, False))          # lowercased: no casing
 # Hand-written everyday messages, weighted up so casual phrasing is represented.
-for line in open(sys.argv[3], encoding="utf-8"):
+for line in (open(sys.argv[3], encoding="utf-8") if sys.argv[3] != "-" else []):
     if line.strip():
         streams.append((line, 25, False))
 # One-message-per-line corpora given as path:weight[:cased].
@@ -146,7 +157,7 @@ pcap = Counter(); plow = Counter()   # by previous word (lowercase), for words c
 ncap = Counter(); nlow = Counter()   # by next word
 def scan_cased(text):
     start, prev = True, None
-    toks = re.findall(r"[A-Za-z]+(?:'[A-Za-z]+)?|[.!?,]", text.replace("’", "'"))
+    toks = re.findall(r"[^\W\d_]+(?:'[^\W\d_]+)?|[.!?,]", text.replace("’", "'"))
     for i, t in enumerate(toks):
         if t in ".!?": start, prev = True, None; continue
         if t == ",": prev = ","; continue
@@ -156,7 +167,7 @@ def scan_cased(text):
             if t[0].isupper() and not t.isupper(): cap[w] += 1; pcap[(prev, w)] += 1; ncap[(w, nxt)] += 1
             elif t.islower(): low[w] += 1; plow[(prev, w)] += 1; nlow[(w, nxt)] += 1
         start, prev = False, t.lower()
-for f in os.listdir(gdir):
+for f in os.listdir(gdir) if EN else []:
     scan_cased(open(os.path.join(gdir, f), encoding="latin-1").read())
 for text, wt, cased in streams:
     if cased and not text.startswith("\0"):
@@ -215,6 +226,7 @@ print("added proper nouns:", added, "capitalized:", len(display),
       "context casing: after", len(cap_flip), "before", len(cap_next), "kept before", len(cap_keep))
 
 model = {
+    "lang": LANG,
     "words": vocab,
     "display": {str(k): v for k, v in display.items()},
     "logp": [round(math.log(f), 2) for f in freqs],
