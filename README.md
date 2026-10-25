@@ -15,7 +15,8 @@ browser, and a short tutorial starts on your first visit.
   and 7–28 KB of RAM. The model is read straight from flash.
 - **Forgives slips.** A word that no word matches is checked one slip away: a neighboring key, or
   a key pressed twice. With 3% of presses slipping, 87–89% of words still come out right (82% without).
-- **Three model sizes** from 239 KB to 3.5 MB, for radios up to phones, and an optional neural
+- **Three model sizes** from 246 KB to 3.5 MB, for radios up to phones (the radio one knows CQ, QTH, QSO, tnx, fer,
+  repeater, node and the like), and an optional neural
   network for phones and the web (6.3 MB, or 2.5 MB with almost the same gain).
 - **Fourteen languages:** English, Spanish, German, Portuguese, French, Italian, Dutch, Swedish,
   Polish, Czech, Turkish, Russian, Greek and Arabic, each in the three sizes. Accents are typed on
@@ -103,7 +104,7 @@ one picks each word alone, by how common it is. OnePress makes far fewer mistake
 | `onepress.bin` (45k words) | 3.5 MB | 94.1% | 49.8% | 98.6% | 67.7% | phones, web |
 | `onepress-m.bin` + `onepress-nn-m.bin` | 1.5 MB + 1.7 MB | 94.4% | 49.7% | 98.8% | 69.2% | ESP32 with flash to spare |
 | `onepress-m.bin` (29k words) | 1.5 MB | 94.1% | 47.1% | 98.5% | 65.1% | ESP32, Meshtastic |
-| `onepress-s.bin` (5k words) | 239 KB | 89.0% | 46.6% | 98.5% | 64.9% | radios, nRF52 |
+| `onepress-s.bin` (5k words, plus radio words) | 246 KB | 89.0% | 46.7% | 98.5% | 64.9% | radios, nRF52 |
 | A classic one-word-at-a-time keypad | | 89.1% | 19% | 95.2% | 49% | |
 
 **Other languages** are measured on held-out Tatoeba sentences (`tests/eval.js --oov-exact`,

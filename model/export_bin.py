@@ -300,6 +300,8 @@ def main():
     ap.add_argument("--known-compounds", type=float, default=None, metavar="ZIPF",
                     help="list the words wordfreq knows as two vocabulary words run together, down to this zipf frequency")
     ap.add_argument("--no-slips", action="store_true", help="no words one keypad slip away")
+    ap.add_argument("--keep", default=None, metavar="FILE",
+                    help="with --vocab, also keep the words listed in FILE (data/radio.txt: # starts a comment)")
     ap.add_argument("--compound-parts", type=float, default=None, metavar="ZIPF",
                     help="with --vocab, also keep the words that make up known compounds down to this zipf frequency")
     a = ap.parse_args()
@@ -307,6 +309,9 @@ def main():
     M0 = json.load(open(a.model_json, encoding="utf-8"))
     extra = compound_parts(M0["words"], M0["logp"], a.vocab, M0.get("lang", "en"), a.compound_parts) \
         if a.compound_parts is not None and a.vocab else ()
+    if a.keep:
+        listed = {w.lower() for line in open(a.keep, encoding="utf-8") if not line.startswith("#") for w in line.split()}
+        extra = set(extra) | listed
     M = reduce(M0, a.vocab, a.min_count, a.ambig_only, a.tri_min, min(a.tri_contexts, 65000), extra)
     if extra:
         print(f"kept {len(extra)} compound parts")

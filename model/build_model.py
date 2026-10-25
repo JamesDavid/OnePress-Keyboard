@@ -59,11 +59,12 @@ if LANG == "el":                        # wordfreq case-folds final ς to σ
 freqs = [word_frequency(w if LANG != "el" else re.sub("ς$", "σ", w), LANG) for w in vocab]
 
 # ---- proper nouns: curated brands/places + first names ----
-curated = {}
-for line in (open(sys.argv[4], encoding="utf-8") if sys.argv[4] != "-" else []):
-    if line.startswith("#"): continue
-    for w in line.split():
-        if WORD_RE.match(w.lower()): curated[w.lower()] = w
+curated = {}                    # (several files: comma-separated, e.g. data/proper.txt,data/radio.txt)
+for path in (sys.argv[4].split(",") if sys.argv[4] != "-" else []):
+    for line in open(path, encoding="utf-8"):
+        if line.startswith("#"): continue
+        for w in line.split():
+            if WORD_RE.match(w.lower()): curated[w.lower()] = w
 names = set()
 for f in ["male.txt", "female.txt"] if EN else []:
     for line in open(os.path.join(ROOT, "names", f), encoding="latin-1"):

@@ -1,0 +1,13 @@
+# Amateur radio and mesh-network words for the radio model (onepress-s.bin): kept in its 5k
+# words whatever their frequency, with the casing written here. Their word pairs come from
+# radio_messages.txt. Words that are also everyday words are lowercase so their casing doesn't
+# change (am, net, copy, node).
+# Q-codes and signal reports
+CQ QSO QTH QSL QRZ QRP QRM QRN QSB QSY QRT QRV QRX QRU QSK QRL QRO QRS QRQ RST
+# Abbreviations used on the air and in texts
+de sk kn bk ant rig hw fb om yl xyl tnx tks pse agn ur es cul gm ge gn ga rx tx op cpy sri hr fer wid vy
+WX DX SSB CW FM HF VHF UHF SWR POTA SOTA APRS GPS
+# Gear and networks
+repeater simplex mesh node nodes lora antenna dipole handheld ht net nets checkin roger copy breaker
+squelch offset tone battery channel frequency band bands meters summit trailhead relay
+Meshtastic Baofeng Yaesu Icom Kenwood Winlink

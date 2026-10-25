@@ -11,7 +11,7 @@ embedded project. Read it top to bottom before writing code. Repository layout:
 - `c/onepress.h`, `c/onepress.c`: the C decoder. Copy both files into the project; nothing else is needed.
 - `web/decoder.js`: the JavaScript decoder (browser global functions, or `require()` in Node).
 - `model/onepress.bin` (45k words, 3.5 MB), `model/onepress-m.bin` (29k words, 1.5 MB),
-  `model/onepress-s.bin` (5k words, 239 KB): the English word models, and the same three sizes
+  `model/onepress-s.bin` (5k words plus amateur radio and mesh words, 246 KB): the English word models, and the same three sizes
   for twelve more languages (`model/onepress-<lang>.bin`, `-<lang>-m.bin`, `-<lang>-s.bin`; # between
   letters is the apostrophe of French l'homme, Italian dov'è, Turkish Tom'a), in the KPD2 format (`model/export_bin.py` documents it). Every
   decoder reads the same files. Accented letters (á, ñ, ü, ...) are typed with their base
@@ -296,7 +296,7 @@ shows the alternative of embedding it as base64.
 - Needs: model bytes readable at a pointer (internal flash, or memory-mapped QSPI/XIP flash),
   about 30 KB code (-DOP_NO_NN -DOP_NO_QWERTY), 7 KB RAM for the decoder with the small limits
   above, 3 KB for a small user table.
-- Use `onepress-s.bin` (239 KB). On nRF52840 put it in internal flash if there is room, or in
+- Use `onepress-s.bin` (246 KB; it knows CQ, QTH, QSO, tnx, fer, repeater, node and the like). On nRF52840 put it in internal flash if there is room, or in
   external QSPI flash mapped for execute-in-place.
 - The decoder needs the model at a memory address. External SPI flash that cannot be memory-mapped
   is not supported yet (it would need a read callback in `op_model_open`).
