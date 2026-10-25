@@ -16,7 +16,9 @@ browser, and a short tutorial starts on your first visit.
 - **Forgives slips.** A word that no word matches is checked one slip away: a neighboring key, or
   a key pressed twice. With 3% of presses slipping, 87–89% of words still come out right (82% without).
 - **Three model sizes** from 239 KB to 3.3 MB, for radios up to phones, and an optional neural
-  network for phones and the web.
+  network for phones and the web (6.3 MB, or 2.5 MB with almost the same gain).
+- **Spanish too,** with accents and ñ typed on their base letter's key and filled in for you,
+  and questions opened with ¿.
 - **Learns from you.** Names, slang and call signs you spell once are guessed from their keys
   after that, and your own word habits and punctuation get more likely. Recent messages count too.
 - **Capitals are automatic.** Sentence starts, names and brands (iPhone, McDonald's), the words
@@ -46,15 +48,22 @@ Apostrophes are optional ("dont" gives "don't").
 
 ## Accuracy
 
-Measured on real text messages from people the models never saw (NUS SMS corpus, US/Canada
-users, `node tests/eval.js`):
+Two held-out test sets: real text messages from people the models never saw (NUS SMS corpus,
+US/Canada users, with plenty of texting shorthand) and modern written chat (Topical-Chat's test
+split, words the model lacks spelled out). `node tests/eval.js`:
 
-| Model | Size | Words right | Ambiguous words right | Punctuation right | For |
-|---|---|---|---|---|---|
-| `onepress.bin` + `onepress-nn.bin` | 3.3 MB + 6.3 MB | **95.1%** | 93.5% | 50.6% | phones, web |
-| `onepress.bin` (45k words) | 3.3 MB | 94.1% | 92.1% | 49.8% | phones, web |
-| `onepress-m.bin` (20k words) | 1.1 MB | 93.1% | 91.2% | 47.2% | ESP32, Meshtastic |
-| `onepress-s.bin` (5k words) | 239 KB | 89.0% | 91.2% | 46.7% | radios, nRF52 |
+| Model | Size | Texting: words | Texting: punctuation | Chat: words | Chat: punctuation | For |
+|---|---|---|---|---|---|---|
+| `onepress.bin` + `onepress-nn.bin` | 3.3 MB + 6.3 MB | **95.0%** | **55.4%** | **99.0%** | **70.9%** | phones, web |
+| `onepress.bin` + `onepress-nn-s.bin` | 3.3 MB + 2.5 MB | 94.9% | 52.7% | 98.9% | 70.2% | phones, web |
+| `onepress.bin` (45k words) | 3.3 MB | 94.1% | 49.8% | 98.7% | 67.7% | phones, web |
+| `onepress-m.bin` (20k words) | 1.1 MB | 93.1% | 47.2% | 98.6% | 64.3% | ESP32, Meshtastic |
+| `onepress-s.bin` (5k words) | 239 KB | 89.0% | 46.7% | 98.5% | 64.1% | radios, nRF52 |
+| A classic one-word-at-a-time keypad | | 89.1% | 19% | 95.2% | 49% | |
+
+Spanish (`onepress-es.bin`, 1.9 MB): 97.9% of words right on held-out Tatoeba sentences, accents
+included (a classic keypad: 91.7%). QWERTY: 99.6% of words right typing accurately, 96.5% with
+one tap in ten on a neighboring key (`tests/qwerty_eval.js`).
 
 With learning, replaying each person's messages in order (`node tests/learn_eval.js`, all 84 test
 users): words go from 90.2% to 93.1%, and punctuation from 58.6% to 66.8%.

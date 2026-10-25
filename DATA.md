@@ -4,7 +4,7 @@ The code in this repository is under the [PolyForm Noncommercial License 1.0.0](
 noncommercial use only; commercial use needs a separate license from the author.
 
 The model files (`model/onepress.bin`, `model/onepress-m.bin`, `model/onepress-s.bin`, the Spanish
-`model/onepress-es.bin`, and the neural model `model/onepress-nn.bin`) contain statistics derived from the datasets below: word
+`model/onepress-es.bin`, and the neural models `model/onepress-nn.bin` and `model/onepress-nn-s.bin`) contain statistics derived from the datasets below: word
 frequencies, word-pair and word-triple probabilities, casing, and neural network weights. They
 contain no text from the datasets. Because the word frequencies come from wordfreq, whose data
 is licensed CC BY-SA 4.0, **the model files are licensed

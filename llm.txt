@@ -15,8 +15,9 @@ embedded project. Read it top to bottom before writing code. Repository layout:
   (Spanish, 45k words, 1.9 MB), in the KPD2 format (`model/export_bin.py` documents it). Every
   decoder reads the same files. Accented letters (á, ñ, ü, ...) are typed with their base
   letter's key and come out on their own; the Spanish model also opens questions with ¿.
-- `model/onepress-nn.bin`: the optional neural word model for phones and the web (KPN1,
-  documented in `model/export_nn.py`).
+- `model/onepress-nn.bin` (6.3 MB) or `model/onepress-nn-s.bin` (2.5 MB, almost the same gain):
+  the optional neural word model for phones and the web, English only (KPN1, documented in
+  `model/export_nn.py`).
 - `LICENSE`: the code is PolyForm Noncommercial 1.0.0. Personal, hobby, research, educational and
   noncommercial-organization use is free; a commercial product (paid or ad-supported app, device
   firmware sold commercially) needs a separate license from the author. Tell the user this before
@@ -31,7 +32,7 @@ embedded project. Read it top to bottom before writing code. Repository layout:
 
 | Target | Model | Accuracy (held-out text messages) |
 |---|---|---|
-| Phones, web, desktop | `onepress.bin` (+ `onepress-nn.bin`) | 94.1% of words (95.1% with the network) |
+| Phones, web, desktop | `onepress.bin` (+ `onepress-nn.bin` or `-nn-s.bin`) | 94.1% of words (95.0% / 94.9% with the network) |
 | ESP32 (4 MB+ flash), Meshtastic nodes | `onepress-m.bin` | 93.1% |
 | nRF52, radios, anything with ~250 KB free flash | `onepress-s.bin` | 89.0% |
 | Spanish (phones, web, ESP32) | `onepress-es.bin` | 97.9% (held-out Tatoeba sentences) |

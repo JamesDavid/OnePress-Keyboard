@@ -13,7 +13,8 @@ neural network helps on phones and the web.
 
   | Model | Words | Size | Words acc. | Ambiguous acc. | Punctuation | Target |
   |---|---|---|---|---|---|---|
-  | `onepress.bin` + `onepress-nn.bin` | 45k | 3.33 MB + 6.3 MB | 95.14% | 93.48% | 50.6% | phones, web |
+  | `onepress.bin` + `onepress-nn.bin` | 45k | 3.33 MB + 6.3 MB | 94.98% | 93.26% | 55.4% | phones, web |
+  | `onepress.bin` + `onepress-nn-s.bin` | 45k | 3.33 MB + 2.5 MB | 94.86% | 93.11% | 52.7% | phones, web |
   | `onepress.bin` | 45k | 3.33 MB | 94.14% | 92.12% | 49.8% | phones, web |
   | `onepress-m.bin` | 20k | 1.06 MB | 93.10% | 91.24% | 47.2% | ESP32 Meshtastic |
   | `onepress-s.bin` | 5k | 239 KB | 89.00% | 91.16% | 46.7% | radios, nRF52 |
