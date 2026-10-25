@@ -17,7 +17,7 @@ const SECTIONS = ['wordText', 'wordOff', 'keyIdx', 'stripIdx', 'dispId', 'dispOf
   'rowStart', 'bow', 'next', 'lp', 'qStart', 'punct', 'params',
   // optional (older files stop at params):
   'qSkip', 'triKey', 'triStart', 'triBow', 'triNext', 'triLp', 'capKey', 'altId', 'altOff', 'altText', 'capNextKey', 'capKeepKey',
-  'cmpHead', 'cmpTail'];
+  'cmpHead', 'cmpTail', 'cmpKnown'];
 const PARAMS = ['qQ', 'qN', 'dQ', 'cF', 'dB', 'cB', 'eB', 'apostrophe', 'completion', 'literal', 'unknown',
   'slipSub', 'slipDup', 'flags'];    // optional: older files stop at 'unknown' (defaults below)
 // params.flags: FLAG_I capitalizes "i" (English), FLAG_INVERTED opens a question or exclamation
@@ -74,7 +74,7 @@ function buildModel(bytes) {
     triNext: at('triNext', Uint16Array), triLp: at('triLp', Int16Array),
     capKey: at('capKey', Uint32Array), capNextKey: at('capNextKey', Uint32Array),
     capKeepKey: at('capKeepKey', Uint32Array), alt,
-    cmpHead: at('cmpHead', Int8Array), cmpTail: at('cmpTail', Int8Array),
+    cmpHead: at('cmpHead', Int8Array), cmpTail: at('cmpTail', Int8Array), cmpKnown: at('cmpKnown', Uint32Array),
     punct: utf8.decode(at('punct', Uint8Array)).split(''),
     uni: at('uni', Int16Array), rowStart: at('rowStart', Uint32Array), bow: at('bow', Int16Array),
     next: at('next', Uint16Array), lp: at('lp', Int16Array), qStart: new Set(at('qStart', Uint16Array)),
@@ -185,7 +185,7 @@ function tokenize(keys, hint = '') {
   for (let i = 0; i < keys.length; i++) {
     const ch = keys[i], nxt = keys[i + 1] || '';
     const last = toks[toks.length - 1];
-    if (ch === '0') toks.push({ type: 'space' });
+    if (ch === '0') toks.push({ type: 'space', at: i });
     else if ((ch === '#' || ch === '.' || ch === ',' || ch === ':') && last && last.type === 'number' &&
              /[0-9]$/.test(last.keys) && isDigitLit(nxt)) {
       last.keys += ch === '#' ? 's' : ch;       // 's': a separator for formatNumber to choose
@@ -474,10 +474,11 @@ function slotCandidates(m, tok, isLast, u) {
 // likely it is to start (all but the last) and to end (all but the first) such a word: its
 // unigram plus the model's cmpHead / cmpTail lift (1/4 nat; none in older files), and two parts
 // the word pairs know get COMPOUND_PAIR x how much likelier the pair makes the second (ice
-// cream), never less. Each split costs COMPOUND_SPLIT nats. The COMPOUND_MAX best distinct spellings, ties in the order tried
+// cream), never less, and two parts that wordfreq knows written as one (the model's cmpKnown:
+// "lollypops") COMPOUND_KNOWN. Each split costs COMPOUND_SPLIT nats. The COMPOUND_MAX best distinct spellings, ties in the order tried
 // (two parts before three, then by split points, then by word rank). The C decoder recomputes
 // these from the token when rendering.
-const COMPOUND_PART = 2, COMPOUND_WORDS = 5, COMPOUND_SPLIT = 2, COMPOUND_PAIR = 2, COMPOUND_MAX = 6, COMPOUND_KEYS = 24;
+const COMPOUND_PART = 2, COMPOUND_WORDS = 5, COMPOUND_SPLIT = 2, COMPOUND_PAIR = 2, COMPOUND_KNOWN = 10, COMPOUND_MAX = 6, COMPOUND_KEYS = 24;
 function compoundPart(m, tok, a, b) {
   const keys = tok.keys.slice(a, b), sub = { lit: tok.lit.slice(a, b) }, out = [];
   for (const id of exactMatches(m, keys)) {
@@ -510,7 +511,8 @@ function compounds(m, tok) {
     const walk = (i, prev, score, ids) => {
       if (i === parts.length) return add(score, ids);
       for (const p of parts[i]) {
-        const pair = i ? COMPOUND_PAIR * Math.max(0, lp(m, prev, p.id) - m.uni[p.id]) : 0;
+        const pair = i ? COMPOUND_PAIR * Math.max(0, lp(m, prev, p.id) - m.uni[p.id]) +
+          (parts.length === 2 && inSorted(m.cmpKnown, prev * 65536 + p.id) ? COMPOUND_KNOWN * m.scale : 0) : 0;
         walk(i + 1, p.id, score + compoundScore(m, p.id, i === 0, i === parts.length - 1) + p.pen + pair, ids.concat(p.id));
       }
     };
@@ -649,6 +651,12 @@ function context(m, u, start) {
 // start: { before: text before the composition (see context), or prev / cap,
 //          user: what this person has typed (newUser / learn), optional,
 //          hint: the letters tapped on a QWERTY keyboard, one per key press (see tokenize) }
+// Typing one key at a time, call it again with the longer string: when everything up to the
+// last finished sentence (a mark, a space, then more) is unchanged (keys, QWERTY letters, start,
+// its user and network, locks up to there, beam), the search resumes after that sentence
+// instead of starting over, with exactly the same result (m.resume holds the point). The C
+// decoder does the same.
+const lockKey = (locks, j) => JSON.stringify(Object.keys(locks).filter(k => +k <= j).sort().map(k => [k, locks[k].keys, locks[k].text]));
 function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
   const P = m.params;
   const u = start.user && start.user.bos === m.bos ? start.user : null;
@@ -679,7 +687,14 @@ function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
     for (const id of ctx.line) { const t = nnTok(id); nnKey += ',' + t; nnSt = nnState(nn, nnKey, nnSt, t); }
   }
   let beam = [{ score: 0, prev: ctx.prev, t: triFind(m, ctx.prev2, ctx.prev), first: ctx.first, cf: ctx.cf, path: [], nk: nnKey, ns: nnSt }];
+  const hint = start.hint || '', fp = JSON.stringify([beamWidth, start.before, start.prev, start.cap]);
+  const uv = u ? u.version || 0 : -1, R = m.resume;
+  let j0 = 0;
+  if (R && R.u === u && R.uv === uv && R.nn === nn && R.fp === fp && keys.length > R.keys.length &&
+      keys.startsWith(R.keys) && hint.slice(0, R.keys.length) === R.hint && R.j < slots.length - 1 &&
+      lockKey(locks, R.j) === R.locks) { beam = R.beam; j0 = R.j + 1; }
   slots.forEach((s, j) => {
+    if (j < j0) return;
     const isFinal = j === slots.length - 1;
     let next = [];
     for (const h of beam) {
@@ -743,6 +758,10 @@ function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
       h.nk = h.from.nk + ',' + t;
       h.ns = nnState(nn, h.nk, h.from.ns, t);
     }
+    // A finished sentence (a mark, a space, then more): remember the search here.
+    const sp = toks[s.tokIndex + 1];
+    if (s.tok.type === 'punct' && !isFinal && sp && sp.type === 'space')
+      m.resume = { u, uv, nn, fp, keys: keys.slice(0, sp.at + 1), hint: hint.slice(0, sp.at + 1), j, beam, locks: lockKey(locks, j) };
   });
   return { toks, slots, hyps: beam.slice(0, nBest), ctx };
 }
@@ -1004,6 +1023,7 @@ function userWord(m, u, w) {
 // and so is a word read as known words run together (lollypops).
 function learn(m, u, result, hyp, start = {}) {
   if (!u || u.bos !== m.bos || !hyp) return;
+  u.version = (u.version || 0) + 1;            // decode's resume point checks it
   let prev = result.ctx ? result.ctx.prev : start.prev === undefined ? m.bos : start.prev;
   result.slots.forEach((s, j) => {
     const c = s.cands[hyp.path[j]];

@@ -104,6 +104,8 @@ typedef struct {
     const uint32_t *cap_keep;   /* word << 16 | next: its usual casing before next, whatever prev says */
     uint32_t n_cap_keep;
     const int8_t *cmp_head, *cmp_tail;   /* words run together: start / end lift in 1/4 nat, or NULL */
+    const uint32_t *cmp_known;          /* first << 16 | second of words known written as one */
+    uint32_t n_known;
 } op_model;
 
 /* What one person types, learned by op_learn and read by op_decode: words the dictionary
@@ -120,13 +122,14 @@ typedef struct {
 
 typedef struct {
     uint16_t bos, n_words, n_pairs;
+    uint32_t stamp;             /* changes whenever it learns (op_decode's resume point checks it) */
     char word[OP_USER_WORDS][OP_USER_WORD_LEN + 1];     /* NUL-terminated */
     op_user_pair pair[OP_USER_PAIRS];                   /* sorted by (prev, cur) */
 } op_user;
 
 /* Optional neural word model (KPN1 file, model/export_nn.py): a small GRU that scores each
  * candidate word given everything before it. Read in place like op_model. For phones; it
- * needs ~40 KB of working memory (op_nn_work) and about 0.3M multiply-adds per hypothesis
+ * needs ~55 KB of working memory (op_nn_work, one per op_decoder) and about 0.3M multiply-adds per hypothesis
  * per word. Integer only, so results match decoder.js exactly. -DOP_NO_NN leaves it out
  * (op_nn_open then returns OP_ERR_ARG). */
 #ifndef OP_NN_MAX
@@ -147,6 +150,8 @@ typedef struct {
     int16_t h[2][OP_MAX_BEAM][OP_NN_MAX];   /* the beam's states, double-buffered */
     int16_t p[2][OP_MAX_BEAM][OP_NN_MAX];   /* and their projections */
     int32_t g[6 * OP_NN_MAX];
+    int16_t rh[OP_MAX_BEAM][OP_NN_MAX], rp[OP_MAX_BEAM][OP_NN_MAX];   /* at op_decode's resume point */
+    const void *rs_owner;                   /* the op_decoder that saved them */
 } op_nn_work;
 
 /* Context before the composition, from the text already in the field. */
@@ -175,7 +180,7 @@ typedef struct {
 typedef struct {
     uint8_t type;       /* internal token type */
     char lit;           /* punctuation typed exactly, or 0 */
-    uint16_t off, len;  /* word: span of keys[] / lits[] */
+    uint16_t off, len;  /* word: span of keys[] / lits[]; space: its position in the keys given */
 } op_tok;
 
 typedef struct {
@@ -207,12 +212,28 @@ typedef struct {
     char keys[OP_MAX_KEYS], lits[OP_MAX_KEYS], hints[OP_MAX_KEYS];
     struct { uint16_t id; uint8_t parent, kind; } bp[OP_MAX_SLOTS][OP_MAX_BEAM];
     op_entry ent[OP_MAX_BEAM * OP_MAX_CANDS];
+    /* The search after the last finished sentence of the previous op_decode, to resume from
+     * when the next call's keys only add to it (see op_decode). */
+    struct {
+        uint8_t ok, nb;
+        uint16_t n_keys, slot;
+        uint64_t fp;            /* model, start, locks up to the slot, beam */
+        int32_t score[OP_MAX_BEAM];
+        uint16_t prev[OP_MAX_BEAM], tri[OP_MAX_BEAM];
+        uint8_t first[OP_MAX_BEAM], cf[OP_MAX_BEAM];
+        char keys[OP_MAX_KEYS], hint[OP_MAX_KEYS];
+    } rs;
 } op_decoder;
 
 /* Point `m` at a KPD2 model. `data` must stay valid and be 4-byte aligned. */
 int op_model_open(op_model *m, const void *data, size_t size);
 
-/* Decode a key string (NUL-terminated). beam: 1..OP_MAX_BEAM. start/locks may be NULL. */
+/* Decode a key string (NUL-terminated). beam: 1..OP_MAX_BEAM. start/locks may be NULL.
+ * Typing one key at a time, call it again with the longer string: when everything up to the
+ * last finished sentence is unchanged (the keys, the QWERTY letters, start, its user and
+ * network, locks up to there, beam), it resumes the search after that sentence instead of
+ * starting over, with exactly the same result. A finished sentence is a . ! ? (or #) followed
+ * by a space and more. */
 int op_decode(op_decoder *d, const op_model *m, const char *keys, int beam,
               const op_start *start, const op_lock *locks, int n_locks);
 

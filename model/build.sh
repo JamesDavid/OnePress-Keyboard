@@ -18,14 +18,19 @@ fi
 #   onepress.bin    phones, web    45k words, three-word context
 #   onepress-m.bin  ESP32 nodes    20k words
 #   onepress-s.bin  radios, nRF52   5k words, no context casing (in May)
-"$PY" export_bin.py model.json onepress.bin --ambig-only --min-count 3 --tri-min 6
-"$PY" export_bin.py model.json onepress-m.bin --vocab 20000 --ambig-only --min-count 6
+"$PY" export_bin.py model.json onepress.bin --ambig-only --min-count 3 --tri-min 6 --known-compounds 1.1
+"$PY" export_bin.py model.json onepress-m.bin --vocab 20000 --ambig-only --min-count 6 --known-compounds 2
 "$PY" export_bin.py model.json onepress-s.bin --vocab 5000 --ambig-only --min-count 20 --no-context-case
 [ -f corpora/chat/tc_test_freq.json ] && "$PY" prep_chat_test.py model.json corpora/chat   # second test set
-# Spanish: wordfreq + Tatoeba (onepress-es.bin, phone size; flags: ¿ ¡, no "I")
-if [ -f corpora/es/train.txt ]; then
-  "$PY" build_model.py corpora model-es.json - - corpora/es/train.txt:1:cased --lang es
-  "$PY" export_bin.py model-es.json onepress-es.bin --ambig-only --min-count 3 --tri-min 6
+# Other languages: wordfreq + Tatoeba, phone size (Spanish also ESP32 and radio sizes)
+for c in es de pt; do
+  [ -f corpora/$c/train.txt ] || continue
+  "$PY" build_model.py corpora model-$c.json - - corpora/$c/train.txt:1:cased --lang $c
+  "$PY" export_bin.py model-$c.json onepress-$c.bin --ambig-only --min-count 3 --tri-min 6
+done
+if [ -f model-es.json ]; then
+  "$PY" export_bin.py model-es.json onepress-es-m.bin --vocab 20000 --ambig-only --min-count 6
+  "$PY" export_bin.py model-es.json onepress-es-s.bin --vocab 5000 --ambig-only --min-count 20 --no-context-case
 fi
 "$PY" ../web/build_page.py
-echo "built model.json, onepress{,-m,-s,-es}.bin, web/keypad.html"
+echo "built model.json, onepress{,-m,-s}.bin, onepress-{es,es-m,es-s,de,pt}.bin, web/keypad.html"

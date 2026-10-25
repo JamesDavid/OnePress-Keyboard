@@ -12,4 +12,4 @@ build/
 local.properties
 # Intermediate counts; the shipped model is onepress.bin
 model/model.json
-model/model-es.json
+model/model-*.json

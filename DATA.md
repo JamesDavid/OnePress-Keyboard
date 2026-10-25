@@ -3,8 +3,8 @@
 The code in this repository is under the [PolyForm Noncommercial License 1.0.0](LICENSE):
 noncommercial use only; commercial use needs a separate license from the author.
 
-The model files (`model/onepress.bin`, `model/onepress-m.bin`, `model/onepress-s.bin`, the Spanish
-`model/onepress-es.bin`, and the neural models `model/onepress-nn.bin` and `model/onepress-nn-s.bin`) contain statistics derived from the datasets below: word
+The model files (`model/onepress.bin`, `model/onepress-m.bin`, `model/onepress-s.bin`, the Spanish,
+German and Portuguese `model/onepress-es*.bin`, `onepress-de.bin`, `onepress-pt.bin`, and the neural models `model/onepress-nn.bin` and `model/onepress-nn-s.bin`) contain statistics derived from the datasets below: word
 frequencies, word-pair and word-triple probabilities, casing, and neural network weights. They
 contain no text from the datasets. Because the word frequencies come from wordfreq, whose data
 is licensed CC BY-SA 4.0, **the model files are licensed
@@ -25,7 +25,7 @@ The corpora are not stored here; `model/fetch_corpora.sh` downloads them.
 | Project Gutenberg selections (via NLTK) | word pairs and triples, casing, neural model | Public domain |
 | Movie Review Data, Bo Pang and Lillian Lee (via NLTK) | word pairs and triples, neural model | CC BY 4.0 |
 | Names Corpus v1.3, Mark Kantrowitz, additions by Bill Ross (via NLTK) | first names in the vocabulary | Free to use with credit; names from it are in the model's vocabulary, so its README is included as [`model/data/NAMES-README.txt`](model/data/NAMES-README.txt) |
-| [Tatoeba](https://tatoeba.org) Spanish sentences | the Spanish model: word pairs and triples, casing (train split); its test split is the Spanish evaluation | [CC BY 2.0 FR](https://creativecommons.org/licenses/by/2.0/fr/) |
+| [Tatoeba](https://tatoeba.org) Spanish, German and Portuguese sentences | those languages' models: word pairs and triples, casing (train split); their test splits are the evaluation | [CC BY 2.0 FR](https://creativecommons.org/licenses/by/2.0/fr/) |
 | `model/data/messages.txt`, `model/data/proper.txt` | everyday messages, brand and place names | Written for this project; same license as the code |
 
 Earlier versions also used the NLTK Brown corpus and webtext. They were removed: NLTK lists
@@ -41,8 +41,9 @@ Include this, or equivalent, wherever you ship the model files:
 > ParaCrawl; the NUS SMS Corpus (Tao Chen and Min-Yen Kan); Topical-Chat (Amazon,
 > CDLA-Sharing-1.0); Taskmaster-1 and Synthetic-Persona-Chat (Google, CC BY 4.0); Movie Review
 > Data (Bo Pang and Lillian Lee, CC BY 4.0); the Names Corpus (© 1991 Mark Kantrowitz,
-> additions by Bill Ross); and Project Gutenberg texts. The Spanish model (onepress-es.bin) also
-> uses sentences from Tatoeba (tatoeba.org, CC BY 2.0 FR).
+> additions by Bill Ross); and Project Gutenberg texts. The Spanish, German and Portuguese models
+> (onepress-es*.bin, onepress-de.bin, onepress-pt.bin) also use sentences from Tatoeba
+> (tatoeba.org, CC BY 2.0 FR).
 
 NUS SMS Corpus citation: Tao Chen and Min-Yen Kan (2013). Creating a Live, Public Short
 Message Service Corpus: The NUS SMS Corpus. *Language Resources and Evaluation*, 47(2):299–355.

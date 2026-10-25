@@ -5,7 +5,7 @@
 #include <string.h>
 
 enum { TOK_WORD, TOK_PUNCT, TOK_SPACE, TOK_NUM };
-enum { N_SECTIONS = 15, N_ALL_SECTIONS = 29 };     /* sections 15..28 are optional */
+enum { N_SECTIONS = 15, N_ALL_SECTIONS = 30 };     /* sections 15..29 are optional */
 
 static const char KEY_OF[26] = "22233344455566677778889999";
 static const char FIRST_LETTER[8] = "adgjmptw";     /* first letter of keys 2-9 */
@@ -101,6 +101,8 @@ int op_model_open(op_model *m, const void *data, size_t size) {
     m->n_cap_keep = len[26] / 4;
     m->cmp_head = len[27] == m->n_words ? (const int8_t *)sec[27] : NULL;
     m->cmp_tail = len[28] == m->n_words ? (const int8_t *)sec[28] : NULL;
+    m->cmp_known = (const uint32_t *)sec[29];
+    m->n_known = len[29] / 4;
     if (m->n_tri >= 0xFFFF || (n_sec > N_SECTIONS && (len[17] != 4u * (m->n_tri + 1) || len[18] != 2u * m->n_tri ||
         len[20] != len[19] || len[23] != 4u * (m->n_alt + 1))))
         return OP_ERR_MODEL;
@@ -353,7 +355,7 @@ static int tokenize(op_decoder *d, const char *keys, const char *hint) {
         op_tok *last = d->n_toks ? &d->toks[d->n_toks - 1] : NULL;
         op_tok *t = &d->toks[d->n_toks];
         if (ch == '0') {
-            t->type = TOK_SPACE; d->n_toks++;
+            t->type = TOK_SPACE; t->off = (uint16_t)i; d->n_toks++;
         } else if ((ch == '#' || ch == '.' || ch == ',' || ch == ':') && last && last->type == TOK_NUM &&
                    d->keys[nk - 1] >= '0' && d->keys[nk - 1] <= '9' && is_digit_lit(nxt)) {
             d->keys[nk] = ch == '#' ? 's' : ch; d->lits[nk++] = 0; last->len++;
@@ -560,6 +562,7 @@ static int punct_index(const op_model *m, char ch) {
 #define COMPOUND_WORDS 5
 #define COMPOUND_SPLIT 2
 #define COMPOUND_PAIR 2
+#define COMPOUND_KNOWN 10       /* nats for two parts known written as one (cmpKnown: "lollypops") */
 #define COMPOUND_MAX 6
 #define COMPOUND_KEYS 24
 typedef struct { int32_t score; uint8_t len; char text[64]; } compound;
@@ -639,6 +642,8 @@ static void compound_split(const op_model *m, const char *k, const char *lit, co
             for (int y = 0; y < cnt[i + 1]; y++) {
                 int32_t g = lp(m, id[i][x], id[i + 1][y]) - m->uni[id[i + 1][y]];
                 pl[i][x][y] = g > 0 ? COMPOUND_PAIR * g : 0;
+                if (np == 2 && find_u32(m->cmp_known, m->n_known, (uint32_t)id[0][x] << 16 | id[1][y]) >= 0)
+                    pl[i][x][y] += COMPOUND_KNOWN * m->scale;
             }
     for (int i = np - 1; i >= 0; i--) {
         for (int y = 0; y < cnt[i]; y++) {
@@ -1193,6 +1198,28 @@ static int cmp_entry(const void *x, const void *y) {
 }
 
 
+/* ---- resuming after a finished sentence ---- */
+
+static uint32_t user_stamps;    /* op_user stamps: every change gets a new one */
+
+static uint64_t fnv(uint64_t h, const void *p, size_t n) {
+    const uint8_t *b = (const uint8_t *)p;
+    for (size_t i = 0; i < n; i++) h = (h ^ b[i]) * 0x100000001b3ULL;
+    return h;
+}
+/* What the search up to slot `slot` depends on besides the keys and QWERTY letters. */
+static uint64_t resume_fp(const op_model *m, const op_start *start, const op_lock *locks, int n_locks,
+                          int slot, int beam, const op_user *u) {
+    uint64_t h = 0xcbf29ce484222325ULL;
+    const void *ptrs[4] = { m, u, start ? (const void *)start->nn : NULL, start ? (const void *)start->nn_work : NULL };
+    h = fnv(h, ptrs, sizeof ptrs);
+    uint32_t v[4] = { u ? u->stamp : 0, (uint32_t)beam, start ? start->prev : 0xFFFFFFFFu, start ? start->cap : 2u };
+    h = fnv(h, v, sizeof v);
+    if (start && start->before) h = fnv(h, start->before, strlen(start->before) + 1);
+    for (int l = 0; l < n_locks; l++) if (locks[l].slot <= slot) h = fnv(h, &locks[l], sizeof locks[l]);
+    return h;
+}
+
 int op_decode(op_decoder *d, const op_model *m, const char *keys, int beam,
               const op_start *start, const op_lock *locks, int n_locks) {
     if (!d || !m || !keys || beam < 1 || beam > OP_MAX_BEAM) return OP_ERR_ARG;
@@ -1234,8 +1261,30 @@ int op_decode(op_decoder *d, const op_model *m, const char *keys, int beam,
         }
     }
 
+    /* Resume after the last finished sentence of the previous call, if nothing up to it changed. */
+    int j0 = 0;
+    const char *hint = start ? start->hint : NULL;
+    int kn = (int)strlen(keys), hn = hint ? (int)strlen(hint) : 0;
+    if (d->rs.ok && kn > d->rs.n_keys && d->rs.slot + 1 < d->n_slots && memcmp(keys, d->rs.keys, d->rs.n_keys) == 0 &&
+        (!nn || w->rs_owner == d) &&
+        d->rs.fp == resume_fp(m, start, locks, n_locks, d->rs.slot, beam, d->user)) {
+        int same = 1;
+        for (int i = 0; i < d->rs.n_keys && same; i++) same = (i < hn ? hint[i] : 0) == d->rs.hint[i];
+        if (same) {
+            nb = d->rs.nb;
+            for (int k = 0; k < nb; k++) {
+                score[k] = d->rs.score[k]; prev[k] = d->rs.prev[k]; tri[k] = d->rs.tri[k];
+                first[k] = d->rs.first[k]; cf[k] = d->rs.cf[k];
+                if (nn) { memcpy(w->h[0][k], w->rh[k], sizeof w->rh[k]); memcpy(w->p[0][k], w->rp[k], sizeof w->rp[k]); }
+            }
+            cur = 0;
+            j0 = d->rs.slot + 1;
+        }
+    }
+    if (!j0) d->rs.ok = 0;      /* bp[] is about to be rewritten from the start */
+
     cand c[OP_MAX_CANDS];
-    for (int j = 0; j < d->n_slots; j++) {
+    for (int j = j0; j < d->n_slots; j++) {
         const op_tok *t = &d->toks[d->slot_tok[j]];
         int is_final = j == d->n_slots - 1;
         int nc = slot_cands(d, m, t, is_final && last_is_word, c);
@@ -1346,6 +1395,21 @@ int op_decode(op_decoder *d, const op_model *m, const char *keys, int beam,
         }
         nb = nk;
         cur ^= nn != NULL;
+        /* A finished sentence (a mark, a space, then more): remember the search here. */
+        int sp = d->slot_tok[j] + 1;
+        if (t->type == TOK_PUNCT && !is_final && sp < d->n_toks && d->toks[sp].type == TOK_SPACE) {
+            d->rs.ok = 1; d->rs.nb = (uint8_t)nb; d->rs.slot = (uint16_t)j;
+            d->rs.n_keys = (uint16_t)(d->toks[sp].off + 1);
+            d->rs.fp = resume_fp(m, start, locks, n_locks, j, beam, d->user);
+            memcpy(d->rs.keys, keys, d->rs.n_keys);
+            for (int i = 0; i < d->rs.n_keys; i++) d->rs.hint[i] = i < hn ? hint[i] : 0;
+            if (nn) w->rs_owner = d;
+            for (int k = 0; k < nb; k++) {
+                d->rs.score[k] = score[k]; d->rs.prev[k] = prev[k]; d->rs.tri[k] = tri[k];
+                d->rs.first[k] = first[k]; d->rs.cf[k] = cf[k];
+                if (nn) { memcpy(w->rh[k], w->h[cur][k], sizeof w->rh[k]); memcpy(w->rp[k], w->p[cur][k], sizeof w->rp[k]); }
+            }
+        }
     }
     #undef NN_TOK
     d->score = score[0];
@@ -1522,6 +1586,7 @@ int op_render(const op_decoder *d, const op_model *m, const op_start *start, cha
 void op_user_init(op_user *u, const op_model *m) {
     memset(u, 0, sizeof *u);
     u->bos = m->bos;
+    u->stamp = ++user_stamps;
 }
 
 static void user_bump(op_user *u, uint16_t prev, uint16_t cur) {
@@ -1642,6 +1707,7 @@ int op_user_load(op_user *u, const op_model *m, const uint8_t *b, size_t size) {
 /* Mirrors decoder.js learn. */
 int op_learn(op_user *u, const op_decoder *d, const op_model *m, const op_start *start) {
     if (!u || !d || !m || u->bos != m->bos) return OP_ERR_ARG;
+    u->stamp = ++user_stamps;
     uint16_t prev = d->ctx_prev;
     (void)start;
     for (int j = 0; j < d->n_slots; j++) {

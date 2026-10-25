@@ -13,11 +13,11 @@ neural network helps on phones and the web.
 
   | Model | Words | Size | Words acc. | Ambiguous acc. | Punctuation | Target |
   |---|---|---|---|---|---|---|
-  | `onepress.bin` + `onepress-nn.bin` | 45k | 3.33 MB + 6.3 MB | 94.98% | 93.26% | 55.4% | phones, web |
-  | `onepress.bin` + `onepress-nn-s.bin` | 45k | 3.33 MB + 2.5 MB | 94.86% | 93.11% | 52.7% | phones, web |
-  | `onepress.bin` | 45k | 3.33 MB | 94.14% | 92.12% | 49.8% | phones, web |
-  | `onepress-m.bin` | 20k | 1.06 MB | 93.10% | 91.24% | 47.2% | ESP32 Meshtastic |
-  | `onepress-s.bin` | 5k | 239 KB | 89.00% | 91.16% | 46.7% | radios, nRF52 |
+  | `onepress.bin` + `onepress-nn.bin` | 45k | 3.96 MB + 6.3 MB | 94.98% | 93.26% | 55.4% | phones, web |
+  | `onepress.bin` + `onepress-nn-s.bin` | 45k | 3.96 MB + 2.5 MB | 94.86% | 93.11% | 52.7% | phones, web |
+  | `onepress.bin` | 45k | 3.96 MB | 94.14% | 92.12% | 49.8% | phones, web |
+  | `onepress-m.bin` | 20k | 1.19 MB | 93.17% | 91.22% | 47.3% | ESP32 Meshtastic |
+  | `onepress-s.bin` | 5k | 239 KB | 89.00% | 91.18% | 46.6% | radios, nRF52 |
 
   `node tests/eval.js --nn model/onepress-nn.bin` for the network; `--slip 0.03` / `--double 0.03` for
   presses on a neighboring key / pressed twice (phone model now 87.2% / 88.9%).
@@ -28,6 +28,11 @@ neural network helps on phones and the web.
   replays each NUS user's messages in order. Tune on `users_dev.tsv`. Current, test users:
   predicted words 90.23% → 93.12%, punctuation 58.6% → 66.8% (US/Canada: 94.18% → 95.27%,
   49.5% → 62.7%).
+- Resuming after a finished sentence must change nothing: `node tests/resume_test.js` (also
+  `--learn`, `--nn model/onepress-nn-s.bin`, `--model model/onepress-es.bin`) for anything touching decode.
+- Other languages (Spanish, German, Portuguese): `node tests/eval.js model/corpora/es/test.txt
+  --oov-exact --model model/onepress-es.bin`; `tests/baseline.js` gives the classic keypad. Parity:
+  `node tests/parity.js --model model/onepress-es.bin --text model/corpora/es/dev.txt`.
 - Small regression set: `node tests/decoder_test.js` (17/20). It overlaps `messages.txt`, so it is a
   sanity check, not a score.
 - Rebuild model + web page: `cd model && ./build.sh` (needs `pip install wordfreq`; downloads the

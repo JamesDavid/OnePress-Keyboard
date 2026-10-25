@@ -2,6 +2,7 @@
 
 Usage: python export_bin.py model.json onepress.bin [--vocab N] [--min-count C] [--ambig-only]
                            [--tri-min C] [--tri-contexts N] [--no-context-case] [--no-compounds]
+                           [--known-compounds ZIPF] [--no-slips]
 
 Everything is little-endian, every section 4-byte aligned, and the decoder searches the
 file in place (from flash or a memory map), so nothing is parsed or allocated on load.
@@ -55,6 +56,8 @@ SECTIONS = [
     "cmpHead",    # i8[nWords] how much likelier than its unigram the word is to start a word run
                   #            together from known words (snow-man), in 1/4 nat; see compound_lifts
     "cmpTail",    # i8[nWords] ... to end one (snow-man)
+    "cmpKnown",   # u32[] first << 16 | second, ascending: two words that wordfreq knows written as one
+                  #       (lolly + pops: "lollypops"); such a split gets COMPOUND_KNOWN in the decoders
 ]
 # Decoder constants, all in log-prob units. The punctuation ones come from model.json
 # punctParams when present (see tune_punct.js).
@@ -86,6 +89,17 @@ LANGS = {
             "sabes", "has", "te", "me", "hiciste", "viste", "fuiste", "crees", "verdad"],
            ["hola", "bueno", "oye", "pues", "y", "pero", "entonces", "vale", "ok", "mira", "ah", "eh", "oh",
             "jaja", "gracias", "perdón", "disculpa", "bien", "sí", "no", "ya", "también"], 2),
+    "de": (["was", "wie", "wo", "wann", "warum", "wer", "wen", "wem", "wessen", "welche", "welcher", "welches",
+            "wieso", "weshalb", "woher", "wohin", "kannst", "können", "könnten", "könntest", "hast", "hat", "habt",
+            "haben", "bist", "ist", "sind", "seid", "gibt", "willst", "möchtest", "magst", "darf", "soll",
+            "weißt", "kommst", "gehst", "machst"],
+           ["hallo", "hi", "hey", "also", "ok", "okay", "na", "ja", "nein", "gut", "danke", "und", "aber", "oh",
+            "ach", "sag", "mal", "übrigens"], 0),
+    "pt": (["que", "quê", "como", "onde", "aonde", "quando", "porque", "qual", "quais", "quem", "quanto", "quanta",
+            "quantos", "quantas", "você", "vocês", "pode", "podes", "podemos", "tem", "tens", "vai", "vais", "vamos",
+            "está", "estás", "é", "há", "sabe", "sabes", "quer", "queres", "posso"],
+           ["olá", "oi", "bem", "então", "e", "mas", "ok", "ah", "eh", "obrigado", "obrigada", "sim", "não", "bom",
+            "olha", "ei"], 0),
 }
 LAMBDA_K = 40   # lambda = c / (c + LAMBDA_K), Witten-Bell style
 TRI_K = int(__import__("os").environ.get("TRI_K", 40))      # the same for three-word contexts
@@ -175,10 +189,12 @@ def reduce(M, vocab=0, min_count=0, ambig_only=False, tri_min=0, tri_contexts=65
 # log over the unigram's, in 1/4 nat. Tuned on held-out wordfreq compounds: the right word first
 # 37% of the time (unigram and word pairs alone: 21%), in the 6 offered 68% (50%).
 COMPOUND_K = 0.03
-def compound_lifts(words, logp, lang="en"):
+def compound_lifts(words, logp, lang="en", known_zipf=None):
+    """(head lifts, tail lifts, known pairs): the pairs are every split of a wordfreq word of zipf
+    frequency >= known_zipf (None: none) into two vocabulary words."""
     import re, wordfreq
     vocab = {w: i for i, w in enumerate(words)}
-    head, tail = Counter(), Counter()
+    head, tail, known = Counter(), Counter(), set()
     letters = "a-z" if lang == "en" else "a-z\u00df-\u00f6\u00f8-\u00ff"
     for w in wordfreq.get_frequency_dict(lang, "large"):
         if not re.fullmatch(f"[{letters}]{{4,24}}", w) or w in vocab:
@@ -186,15 +202,18 @@ def compound_lifts(words, logp, lang="en"):
         splits = [(w[:i], w[i:]) for i in range(2, len(w) - 1) if w[:i] in vocab and w[i:] in vocab]
         if not splits:
             continue
-        wt = max(wordfreq.zipf_frequency(w, lang, "large") - 1, 0.05) / len(splits)
+        z = wordfreq.zipf_frequency(w, lang, "large")
+        wt = max(z - 1, 0.05) / len(splits)
         for a, b in splits:
             head[vocab[a]] += wt
             tail[vocab[b]] += wt
+            if known_zipf is not None and z >= known_zipf:
+                known.add(vocab[a] << 16 | vocab[b])
     def lift(cnt):
         tot = sum(cnt.values())
         return [max(-128, min(127, round(4 * (math.log((cnt[i] + COMPOUND_K * math.exp(lp) * tot) / (tot * (1 + COMPOUND_K))) - lp))))
                 for i, lp in enumerate(logp)]
-    return lift(head), lift(tail)
+    return lift(head), lift(tail), sorted(known)
 
 def main():
     ap = argparse.ArgumentParser()
@@ -207,9 +226,11 @@ def main():
     ap.add_argument("--tri-contexts", type=int, default=65000)
     ap.add_argument("--no-context-case", action="store_true", help="leave out the context casing tables (in May)")
     ap.add_argument("--no-compounds", action="store_true", help="leave out the run-together word tables")
+    ap.add_argument("--known-compounds", type=float, default=None, metavar="ZIPF",
+                    help="list the words wordfreq knows as two vocabulary words run together, down to this zipf frequency")
     ap.add_argument("--no-slips", action="store_true", help="no words one keypad slip away")
     a = ap.parse_args()
-    no_compounds, no_slips = a.no_compounds, a.no_slips      # (a is reused below)
+    no_compounds, no_slips, known_zipf = a.no_compounds, a.no_slips, a.known_compounds      # (a is reused below)
     M = reduce(json.load(open(a.model_json, encoding="utf-8")), a.vocab, a.min_count, a.ambig_only,
                a.tri_min, min(a.tri_contexts, 65000))
     if a.no_context_case:
@@ -306,7 +327,8 @@ def main():
     sec["altId"] = u16([i for i, _ in alts])
     sec["altOff"] = struct.pack(f"<{len(alts) + 1}I", *aoff)
     sec["altText"] = b"".join(atext)
-    ch, ct = ([], []) if no_compounds else compound_lifts(words, M["logp"], lang)
+    ch, ct, kn = ([], [], []) if no_compounds else compound_lifts(words, M["logp"], lang, known_zipf)
+    sec["cmpKnown"] = struct.pack(f"<{len(kn)}I", *kn)
     sec["cmpHead"] = struct.pack(f"<{len(ch)}b", *ch)
     sec["cmpTail"] = struct.pack(f"<{len(ct)}b", *ct)
 
