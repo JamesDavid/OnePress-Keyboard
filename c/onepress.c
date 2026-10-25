@@ -72,10 +72,12 @@ int op_model_open(op_model *m, const void *data, size_t size) {
     m->q_start = (const uint16_t *)sec[12];
     m->n_q = len[12] / 2;
     m->punct = (const char *)sec[13];
-    if (len[13] != m->n_punct || len[14] < 2 * OP_N_PARAMS || m->bos != m->n_words + m->n_punct ||
+    if (len[13] != m->n_punct || len[14] < 2 * OP_P_SLIP_SUB || m->bos != m->n_words + m->n_punct ||
         len[1] != 4u * (m->n_words + 1u) || len[2] != 2u * m->n_words || len[8] != 4u * (m->bos + 2u))
         return OP_ERR_MODEL;
-    for (int i = 0; i < OP_N_PARAMS; i++) m->param[i] = (int16_t)rd16((const uint8_t *)sec[14] + 2 * i);
+    m->param[OP_P_SLIP_SUB] = (int16_t)(-12 * m->scale);     /* defaults for files without them */
+    m->param[OP_P_SLIP_DUP] = (int16_t)(-8 * m->scale);
+    for (int i = 0; i < OP_N_PARAMS && 2u * i + 2 <= len[14]; i++) m->param[i] = (int16_t)rd16((const uint8_t *)sec[14] + 2 * i);
     m->q_skip = (const uint16_t *)sec[15];
     m->n_skip = len[15] / 2;
     m->tri_key = (const uint32_t *)sec[16];
@@ -675,6 +677,7 @@ static int prefix_best(const op_model *m, const char *k, int kn, const char *lit
     return nb;
 }
 
+#ifndef OP_NO_QWERTY
 /* ---- QWERTY: the letters tapped are evidence too (see decoder.js qwertyCandidates) ---- */
 static const char *const QWERTY_NEAR[26] = { "qwsz", "ghvn", "dfxv", "erfsxc", "wrsd", "rtgdcv", "tyhfvb",
     "yujgbn", "uojk", "uikhnm", "iojlm", "opk", "jkn", "hjbm", "ipkl", "ol", "wa", "etdf", "weadzx", "ryfg",
@@ -706,6 +709,13 @@ static int32_t tap_cost(const op_model *m, const op_decoder *d, const op_tok *t,
     }
     return c;
 }
+#else    /* -DOP_NO_QWERTY: words typed on QWERTY are matched by their keypad digits only */
+static int is_qwerty(const op_decoder *d, const op_tok *t) { (void)d; (void)t; return 0; }
+static int32_t tap_cost(const op_model *m, const op_decoder *d, const op_tok *t, const char *w, int wn) {
+    (void)m; (void)d; (void)t; (void)w; (void)wn;
+    return 0;
+}
+#endif
 /* Best candidates by (unigram + pen) descending, then id; one entry per id. */
 typedef struct { cand c[OP_MAX_EXACT + OP_MAX_COMPLETIONS]; int32_t s[OP_MAX_EXACT + OP_MAX_COMPLETIONS]; int n, max; } qw_list;
 static void qw_add(qw_list *l, cand c, int32_t score) {
@@ -727,6 +737,7 @@ static void qw_add(qw_list *l, cand c, int32_t score) {
     l->s[k] = score;
     l->n++;
 }
+#ifndef OP_NO_QWERTY
 typedef struct {
     const op_decoder *d; const op_model *m; const op_tok *t;
     char allowed[QW_MAX_KEYS][8], pre[QW_MAX_KEYS];
@@ -803,6 +814,61 @@ static int qwerty_cands(const op_decoder *d, const op_model *m, const op_tok *t,
     }
     return w.ex.n;
 }
+#else
+static int qwerty_cands(const op_decoder *d, const op_model *m, const op_tok *t, int is_last,
+                        cand *out, cand *comp, int *n_comp) {
+    (void)d; (void)m; (void)t; (void)is_last; (void)out; (void)comp;
+    *n_comp = 0;
+    return 0;
+}
+#endif
+
+/* ---- Keypad slips (see decoder.js slipCandidates) ---- */
+static const char *const KEYPAD_NEAR[8] = { "35", "26", "57", "2468", "359", "48", "579", "68" };   /* keys 2-9 */
+#define KP_MIN_KEYS 3
+
+static void slip_add(const op_model *m, const char *k, int kn, int32_t pen, qw_list *l) {
+    int starts;
+    for (int strip = 0; strip < 2; strip++) {
+        const uint16_t *ix = strip ? m->strip_idx : m->key_idx;
+        uint32_t ixn = strip ? m->n_strip : m->n_words;
+        for (uint32_t i = lower_bound(m, ix, ixn, strip, k, kn); i < ixn && key_cmp(m, ix[i], strip, k, kn, &starts) == 0; i++) {
+            int32_t p = pen + (strip ? m->param[OP_P_APOSTROPHE] : 0);
+            qw_add(l, (cand){ ix[i], OP_WORD, p }, m->uni[ix[i]] + p);
+        }
+    }
+}
+/* Words one slip away from keypad word t, not already among out[0..n_have), into out + n_have. */
+static int slip_cands(const op_decoder *d, const op_model *m, const op_tok *t, cand *out, int n_have) {
+    int32_t sub = m->param[OP_P_SLIP_SUB], dup = m->param[OP_P_SLIP_DUP];
+    const char *k = d->keys + t->off;
+    int kn = t->len;
+    if ((!sub && !dup) || kn < KP_MIN_KEYS) return 0;
+    for (int i = t->off; i < t->off + kn; i++) if (d->lits[i] || d->hints[i]) return 0;
+    qw_list l;                  /* the best, kept long enough to drop the ones already offered */
+    l.n = 0;
+    l.max = OP_MAX_SLIPS + n_have < OP_MAX_EXACT + OP_MAX_COMPLETIONS ? OP_MAX_SLIPS + n_have : OP_MAX_EXACT + OP_MAX_COMPLETIONS;
+    char v[OP_MAX_KEYS];
+    for (int i = 0; i < kn; i++) {
+        int near = k[i] >= '2' && k[i] <= '9';
+        if (sub && near) {
+            memcpy(v, k, (size_t)kn);
+            for (const char *c = KEYPAD_NEAR[k[i] - '2']; *c; c++) { v[i] = *c; slip_add(m, v, kn, sub, &l); }
+        }
+        if (dup && near && i && k[i] == k[i - 1]) {
+            memcpy(v, k, (size_t)i);
+            memcpy(v + i, k + i + 1, (size_t)(kn - i - 1));
+            slip_add(m, v, kn - 1, dup, &l);
+        }
+    }
+    int n = 0;
+    for (int i = 0; i < l.n && n < OP_MAX_SLIPS; i++) {
+        int seen = 0;
+        for (int e = 0; e < n_have; e++) if (out[e].id == l.c[i].id) seen = 1;
+        if (!seen) out[n_have + n++] = l.c[i];
+    }
+    return n;
+}
 
 static int slot_cands(const op_decoder *d, const op_model *m, const op_tok *t, int is_last, cand *out) {
     const op_user *u = d->user;
@@ -863,6 +929,7 @@ static int slot_cands(const op_decoder *d, const op_model *m, const op_tok *t, i
         }
         n += n_uexact;
     }
+    if (!qw && !n) n = slip_cands(d, m, t, out, 0);     /* nothing matches: a slip? */
     int n_exact = n;
     if (qw) {
         for (int j = 0; j < n_qc; j++) {

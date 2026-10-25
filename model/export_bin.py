@@ -58,9 +58,13 @@ SECTIONS = [
 ]
 # Decoder constants, all in log-prob units. The punctuation ones come from model.json
 # punctParams when present (see tune_punct.js).
-PARAMS = ["qQ", "qN", "dQ", "cF", "dB", "cB", "eB", "apostrophe", "completion", "literal", "unknown"]
+# slipSub / slipDup (optional: older files stop at "unknown"): the penalty for a word one keypad
+# slip away (a neighboring key; a key pressed twice), 0 to leave those out (decoder.js slipCandidates).
+PARAMS = ["qQ", "qN", "dQ", "cF", "dB", "cB", "eB", "apostrophe", "completion", "literal", "unknown",
+          "slipSub", "slipDup"]
 DEFAULTS = {"qQ": 2.5, "qN": -1.5, "dQ": -1.5, "cF": -3, "dB": 0, "cB": 0, "eB": 0,
-            "apostrophe": math.log(0.5), "completion": math.log(0.5), "literal": -14, "unknown": -25}
+            "apostrophe": math.log(0.5), "completion": math.log(0.5), "literal": -14, "unknown": -25,
+            "slipSub": -12, "slipDup": -8}
 QUESTION_STARTERS = ['what', 'where', 'when', 'why', 'who', 'whom', 'whose', 'which', 'how',
     'can', 'could', 'would', 'should', 'will', 'shall', 'do', 'does', 'did', 'is', 'are', 'was', 'were', 'am',
     "isn't", "aren't", "don't", "doesn't", "didn't", "can't", "won't", "wouldn't", "shouldn't", "couldn't",
@@ -184,8 +188,9 @@ def main():
     ap.add_argument("--tri-contexts", type=int, default=65000)
     ap.add_argument("--no-context-case", action="store_true", help="leave out the context casing tables (in May)")
     ap.add_argument("--no-compounds", action="store_true", help="leave out the run-together word tables")
+    ap.add_argument("--no-slips", action="store_true", help="no words one keypad slip away")
     a = ap.parse_args()
-    no_compounds = a.no_compounds      # (a is reused below)
+    no_compounds, no_slips = a.no_compounds, a.no_slips      # (a is reused below)
     M = reduce(json.load(open(a.model_json, encoding="utf-8")), a.vocab, a.min_count, a.ambig_only,
                a.tri_min, min(a.tri_contexts, 65000))
     if a.no_context_case:
@@ -291,6 +296,8 @@ def main():
     sec["qStart"] = u16(sorted(rank[w] for w in QUESTION_STARTERS if w in rank))
     sec["punct"] = "".join(P).encode()
     params = dict(DEFAULTS, **M.get("punctParams", {}))
+    if no_slips:
+        params.update(slipSub=0, slipDup=0)
     sec["params"] = i16([q(params[k]) for k in PARAMS])
 
     head = b"KPD2" + struct.pack("<HHHHHH", 1, SCALE, n, len(P), bos, len(SECTIONS))

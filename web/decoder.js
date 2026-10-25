@@ -9,7 +9,8 @@ const SECTIONS = ['wordText', 'wordOff', 'keyIdx', 'stripIdx', 'dispId', 'dispOf
   // optional (older files stop at params):
   'qSkip', 'triKey', 'triStart', 'triBow', 'triNext', 'triLp', 'capKey', 'altId', 'altOff', 'altText', 'capNextKey', 'capKeepKey',
   'cmpHead', 'cmpTail'];
-const PARAMS = ['qQ', 'qN', 'dQ', 'cF', 'dB', 'cB', 'eB', 'apostrophe', 'completion', 'literal', 'unknown'];
+const PARAMS = ['qQ', 'qN', 'dQ', 'cF', 'dB', 'cB', 'eB', 'apostrophe', 'completion', 'literal', 'unknown',
+  'slipSub', 'slipDup'];    // optional: older files stop at 'unknown' (defaults below)
 const MAX_EXACT = 40, MAX_COMPLETIONS = 12;
 const AFTER_NUMBER = -2;           // beam state after a number (the model has no number token)
 const AFTER_DECIMAL = -3;          // after a number that could have been a time but was read as 5.30
@@ -50,6 +51,7 @@ function buildModel(bytes) {
   const fullKeys = words.map(wordKeys);
   const raw = at('params', Int16Array), params = {};
   PARAMS.forEach((k, i) => { params[k] = raw[i]; });
+  if (raw.length < PARAMS.length) Object.assign(params, { slipSub: -12 * scale, slipDup: -8 * scale });
   return {
     words, display, fullKeys, n, bos, scale, params,
     timeIds: ['am', 'pm'].map(w => words.indexOf(w)).filter(i => i >= 0),
@@ -348,6 +350,35 @@ function qwertyCandidates(m, tok, isLast) {
   return [ex, cp];
 }
 
+// ---- Keypad slips: one key next to the right one, or one key pressed twice ----
+// A keypad word of KP_MIN_KEYS or more (no exact letters or QWERTY taps) that no word matches
+// gets the words one slip away: one press replaced by a neighboring letter key (KEYPAD_NEAR,
+// penalty params.slipSub) or one doubled press removed (params.slipDup); a penalty of 0 leaves
+// that kind out. The KP_MAX best by unigram plus penalty (ties: lower id). Only when nothing
+// matches: offered next to real matches, slips to common words beat the right rarer ones
+// (more so with learning). Tuned on dev with tests/eval.js --slip / --double: -12 and -8 nats.
+const KEYPAD_NEAR = { 2: '35', 3: '26', 4: '57', 5: '2468', 6: '359', 7: '48', 8: '579', 9: '68' };
+const KP_MAX = 8, KP_MIN_KEYS = 3;
+let slipOverride = null;
+function slipParams(sub, dup) { slipOverride = [sub, dup]; }      // tuning only: nats
+function slipCandidates(m, tok, have) {
+  const k = tok.keys, P = m.params, list = [];
+  const [sub, dup] = slipOverride ? slipOverride.map(x => Math.round(x * m.scale)) : [P.slipSub, P.slipDup];
+  if ((!sub && !dup) || k.length < KP_MIN_KEYS || tok.lit.some(l => l !== null) || tok.hint.some(h => h !== null)) return list;
+  const add = (keys, pen) => {
+    for (const id of exactMatches(m, keys)) list.push({ text: m.words[id], id, penalty: pen + (m.fullKeys[id] === keys ? 0 : P.apostrophe) });
+  };
+  for (let i = 0; i < k.length; i++) {
+    if (sub) for (const d of KEYPAD_NEAR[k[i]] || '') add(k.slice(0, i) + d + k.slice(i + 1), sub);
+    if (dup && i && k[i] === k[i - 1] && KEYPAD_NEAR[k[i]]) add(k.slice(0, i) + k.slice(i + 1), dup);
+  }
+  list.forEach(c => { c.score = m.uni[c.id] + c.penalty; });
+  list.sort((a, b) => b.score - a.score || a.id - b.id);
+  const out = [], seen = new Set(have);
+  for (const c of list) { if (out.length === KP_MAX) break; if (!seen.has(c.id)) { seen.add(c.id); out.push(c); } }
+  return out;
+}
+
 // Candidates for each slot: [{text, id, partial, penalty}]
 function slotCandidates(m, tok, isLast, u) {
   const P = m.params;
@@ -389,6 +420,7 @@ function slotCandidates(m, tok, isLast, u) {
     });
   }
   exact.push(...userExact);
+  if (!qw && !exact.length) exact.push(...slipCandidates(m, tok, []));     // nothing matches: a slip?
   if (qwComps) {
     exact.push(...qwComps.filter(c => !exact.some(e => e.id === c.id)), ...userPartial);
   } else if (isLast && !allLit) {
@@ -409,8 +441,8 @@ function slotCandidates(m, tok, isLast, u) {
     return [{ text: typed, id: -1, literal: true }];
   }
   if (!exact.length) {
-    // No word fits: known words run together (lollypops), else the exact letters, else the
-    // QWERTY letters tapped, else each key's first.
+    // No word fits, not even one slip away: known words run together (lollypops), else the
+    // exact letters, else the QWERTY letters tapped, else each key's first.
     const typed = tok.lit.every((l, i) => l !== null || tok.hint[i] !== null || tok.keys[i] === '#');
     if (!typed) {
       const cs = compounds(m, tok);
@@ -951,4 +983,4 @@ function learn(m, u, result, hyp, start = {}) {
 }
 
 if (typeof module !== 'undefined') module.exports = { buildModel, decode, render, nextLetterProbs, exactMatches, wordKeys, tokenize, formatNumber,
-  newUser, learn, saveUser, loadUser, qwertyParams, USER_UNI, USER_PAIR, userParams, recentParams, buildNN };
+  newUser, learn, saveUser, loadUser, qwertyParams, slipParams, USER_UNI, USER_PAIR, userParams, recentParams, buildNN };

@@ -120,6 +120,11 @@ for (let i = 0; i < nFuzz; i++) {
     const cut = rnd(3) ? k.length : Math.max(1, k.length - 1 - rnd(4));
     inputs.push(k.slice(0, cut) + '\t' + (rnd(3) ? '' : pick(BEFORE)) + '\t' + h.slice(0, cut));
   }
+  // And on the keypad with slips: a neighboring key, or a key pressed twice.
+  const KEYPAD_NEAR = { 2: '35', 3: '26', 4: '57', 5: '2468', 6: '359', 7: '48', 8: '579', 9: '68' };
+  for (const msg of msgs.slice(0, 600)) {
+    inputs.push([...enc(msg)].map(c => !KEYPAD_NEAR[c] || rnd(12) ? c : rnd(2) ? pick(KEYPAD_NEAR[c]) : c + c).join(''));
+  }
 }
 
 const user = learnMode ? D.newUser(m) : null;

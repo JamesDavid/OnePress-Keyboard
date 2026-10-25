@@ -15,10 +15,11 @@ neural network helps on phones and the web.
   |---|---|---|---|---|---|---|
   | `onepress.bin` + `onepress-nn.bin` | 45k | 3.33 MB + 6.3 MB | 95.14% | 93.48% | 50.6% | phones, web |
   | `onepress.bin` | 45k | 3.33 MB | 94.14% | 92.12% | 49.8% | phones, web |
-  | `onepress-m.bin` | 20k | 1.06 MB | 93.17% | 91.24% | 47.2% | ESP32 Meshtastic |
-  | `onepress-s.bin` | 5k | 239 KB | 89.18% | 91.16% | 46.7% | radios, nRF52 |
+  | `onepress-m.bin` | 20k | 1.06 MB | 93.10% | 91.24% | 47.2% | ESP32 Meshtastic |
+  | `onepress-s.bin` | 5k | 239 KB | 89.00% | 91.16% | 46.7% | radios, nRF52 |
 
-  `node tests/eval.js --nn model/onepress-nn.bin` for the network.
+  `node tests/eval.js --nn model/onepress-nn.bin` for the network; `--slip 0.03` / `--double 0.03` for
+  presses on a neighboring key / pressed twice (phone model now 87.2% / 88.9%).
 - QWERTY (letters passed as `start.hint`): `node tests/qwerty_eval.js [--miss 0.1]` types each
   test message with that share of letters on a neighboring key. Current: 99.6% words right at 0%,
   98.7% at 3%, 96.5% at 10%.
@@ -38,7 +39,8 @@ neural network helps on phones and the web.
 - `model/onepress.bin` (KPD2, documented in `model/export_bin.py`) is the word model every decoder
   reads; sections after `params` are optional so older files and decoders keep working.
   Generated files (`model/model.json`, `model/*.bin`, `web/keypad.html`) are rebuilt by
-  `build.sh`; edit `web/page.template.html` and `web/decoder.js`, not `keypad.html`.
+  `build.sh`; edit `web/page.template.html` and `web/decoder.js`, not `keypad.html`, then
+  `python web/build_page.py` (`--lazy` builds the Pages `index.html` that fetches models on demand).
 - `tests/fit.html` (serve the repo root) checks that the keyboard and every tutorial step fit
   without scrolling down to 360×640. Run it after layout changes.
 - Targets range from phones down to microcontrollers (Meshtastic nRF52/ESP32 nodes, handheld

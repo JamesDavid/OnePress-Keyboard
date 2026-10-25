@@ -15,8 +15,10 @@
  * characters 'a'-'z', '\'', '.', ',', '?', '!' and 'A'-'J' for the digits 0-9 (exact mode or
  * a held number key). Digits form numbers: #6#000#00 renders "$6,000.00".
  *
- * Memory: sizeof(op_decoder) is about 24 KB with the defaults below. Small targets can
- * lower the limits, e.g. -DOP_MAX_BEAM=4 -DOP_MAX_SLOTS=48 -DOP_MAX_KEYS=160 for ~6 KB.
+ * Memory: sizeof(op_decoder) is about 27 KB with the defaults below. Small targets can
+ * lower the limits, e.g. -DOP_MAX_BEAM=4 -DOP_MAX_SLOTS=48 -DOP_MAX_KEYS=160 for ~7 KB.
+ * -DOP_NO_QWERTY leaves out matching the letters tapped on a QWERTY layout (start.hint is then
+ * only used for words no dictionary word matches), for keypad-only devices.
  * The model must be little-endian (it is on ARM, x86, ESP32 and RISC-V).
  */
 #ifndef ONEPRESS_H
@@ -45,7 +47,8 @@
 #define OP_USER_WORD_LEN 23     /* longest learned word */
 #define OP_MAX_USER_CANDS 4     /* learned words considered per slot, and again as completions */
 #define OP_RECENT_WORDS 32      /* words of start->before that count as recent */
-#define OP_MAX_CANDS (OP_MAX_EXACT + OP_MAX_COMPLETIONS + 2 * OP_MAX_USER_CANDS)
+#define OP_MAX_SLIPS 8          /* words one keypad slip away considered per slot */
+#define OP_MAX_CANDS (OP_MAX_EXACT + OP_MAX_COMPLETIONS + 2 * OP_MAX_USER_CANDS + OP_MAX_SLIPS)
 
 #define OP_NONE 0xFFFF          /* token id of an unknown word (decoder.js uses -1) */
 #define OP_TIME_ID 0xFFFA       /* id of a number read as a time (5:30); lock a slot to it, or to
@@ -60,7 +63,9 @@ enum { OP_OK = 0, OP_ERR_MODEL = -1, OP_ERR_TOO_LONG = -2, OP_ERR_SPACE = -3, OP
 enum { OP_WORD, OP_PARTIAL, OP_PUNCT, OP_LITERAL, OP_UNKNOWN, OP_NUMBER, OP_TIME, OP_COMPOUND };
 
 enum { OP_P_QQ, OP_P_QN, OP_P_DQ, OP_P_CF, OP_P_DB, OP_P_CB, OP_P_EB,
-       OP_P_APOSTROPHE, OP_P_COMPLETION, OP_P_LITERAL, OP_P_UNKNOWN, OP_N_PARAMS };
+       OP_P_APOSTROPHE, OP_P_COMPLETION, OP_P_LITERAL, OP_P_UNKNOWN,
+       OP_P_SLIP_SUB, OP_P_SLIP_DUP,   /* optional in the file (older ones stop before them) */
+       OP_N_PARAMS };
 
 typedef struct {
     uint16_t scale, n_words, n_punct, bos;
