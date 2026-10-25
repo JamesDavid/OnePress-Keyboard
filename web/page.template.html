@@ -265,7 +265,7 @@ body { padding-block: clamp(8px, 2.2dvh, 20px) clamp(10px, 3dvh, 28px); }
     <p>Tap any word to see other words with the same keys. Picking one locks it, and the rest of the sentence re-decodes around it.</p>
     <p>The QWERTY keyboard sends only each letter's keypad number (shown in the corner), so the model decodes it exactly as if you'd used the keypad. When no word fits, it keeps the letters you tapped. Keys grow and shrink in place with how likely each letter is to come next. A computer keyboard works the same way, and Tab finishes the word.</p>
     <p><b>Neural</b> (Phone model) adds a small neural network that reads everything typed before each word, not just the last two words. It's downloaded once next to the page and runs here too.</p>
-    <p>Runs entirely in this page. <b>Model</b> picks the word model: Phone (45,000 words), ESP32 / Meshtastic (29,000) and nRF52 / radio (5,000) are the same files the C decoder runs on those devices, so you can see how each would behave. Español, Deutsch, Português, Français and Italiano are word models for those languages: accents, umlauts and ñ come out on their own (type the plain letter's key), German nouns are capitalized, Spanish questions open with ¿, and in French and Italian <b>#</b> between letters makes the apostrophe of l'homme or dov'è. They download when first picked. <b>Load .bin file…</b> opens any model built with <code>model/export_bin.py</code>. <b>Compare sizes</b> shows what each model makes of the same keys, with the words that differ from the selected model highlighted.</p>
+    <p>Runs entirely in this page. <b>Model</b> picks the word model: Phone (45,000 words), ESP32 / Meshtastic (29,000) and nRF52 / radio (5,000) are the same files the C decoder runs on those devices, so you can see how each would behave. The other languages (Español, Deutsch, Português, Français, Italiano, Nederlands, Svenska, Polski, Čeština, Türkçe, Русский, Ελληνικά), each in the same three sizes, download when first picked: accents come out on their own (type the plain letter's key: á on 2, ł on 5), Greek and Russian use their usual phone keypads (Russian 2 абвг, Greek 2 αβγ), German nouns are capitalized, Spanish questions open with ¿, and in French and Italian <b>#</b> between letters makes the apostrophe of l'homme or dov'è. <b>Load .bin file…</b> opens any model built with <code>model/export_bin.py</code>. <b>Compare sizes</b> shows what each model makes of the same keys, with the words that differ from the selected model highlighted.</p>
   </div>
 </div>
 
@@ -273,11 +273,7 @@ body { padding-block: clamp(8px, 2.2dvh, 20px) clamp(10px, 3dvh, 28px); }
 <script type="application/octet-stream" id="model-l" data-file="onepress.bin" data-size="__SIZE_L__" data-words="__WORDS_L__">__MODEL_L__</script>
 <script type="application/octet-stream" id="model-m" data-file="onepress-m.bin" data-size="__SIZE_M__" data-words="__WORDS_M__">__MODEL_M__</script>
 <script type="application/octet-stream" id="model-s" data-file="onepress-s.bin" data-size="__SIZE_S__" data-words="__WORDS_S__">__MODEL_S__</script>
-<script type="application/octet-stream" id="model-es" data-file="onepress-es.bin" data-size="__SIZE_ES__" data-words="__WORDS_ES__">__MODEL_ES__</script>
-<script type="application/octet-stream" id="model-de" data-file="onepress-de.bin" data-size="__SIZE_DE__" data-words="__WORDS_DE__">__MODEL_DE__</script>
-<script type="application/octet-stream" id="model-pt" data-file="onepress-pt.bin" data-size="__SIZE_PT__" data-words="__WORDS_PT__">__MODEL_PT__</script>
-<script type="application/octet-stream" id="model-fr" data-file="onepress-fr.bin" data-size="__SIZE_FR__" data-words="__WORDS_FR__">__MODEL_FR__</script>
-<script type="application/octet-stream" id="model-it" data-file="onepress-it.bin" data-size="__SIZE_IT__" data-words="__WORDS_IT__">__MODEL_IT__</script>
+__LANG_SCRIPTS__
 <script>
 __DECODER__
 </script>
@@ -591,11 +587,8 @@ __DECODER__
     { id: 'l', name: 'Phone', device: 'Phone / web', el: 'model-l', lang: 'en' },
     { id: 'm', name: 'ESP32', device: 'ESP32 / Meshtastic', el: 'model-m', lang: 'en' },
     { id: 's', name: 'Radio', device: 'nRF52 / radio', el: 'model-s', lang: 'en' },
-    { id: 'es', name: 'Español', device: 'Español', el: 'model-es', lang: 'es' },
-    { id: 'de', name: 'Deutsch', device: 'Deutsch', el: 'model-de', lang: 'de' },
-    { id: 'pt', name: 'Português', device: 'Português', el: 'model-pt', lang: 'pt' },
-    { id: 'fr', name: 'Français', device: 'Français', el: 'model-fr', lang: 'fr' },
-    { id: 'it', name: 'Italiano', device: 'Italiano', el: 'model-it', lang: 'it' },
+    /* other languages, in three sizes each (written by web/build_page.py) */
+__LANG_MENU__
   ];
   const loaded = {};        // id -> { m, size, name }, built on first use
   // What this person has sent, per model (word ids differ between models). Kept in this
@@ -683,9 +676,14 @@ __DECODER__
 
   const pick = $('modelPick');
   for (const spec of MODELS) {
-    // Label from what the build wrote down, without loading the model.
+    // Label from what the build wrote down, without loading the model; a group per language.
     const size = +$(spec.el).dataset.size, words = +$(spec.el).dataset.words;
-    pick.append(new Option(`${spec.device} · ${Math.round(words / 1000)}k words · ${fmtSize(size)}`, spec.id));
+    let parent = pick;
+    if (spec.group) {
+      parent = [...pick.children].find(g => g.label === spec.group);
+      if (!parent) { parent = document.createElement('optgroup'); parent.label = spec.group; pick.append(parent); }
+    }
+    parent.append(new Option(`${spec.device} · ${Math.round(words / 1000)}k words · ${fmtSize(size)}`, spec.id));
   }
   const fileOpt = new Option('Load .bin file…', 'file');
   pick.append(fileOpt);

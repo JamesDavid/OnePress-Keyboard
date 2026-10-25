@@ -7,8 +7,9 @@ const fs = require('fs'), path = require('path');
 const D = require(path.join(__dirname, '../web/decoder.js'));
 const [testFile, modelFile, outFile] = process.argv.slice(2);
 const m = D.buildModel(fs.readFileSync(modelFile));
-const L = 'a-zß-öø-ÿ', TOK = new RegExp(`[${L}]+(?:'[${L}]+)?|[.,!?]`, 'g');
-const out = fs.readFileSync(testFile, 'utf8').split('\n').filter(Boolean).map(s => (s.toLowerCase().match(TOK) || []).map(t => {
+const lower = m.words.some(w => w.includes('ı')) ? s => s.replace(/İ/g, 'i').replace(/I/g, 'ı').toLowerCase() : s => s.toLowerCase();
+const L = '\\p{L}', TOK = new RegExp(`[${L}]+(?:'[${L}]+)?|[.,!?]`, 'gu');
+const out = fs.readFileSync(testFile, 'utf8').split('\n').filter(Boolean).map(s => (lower(s).match(TOK) || []).map(t => {
   if (/[.,!?]/.test(t)) return '.';
   const top = w => { const ids = D.exactMatches(m, D.wordKeys(w)); return ids.length ? m.words[ids[0]] : null; };
   const whole = top(t.replace(/'/g, ''));

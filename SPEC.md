@@ -127,23 +127,31 @@ Each person gets a small fixed-size table (`newUser` / `learn` in decoder.js, `o
 
 ### Other languages
 
-`build_model.py --lang xx` builds a model for another wordfreq language: no English extras (Gutenberg, movie reviews, names, messages.txt), words may hold accented letters, and the text comes from the corpora given (cased). `export_bin.py` reads the language from model.json for its question openers, the words skipped before them, and the `flags` param. Both decoders read accented Latin letters (U+00C0–U+00FF) in a model's words: each is typed with its base letter's key (á → 2, ñ → 6, ü → 8, ß → 7, the `FOLD` table), and an exact or QWERTY letter matches it through that base letter (exact mode has no accents, so `n` matches `ñ`). A sentence's first letter is capitalized accents included (é → É). `flags`: 1 capitalizes "i" (English; older files), 2 opens a question or exclamation with ¿ / ¡ (Spanish), placed after a leading greeting or filler and its comma ("Hola, ¿qué tal?").
+`build_model.py --lang xx` builds a model for another wordfreq language: no English extras (Gutenberg, movie reviews, names, messages.txt), words may hold accented letters, and the text comes from the corpora given (cased). `export_bin.py` reads the language from model.json for its question openers, the words skipped before them, and the `flags` param. Both decoders read letters beyond a-z in a model's words from one generated table (`model/chartable.py` writes it into decoder.js and onepress.c; export_bin.py imports it): accented Latin (U+00C0–U+024F), Greek and Cyrillic (U+0370–U+045F). Each letter has its keypad key (Latin: its plain letter's, á → 2, ł → 5, ş → 7; Greek 2 αβγ 3 δεζ 4 ηθι 5 κλμ 6 νξο 7 πρσς 8 τυφ 9 χψω; Russian 2 абвг 3 деёжз 4 ийкл 5 мноп 6 рсту 7 фхцч 8 шщъы 9 ьэюя), the plain letter an exact or QWERTY letter matches (Latin only: exact mode has no accents, so `n` matches `ñ`), its capital (a sentence's first letter: é → É, ж → Ж) and its small letter, which lowercases the text before the cursor the same way in both decoders (not the locale's rules: İ stays as it is). `flags`: 1 capitalizes "i" (English; older files), 2 opens a question or exclamation with ¿ / ¡ (Spanish), placed after a leading greeting or filler and its comma ("Hola, ¿qué tal?"), 4 shows the question mark as ; (Greek).
 
-- **Models** from wordfreq plus Tatoeba's sentences in that language (`prep_tatoeba.py`: split by sentence id, 1 in 20 each to dev and test). Held-out Tatoeba test, words the model lacks spelled out (accents count: "como" for "cómo" is wrong); the classic one-word-at-a-time keypad for comparison (`tests/baseline.js`):
+- **Models** from wordfreq plus Tatoeba's sentences in that language (`prep_tatoeba.py`: split by sentence id, 1 in 20 each to dev and test; `build_langs.sh` builds all three sizes). Held-out test, accents count ("como" for "cómo" is wrong):
 
-  | Model | Size | Words right | Spelled out | Punctuation | Classic keypad |
-  |---|---|---|---|---|---|
-  | `onepress-es.bin` Spanish | 1.9 MB | 97.85% | 3.0% | 76.9% | 91.70% |
-  | `onepress-es-m.bin` Spanish, 20k words | 697 KB | 97.59% | 6.0% | 75.5% | 91.94% |
-  | `onepress-es-s.bin` Spanish, 5k words | 173 KB | 97.54% | 14.7% | 75.1% | 92.50% |
-  | `onepress-de.bin` German | 2.6 MB | 97.54% | 4.4% | 83.8% | 90.70% |
-  | `onepress-pt.bin` Portuguese | 1.8 MB | 98.25% | 1.8% | 79.1% | 92.94% |
-  | `onepress-fr.bin` French | 2.4 MB | 98.18% | 2.1% | 83.9% | 83.18% |
-  | `onepress-it.bin` Italian | 2.4 MB | 98.74% | 2.4% | 79.8% | 89.12% |
+  | Language | Phone (45k words) | ESP32 (20k) | Radio (5k) | Phone size | Spelled out (phone) | Punctuation (phone) | Classic keypad |
+  |---|---|---|---|---|---|---|---|
+  | Spanish (`es`) | 97.85% | 97.59% | 97.54% | 1.9 MB | 3.0% | 76.9% | 91.70% |
+  | German (`de`) | 97.54% | 96.97% | 96.44% | 2.6 MB | 4.4% | 84.0% | 90.70% |
+  | Portuguese (`pt`) | 98.25% | 97.92% | 97.59% | 1.8 MB | 1.8% | 79.1% | 92.94% |
+  | French (`fr`) | 98.18% | 97.56% | 97.31% | 2.4 MB | 2.1% | 83.9% | 83.18% |
+  | Italian (`it`) | 98.74% | 98.47% | 98.26% | 2.4 MB | 2.4% | 79.8% | 89.12% |
+  | Dutch (`nl`) | 97.96% | 97.68% | 97.47% | 1.8 MB | 1.9% | 86.8% | 94.48% |
+  | Swedish (`sv`) | 96.77% | 96.43% | 95.75% | 1.2 MB | 2.5% | 89.5% | 92.51% |
+  | Polish (`pl`) | 96.61% | 96.30% | 96.10% | 1.4 MB | 6.7% | 84.9% | 91.86% |
+  | Czech (`cs`) | 96.12% | 95.99% | 95.82% | 1.3 MB | 5.9% | 84.7% | 91.58% |
+  | Turkish (`tr`) | 96.39% | 96.81% | 97.30% | 1.9 MB | 11.9% | 91.2% | 94.44% |
+  | Russian (`ru`) | 97.61% | 97.20% | 96.92% | 2.9 MB | 6.2% | 78.4% | 87.26% |
+  | Greek (`el`) | 97.27% | 97.10% | 96.62% | 1.5 MB | 16.1% | 74.8% | 95.21% |
 
-  German nouns are capitalized from Tatoeba's casing. Tatoeba sentences are short and tidy, so expect less on real chat.
+  Words right on held-out Tatoeba sentences (`model/corpora/<lang>/test.txt`), the words a model lacks spelled out and not scored; the smaller sizes lack more of them, which is why Turkish's look better. The classic keypad is the phone model's word list, one word at a time (`tests/baseline.js`). Swedish and Greek have the least Tatoeba text (50k and 37k sentences); Turkish and Greek words come in many forms, so a 45k-word list misses more of them. Tatoeba sentences are short and tidy, so expect less on real chat.
+
+  German nouns are capitalized from Tatoeba's casing.
+- **Turkish endings:** a name's case ending follows an apostrophe (Tom'a, Ankara'da). The Turkish model has the endings ('a 'e 'da 'de 'ın 'nin ...) as words, its text is split before them, and both decoders split `tom#a` (no word matching it whole) into a word and an ending that starts with an apostrophe, shown joined.
 - **Elision (French, Italian):** wordfreq counts "l'homme" as l + homme, so the French model has the elided words (l' d' j' qu' n' s' c' m' t' jusqu' lorsqu' puisqu' quoiqu' presqu'; Italian l' un' dell' all' c' dov' quest' ...) as words of their own, and `build_model.py` splits its text the same way. Both decoders split a word typed with an apostrophe (`l#homme`) that no dictionary or learned word matches whole into the elided word (a dictionary word ending in an apostrophe whose keys and exact letters fit the part up to the first `#`) and the rest, decoded as two words with no space between and shown joined ("L'homme est là.", "Il m'a dit qu'il viendrait."). Words whole with their apostrophe (aujourd'hui, quelqu'un) stay whole; models without elided words never split. The apostrophe has to be typed in French (it's optional in English, where "dont" finds "don't"). œ is typed and shown as oe.
-- **Not yet:** hyphenated words (French "est-ce", "peut-être"; Portuguese "dá-me") are typed and come out as two words, since the keypad has no hyphen; French spaces before ? ! are not added; languages outside Latin-1 (Polish, Czech, Greek, Russian) need a wider fold table and keypad layouts.
+- **Not yet:** hyphenated words (French "est-ce", "peut-être"; Portuguese "dá-me") are typed and come out as two words, since the keypad has no hyphen; French spaces before ? ! are not added; exact mode spells a-z only, so a Greek or Russian word the model lacks can't be spelled out yet; scripts beyond U+07FF (Arabic is inside but has no keypad table; CJK, Indic) are not covered.
 
 ### Speed
 

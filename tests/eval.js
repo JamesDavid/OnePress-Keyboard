@@ -35,17 +35,21 @@ if (nn && nnWeight) nn.weight = +nnWeight;
 const oovExact = args.includes('--oov-exact');
 if (oovExact) args.splice(args.indexOf('--oov-exact'), 1);
 const known = new Set(m.words);
+// Turkish (a model with dotless ı) lowercases I to ı and İ to i.
+const lower = m.words.some(w => w.includes('ı')) ? s => s.replace(/İ/g, 'i').replace(/I/g, 'ı').toLowerCase() : s => s.toLowerCase();
 // An elided word (French l'homme: l' + homme) is known when both parts are, and typed with its
 // apostrophe (#), which is how the decoder tells it apart.
 const elided = w => !known.has(w) && w.includes("'") && known.has(w.split("'")[0] + "'") && known.has(w.slice(w.indexOf("'") + 1));
 const isOov = w => oovExact && !known.has(w) && !known.has(w.replace(/'/g, '')) && !elided(w);
 // Letters include the accented ones (other languages); exact mode has no accents, so a word
 // the model lacks is spelled with its plain letters.
-const L = 'a-zß-öø-ÿ', plain = x => x.normalize('NFD').replace(/[̀-ͯ]/g, '');
-const enc = s => s.toLowerCase().split(' ').map(w => w.replace(new RegExp(`[${L}']+`), x => isOov(x) ? plain(x)
-  : elided(x) ? D.wordKeys(x) : x.replace(/'/g, '').replace(new RegExp(`[${L}]`, 'g'), c => D.wordKeys(c)))).join('0').replace(/[.,!?]/g, '#');
-const TOK = new RegExp(`[${L}]+(?:'[${L}]+)?|[.,!?]`, 'g');
-const toks = s => s.toLowerCase().match(TOK) || [];
+const L = '\\p{L}', plain = x => x.normalize('NFD').replace(/[̀-ͯ]/g, '');
+// Exact mode has a-z only: a Greek or Cyrillic word the model lacks is typed by its keys instead.
+const spell = x => /^[a-z']+$/.test(plain(x)) ? plain(x) : [...x].map(c => /^[2-9#]$/.test(D.wordKeys(c)) ? D.wordKeys(c) : '').join('');
+const enc = s => lower(s).split(' ').map(w => w.replace(new RegExp(`[${L}']+`, 'u'), x => isOov(x) ? spell(x)
+  : elided(x) ? D.wordKeys(x) : x.replace(/'/g, '').replace(new RegExp(`[${L}]`, 'gu'), c => D.wordKeys(c)))).join('0').replace(/[.,!?]/g, '#');
+const TOK = new RegExp(`[${L}]+(?:'[${L}]+)?|[.,!?]`, 'gu');
+const toks = s => lower(s).match(TOK) || [];
 
 let hyps;
 const t0 = Date.now();

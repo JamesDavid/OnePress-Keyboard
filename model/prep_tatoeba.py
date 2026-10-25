@@ -12,14 +12,16 @@ becomes a space (the keypad has no hyphen: "est-ce" is typed, and comes out, as 
 import bz2, hashlib, os, re, sys
 
 src, out = sys.argv[1], sys.argv[2]
-LETTER = "a-zA-ZÀ-ÖØ-öø-ÿ"
-BAD = re.compile(f"[^{LETTER}' .,!?]")
-WORD = re.compile(f"[{LETTER}]+(?:'[{LETTER}]+)?")
+L = r"[^\W\d_]"                                   # any letter (Latin, Greek, Cyrillic, ...)
+BAD = re.compile(r"[^\w' .,!?]|[\d_]")
+WORD = re.compile(f"{L}+(?:'{L}+)?")
 
 def clean(t):
     t = t.replace("’", "'").replace("‘", "'").replace("¿", "").replace("¡", "")
     t = t.replace("œ", "oe").replace("Œ", "Oe").replace("æ", "ae").replace("Æ", "Ae")
-    t = re.sub(f"(?<=[{LETTER}])-(?=[{LETTER}])", " ", t)
+    t = re.sub(f"(?<={L})-(?={L})", " ", t)
+    if re.search("[\u0370-\u03ff]", t):                 # Greek: ; is the question mark, · a semicolon
+        t = t.replace(";", "?").replace("\u0387", ",").replace("\u00b7", ",")
     t = t.replace("\u00a0", " ").replace("\u202f", " ")         # French spaces before ? ! :
     t = re.sub(r"\s+", " ", t).strip()
     if BAD.search(t):

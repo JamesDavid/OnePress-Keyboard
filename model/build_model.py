@@ -27,8 +27,20 @@ EN = LANG == "en"
 ROOT = sys.argv[1]
 OUT = sys.argv[2]
 VOCAB_N = 45000
-L = "a-z" if EN else "a-z\u00df-\u00f6\u00f8-\u00ff"            # lowercase letters of a word
-WORD_RE = re.compile(f"^[{L}]+(?:'[{L}]+)?$")
+# A word's letters: a-z, or for other languages any letter the decoders have a key for
+# (model/chartable.py: accented Latin, Greek, Cyrillic).
+from chartable import key_of
+L = "[a-z]" if EN else r"[^\W\d_]"
+_WORD = re.compile(f"^{L}+(?:'{L}+)?$")
+class WORD_RE:
+    @staticmethod
+    def match(w):
+        return _WORD.match(w) and all(key_of(c) for c in w)
+def lower(t):
+    """Lowercase, with Turkish dotted and dotless i."""
+    if LANG == "tr":
+        t = t.replace("İ", "i").replace("I", "ı")
+    return t.lower()
 PUNCT = [".", ",", "!", "?"]
 TRI_CTX_MIN = 12    # count word triples only after word pairs seen at least this often (weighted)
 
@@ -61,6 +73,17 @@ for w in sorted(ELIDED):
     if w not in vidx:
         vidx[w] = len(vocab); vocab.append(w)
         freqs.append(max(word_frequency(w[:-1], LANG), 3e-7))
+# Turkish puts a name's case ending after an apostrophe (Tom'a, Ankara'da): the endings are words
+# of their own too, the text is split before them, and the decoders split "tom#a" the same way.
+SUFFIXES = {"tr": ["a", "e", "ya", "ye", "ı", "i", "u", "ü", "yı", "yi", "yu", "yü", "da", "de", "ta", "te", "dan",
+                   "den", "tan", "ten", "ın", "in", "un", "ün", "nın", "nin", "nun", "nün", "la", "le", "yla", "yle",
+                   "dır", "dir", "dur", "dür", "ki", "lar", "ler", "ları", "leri", "nda", "nde", "na", "ne", "nı",
+                   "ni", "nu", "nü", "ndan", "nden", "yım", "yim", "ım", "im", "ımız", "imiz", "dı", "di", "du", "dü"]}
+SUFFIXED = {"'" + e for e in SUFFIXES.get(LANG, [])}
+for w in sorted(SUFFIXED):
+    if w not in vidx:
+        vidx[w] = len(vocab); vocab.append(w)
+        freqs.append(1e-4)
 added = 0
 for w in list(curated) + sorted(names):
     if w not in vidx:
@@ -68,13 +91,16 @@ for w in list(curated) + sorted(names):
         freqs.append(max(word_frequency(w, LANG), 3e-7)); added += 1
 
 # ---- text streams: (text, weight, cased) ----
-tok_re = re.compile(f"[{L}]+(?:'[{L}]+)?|[.,!?]")
+tok_re = re.compile(f"{L}+(?:'{L}+)?|[.,!?]")
 def tokens(text):
     out = []
-    for t in tok_re.findall(text.lower().replace("’", "'").replace("‘", "'")):
+    for t in tok_re.findall(lower(text).replace("’", "'").replace("‘", "'")):
         if ELIDED and "'" in t and t not in vidx and t.split("'", 1)[0] + "'" in ELIDED:
             a, b = t.split("'", 1)
             out += [a + "'", b]
+        elif SUFFIXED and "'" in t and t not in vidx and "'" + t.split("'", 1)[1] in SUFFIXED:
+            a, b = t.split("'", 1)
+            out += [a, "'" + b]
         else:
             out.append(t)
     return out
@@ -180,11 +206,11 @@ def scan_cased(text):
         if t in ".!?": start, prev = True, None; continue
         if t == ",": prev = ","; continue
         if not start:
-            w = t.lower()
-            nxt = toks[i + 1].lower() if i + 1 < len(toks) and toks[i + 1][0].isalpha() else None
+            w = lower(t)
+            nxt = lower(toks[i + 1]) if i + 1 < len(toks) and toks[i + 1][0].isalpha() else None
             if t[0].isupper() and not t.isupper(): cap[w] += 1; pcap[(prev, w)] += 1; ncap[(w, nxt)] += 1
             elif t.islower(): low[w] += 1; plow[(prev, w)] += 1; nlow[(w, nxt)] += 1
-        start, prev = False, t.lower()
+        start, prev = False, lower(t)
 for f in os.listdir(gdir) if EN else []:
     scan_cased(open(os.path.join(gdir, f), encoding="latin-1").read())
 for text, wt, cased in streams:

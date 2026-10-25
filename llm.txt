@@ -11,10 +11,9 @@ embedded project. Read it top to bottom before writing code. Repository layout:
 - `c/onepress.h`, `c/onepress.c`: the C decoder. Copy both files into the project; nothing else is needed.
 - `web/decoder.js`: the JavaScript decoder (browser global functions, or `require()` in Node).
 - `model/onepress.bin` (45k words, 3.5 MB), `model/onepress-m.bin` (29k words, 1.5 MB),
-  `model/onepress-s.bin` (5k words, 239 KB): the English word models, and Spanish
-  (`model/onepress-es.bin`, `-es-m.bin`, `-es-s.bin`), German (`onepress-de.bin`), Portuguese
-  (`onepress-pt.bin`), French (`onepress-fr.bin`) and Italian (`onepress-it.bin`; in both, #
-  between letters is the apostrophe of l'homme / dov'è), in the KPD2 format (`model/export_bin.py` documents it). Every
+  `model/onepress-s.bin` (5k words, 239 KB): the English word models, and the same three sizes
+  for twelve more languages (`model/onepress-<lang>.bin`, `-<lang>-m.bin`, `-<lang>-s.bin`; # between
+  letters is the apostrophe of French l'homme, Italian dov'è, Turkish Tom'a), in the KPD2 format (`model/export_bin.py` documents it). Every
   decoder reads the same files. Accented letters (á, ñ, ü, ...) are typed with their base
   letter's key and come out on their own; the Spanish model also opens questions with ¿.
 - `model/onepress-nn.bin` (6.3 MB) or `model/onepress-nn-s.bin` (2.5 MB, almost the same gain):
@@ -39,8 +38,11 @@ embedded project. Read it top to bottom before writing code. Repository layout:
 | Phones, web, desktop | `onepress.bin` (+ `onepress-nn.bin` or `-nn-s.bin`) | 94.1% of words (95.0% / 94.9% with the network) |
 | ESP32 (4 MB+ flash), Meshtastic nodes | `onepress-m.bin` | 94.1% |
 | nRF52, radios, anything with ~250 KB free flash | `onepress-s.bin` | 89.0% |
-| Spanish: phones / ESP32 / radios | `onepress-es.bin` / `-es-m.bin` / `-es-s.bin` | 97.9% / 97.6% / 97.5% (held-out Tatoeba sentences) |
-| German, Portuguese, French, Italian (phones, web) | `onepress-de.bin`, `-pt.bin`, `-fr.bin`, `-it.bin` | 97.5%, 98.3%, 98.2%, 98.7% |
+| Other languages: phones / ESP32 / radios | `onepress-<lang>.bin` / `-<lang>-m.bin` / `-<lang>-s.bin` | 96-98.7% (held-out Tatoeba sentences; SPEC.md lists each) |
+
+Languages (`<lang>`): es Spanish, de German, pt Portuguese, fr French, it Italian, nl Dutch,
+sv Swedish, pl Polish, cs Czech, tr Turkish, ru Russian, el Greek. Accented letters are typed
+on their plain letter's key; Russian and Greek use the usual phone keypad layouts (SPEC.md).
 
 Decoding is cheap: under 0.07 ms per key press on a desktop CPU for a 200-press message, so
 roughly 5-10 ms on a 64 MHz nRF52. Call decode with the whole key string on every press; it
@@ -133,9 +135,9 @@ op_learn(&user, &dec, &model, &start);
 - Not thread-safe per decoder: use one `op_decoder` per thread. The model is read-only and can be shared.
 - Memory: lower the limits on small targets with compiler flags, e.g.
   `-DOP_MAX_BEAM=4 -DOP_MAX_SLOTS=48 -DOP_MAX_KEYS=160 -DOP_USER_WORDS=64 -DOP_USER_PAIRS=256`
-  gives a 7 KB decoder and a 3 KB user table. Code is about 28 KB at -Os; -DOP_NO_NN leaves out
+  gives a 7 KB decoder and a 3 KB user table. Code is about 33 KB at -Os; -DOP_NO_NN leaves out
   the neural part and -DOP_NO_QWERTY the QWERTY letter matching (keypad-only devices), about
-  24 KB with both. Stack use is small (a few hundred bytes to 2 KB in op_decode).
+  28 KB with both. Stack use is small (a few hundred bytes to 2 KB in op_decode).
 - The model must be little-endian (ARM, x86, ESP32, RISC-V all are) and 4-byte aligned. It is
   read in place, so memory-mapped flash works with no copy.
 
@@ -284,7 +286,7 @@ shows the alternative of embedding it as base64.
 ## nRF52 and other small microcontrollers (radios, custom keypads)
 
 - Needs: model bytes readable at a pointer (internal flash, or memory-mapped QSPI/XIP flash),
-  about 24 KB code (-DOP_NO_NN -DOP_NO_QWERTY), 7 KB RAM for the decoder with the small limits
+  about 28 KB code (-DOP_NO_NN -DOP_NO_QWERTY), 7 KB RAM for the decoder with the small limits
   above, 3 KB for a small user table.
 - Use `onepress-s.bin` (239 KB). On nRF52840 put it in internal flash if there is room, or in
   external QSPI flash mapped for execute-in-place.

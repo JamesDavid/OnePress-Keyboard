@@ -88,10 +88,10 @@ def compound_parts(words, logp, vocab, lang, zipf):
     import re, wordfreq
     full = set(words)
     top = {words[i] for i in sorted(range(len(words)), key=lambda i: (-logp[i], i))[:vocab]}
-    letters = "a-z" if lang == "en" else "a-z\u00df-\u00f6\u00f8-\u00ff"
+    letters = "[a-z]" if lang == "en" else r"[^\W\d_]"
     parts = set()
-    for w in wordfreq.get_frequency_dict(lang, "large"):
-        if not re.fullmatch(f"[{letters}]{{4,24}}", w) or w in top or wordfreq.zipf_frequency(w, lang, "large") < zipf:
+    for w in wordfreq.get_frequency_dict(lang, "best"):
+        if not re.fullmatch(f"{letters}{{4,24}}", w) or w in top or wordfreq.zipf_frequency(w, lang, "best") < zipf:
             continue
         for i in range(2, len(w) - 1):
             a, b = w[:i], w[i:]
@@ -103,7 +103,7 @@ def compound_parts(words, logp, vocab, lang, zipf):
 # slipSub / slipDup (optional: older files stop at "unknown"): the penalty for a word one keypad
 # slip away (a neighboring key; a key pressed twice), 0 to leave those out (decoder.js slipCandidates).
 # flags (optional, an integer, not a log-prob): 1 capitalizes "i" (English), 2 opens a question or
-# exclamation with ¿ / ¡ (Spanish).
+# exclamation with ¿ / ¡ (Spanish), 4 shows the question mark as ; (Greek).
 PARAMS = ["qQ", "qN", "dQ", "cF", "dB", "cB", "eB", "apostrophe", "completion", "literal", "unknown",
           "slipSub", "slipDup", "flags"]
 DEFAULTS = {"qQ": 2.5, "qN": -1.5, "dQ": -1.5, "cF": -3, "dB": 0, "cB": 0, "eB": 0,
@@ -144,6 +144,27 @@ LANGS = {
             "sai", "sapete", "ti", "vieni", "vai", "c'", "dov'", "com'", "cos'"],
            ["ciao", "allora", "beh", "ok", "oh", "ah", "eh", "e", "ma", "quindi", "grazie", "sì", "no", "senti",
             "scusa", "dai", "bene", "ecco"], 0),
+    "nl": (["wat", "wie", "waar", "wanneer", "waarom", "hoe", "welke", "welk", "kan", "kun", "kunt", "heb", "hebt",
+            "heeft", "ben", "bent", "is", "zijn", "wil", "wilt", "ga", "gaat", "mag", "moet", "weet", "weten"],
+           ["hoi", "hallo", "hey", "ok", "oké", "nou", "ja", "nee", "en", "maar", "dus", "oh", "ah", "bedankt",
+            "dank", "zeg"], 0),
+    "sv": (["vad", "vem", "var", "vart", "när", "varför", "hur", "vilken", "vilket", "vilka", "kan", "har",
+            "är", "vill", "ska", "får", "vet", "kommer", "tycker"],
+           ["hej", "hallå", "ok", "okej", "ja", "nej", "och", "men", "så", "tack", "oj", "åh", "du"], 0),
+    "pl": (["co", "kto", "gdzie", "kiedy", "dlaczego", "czemu", "jak", "który", "która", "które", "ile", "czy",
+            "możesz", "masz", "jesteś", "chcesz", "wiesz", "dokąd", "skąd"],
+           ["cześć", "hej", "ok", "okej", "no", "tak", "nie", "i", "ale", "więc", "dzięki", "a", "oj"], 0),
+    "cs": (["co", "kdo", "kde", "kdy", "proč", "jak", "který", "která", "které", "kolik", "můžeš", "máš",
+            "jsi", "chceš", "víš", "kam", "odkud"],
+           ["ahoj", "čau", "ok", "no", "jo", "ano", "ne", "a", "ale", "tak", "díky", "hele"], 0),
+    "tr": (["ne", "kim", "nerede", "nereye", "neden", "niye", "niçin", "nasıl", "hangi", "kaç", "hani"],
+           ["merhaba", "selam", "tamam", "evet", "hayır", "ve", "ama", "peki", "teşekkürler", "şey", "yani"], 0),
+    "ru": (["что", "кто", "где", "когда", "почему", "зачем", "как", "какой", "какая", "какое", "какие",
+            "сколько", "куда", "откуда", "можешь", "можно", "чей", "чья", "ли"],
+           ["привет", "ну", "ладно", "ок", "да", "нет", "и", "а", "но", "так", "спасибо", "слушай", "кстати"], 0),
+    "el": (["τι", "ποιος", "ποια", "ποιο", "πού", "πότε", "γιατί", "πώς", "πόσο", "πόσα", "πόσες", "πόσοι",
+            "μπορείς", "μπορείτε", "έχεις", "είσαι", "θέλεις", "ξέρεις"],
+           ["γεια", "καλά", "εντάξει", "ναι", "όχι", "και", "αλλά", "λοιπόν", "ευχαριστώ", "ρε"], 4),
     "pt": (["que", "quê", "como", "onde", "aonde", "quando", "porque", "qual", "quais", "quem", "quanto", "quanta",
             "quantos", "quantas", "você", "vocês", "pode", "podes", "podemos", "tem", "tens", "vai", "vais", "vamos",
             "está", "estás", "é", "há", "sabe", "sabes", "quer", "queres", "posso"],
@@ -153,16 +174,10 @@ LANGS = {
 LAMBDA_K = 40   # lambda = c / (c + LAMBDA_K), Witten-Bell style
 TRI_K = int(__import__("os").environ.get("TRI_K", 40))      # the same for three-word contexts
 
-KEYMAP = {c: k for k, letters in {"2": "abc", "3": "def", "4": "ghi", "5": "jkl", "6": "mno",
-          "7": "pqrs", "8": "tuv", "9": "wxyz", "#": "'"}.items() for c in letters}
-# Accented letters U+00C0-U+00FF take their base letter's key (decoder.js FOLD).
-FOLD = "aaaaaaaceeeeiiiidnooooo\0ouuuuyts" "aaaaaaaceeeeiiiidnooooo\0ouuuuyty"
-for x in range(0xC0, 0x100):
-    if FOLD[x - 0xC0] != "\0":
-        KEYMAP[chr(x)] = KEYMAP[FOLD[x - 0xC0]]
+from chartable import key_of      # the decoders' keys, accented Latin, Greek and Cyrillic included
 
 def keys(w):
-    return "".join(KEYMAP[c] for c in w)
+    return "".join(key_of(c) for c in w)
 
 def q(x):
     v = round(x * SCALE)
@@ -246,14 +261,14 @@ def compound_lifts(words, logp, lang="en", known_zipf=None):
     import re, wordfreq
     vocab = {w: i for i, w in enumerate(words)}
     head, tail, known = Counter(), Counter(), set()
-    letters = "a-z" if lang == "en" else "a-z\u00df-\u00f6\u00f8-\u00ff"
-    for w in wordfreq.get_frequency_dict(lang, "large"):
-        if not re.fullmatch(f"[{letters}]{{4,24}}", w) or w in vocab:
+    letters = "[a-z]" if lang == "en" else r"[^\W\d_]"
+    for w in wordfreq.get_frequency_dict(lang, "best"):
+        if not re.fullmatch(f"{letters}{{4,24}}", w) or w in vocab or not all(key_of(c) for c in w):
             continue
         splits = [(w[:i], w[i:]) for i in range(2, len(w) - 1) if w[:i] in vocab and w[i:] in vocab]
         if not splits:
             continue
-        z = wordfreq.zipf_frequency(w, lang, "large")
+        z = wordfreq.zipf_frequency(w, lang, "best")
         wt = max(z - 1, 0.05) / len(splits)
         for a, b in splits:
             head[vocab[a]] += wt
