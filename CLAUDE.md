@@ -16,8 +16,8 @@ neural network helps on phones and the web.
   | `onepress.bin` + `onepress-nn.bin` | 45k | 3.53 MB + 6.3 MB | 94.98% | 93.26% | 55.4% | phones, web |
   | `onepress.bin` + `onepress-nn-s.bin` | 45k | 3.53 MB + 2.5 MB | 94.86% | 93.11% | 52.7% | phones, web |
   | `onepress.bin` | 45k | 3.53 MB | 94.14% | 92.12% | 49.8% | phones, web |
-  | `onepress-m.bin` + `onepress-nn-m.bin` | 29k | 1.53 MB + 1.7 MB | 94.37% | 92.97% | 49.7% | ESP32 |
-  | `onepress-m.bin` | 29k | 1.53 MB | 94.05% | 92.56% | 47.1% | ESP32 Meshtastic |
+  | `onepress-m.bin` + `onepress-nn-m.bin` | 29k | 1.54 MB + 1.67 MB | 94.38% | 92.98% | 51.0% | ESP32 |
+  | `onepress-m.bin` (+ radio words) | 29k | 1.54 MB | 94.05% | 92.54% | 47.2% | ESP32 Meshtastic |
   | `onepress-s.bin` (+ radio words) | 5k | 246 KB | 89.00% | 91.23% | 46.7% | radios, nRF52 |
 
   `node tests/eval.js --nn model/onepress-nn.bin` for the network; `--slip 0.03` / `--double 0.03` for

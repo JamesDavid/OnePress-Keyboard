@@ -19,11 +19,12 @@ fi
 #   onepress-m.bin  ESP32 nodes    20k words
 #   onepress-s.bin  radios, nRF52   5k words, no context casing (in May)
 "$PY" export_bin.py model.json onepress.bin --ambig-only --min-count 3 --tri-min 6 --known-compounds 1.1
-"$PY" export_bin.py model.json onepress-m.bin --vocab 20000 --ambig-only --min-count 6 --known-compounds 1.1 --compound-parts 1.1
-# The radio model also knows amateur radio and mesh words (data/radio.txt: CQ, QTH, QSO, tnx, fer,
-# repeater, node, ...), kept in its 5k words, with word pairs from data/radio_messages.txt. It has
-# no neural model, so its own word list can differ from model.json's.
+# The ESP32 (Meshtastic) and radio models also know amateur radio and mesh words (data/radio.txt:
+# CQ, QTH, QSO, tnx, fer, repeater, node, ...), kept whatever their frequency, with word pairs
+# from data/radio_messages.txt. Changing their word lists means retraining onepress-nn-m.bin
+# (train_nn.py on the -m vocabulary, data/radio_messages.txt included; see SPEC.md).
 "$PY" build_model.py corpora model-radio.json data/messages.txt data/proper.txt,data/radio.txt corpora/nus/train.txt:3 corpora/nus/train_na.txt:10   corpora/chat/topical_chat.txt:1:cased corpora/chat/taskmaster.txt:1:cased corpora/chat/persona.txt:1:cased data/radio_messages.txt:25
+"$PY" export_bin.py model-radio.json onepress-m.bin --vocab 20000 --ambig-only --min-count 6 --known-compounds 1.1 --compound-parts 1.1 --keep data/radio.txt
 "$PY" export_bin.py model-radio.json onepress-s.bin --vocab 5000 --ambig-only --min-count 20 --no-context-case --keep data/radio.txt
 [ -f corpora/chat/tc_test_freq.json ] && "$PY" prep_chat_test.py model.json corpora/chat   # second test set
 # Other languages: wordfreq + Tatoeba, in the three sizes (build_langs.sh)

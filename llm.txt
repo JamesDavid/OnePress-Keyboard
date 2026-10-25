@@ -10,7 +10,7 @@ embedded project. Read it top to bottom before writing code. Repository layout:
 
 - `c/onepress.h`, `c/onepress.c`: the C decoder. Copy both files into the project; nothing else is needed.
 - `web/decoder.js`: the JavaScript decoder (browser global functions, or `require()` in Node).
-- `model/onepress.bin` (45k words, 3.5 MB), `model/onepress-m.bin` (29k words, 1.5 MB),
+- `model/onepress.bin` (45k words, 3.5 MB), `model/onepress-m.bin` (29k words plus amateur radio and mesh words, 1.5 MB),
   `model/onepress-s.bin` (5k words plus amateur radio and mesh words, 246 KB): the English word models, and the same three sizes
   for twelve more languages (`model/onepress-<lang>.bin`, `-<lang>-m.bin`, `-<lang>-s.bin`; # between
   letters is the apostrophe of French l'homme, Italian dov'è, Turkish Tom'a), in the KPD2 format (`model/export_bin.py` documents it). Every
