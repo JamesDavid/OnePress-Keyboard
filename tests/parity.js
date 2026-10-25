@@ -17,6 +17,9 @@ if (learnMode) args.splice(args.indexOf('--learn'), 1);
 const beam = +opt('--beam', 8), nFuzz = +opt('--fuzz', 5000);
 const modelFile = opt('--model', path.join(__dirname, '../model/onepress.bin'));
 const textFile = opt('--text');
+// --layout "rows": the --text sentences are also typed on that keyboard (letter rows, '|' between
+// them, as start.layout), one tap in eight on a neighboring key.
+const layoutRows = opt('--layout');
 const exe = args[0] || path.join(__dirname, '../build/opdecode' + (process.platform === 'win32' ? '.exe' : ''));
 const m = D.buildModel(fs.readFileSync(modelFile));
 
@@ -29,15 +32,42 @@ for (const f of ['test.txt', 'dev.txt']) {
 }
 inputs.push(enc("Can you pick up the kids after school?"), enc("We're going to McDonald's tonight!"), '');
 // --text file: its sentences too (e.g. corpora/es/dev.txt for a Spanish model), accents included,
-// some with the text before and QWERTY letters (plain).
+// some with the text before and QWERTY letters (plain), and some with every third word spelled
+// out exactly in its own letters (Cyrillic, Greek, accented: as that language's multi-tap gives).
+const textLines = [];
 if (textFile) {
-  const plain = x => x.normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const plain = x => x.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const key = c => c === ' ' ? '0' : '.,!?'.includes(c) ? '#' : (/^[2-9#]$/.test(D.wordKeys(c)) ? D.wordKeys(c) : '');
   for (const line of fs.readFileSync(textFile, 'utf8').split('\n').filter(Boolean).slice(0, 2000)) {
     const low = line.toLowerCase();                 // apostrophes typed as #: French elisions
-    const k = [...low].map(c => c === ' ' ? '0' : '.,!?'.includes(c) ? '#' : (/^[2-9#]$/.test(D.wordKeys(c)) ? D.wordKeys(c) : '')).join('');
-    inputs.push(k, k + '\t' + line.split(' ').slice(0, 3).join(' ') + '\t' + [...plain(low)].map(c => /[a-z]/.test(c) ? c : ' ').join(''));
+    const k = [...low].map(key).join('');
+    const exact = low.split(' ').map((w, i) => i % 3 === 2 ? [...w].map(c => '.,!?'.includes(c) ? '#' : key(c) ? c : '').join('')
+      : [...w].map(key).join('')).join('0');
+    textLines.push(k, k + '\t' + line.split(' ').slice(0, 3).join(' ') + '\t' + [...plain(low)].map(c => /[a-z]/.test(c) ? c : ' ').join(''), exact);
   }
 }
+if (textFile && layoutRows) {
+  const pos = {};
+  layoutRows.split('|').forEach((r, y) => [...r].forEach((c, x) => { pos[c] = [2 * x + y, y]; }));
+  const near = c => Object.keys(pos).filter(d => { if (!pos[c] || d === c) return false;
+    const dx = pos[d][0] - pos[c][0], dy = pos[d][1] - pos[c][1]; return dx * dx + 4 * dy * dy <= 5; });
+  const plain = c => pos[c] ? c : c.normalize('NFD')[0];          // a letter with no key: its plain one
+  let s2 = 4242;
+  const r2 = n => { s2 = (s2 * 1103515245 + 12345) & 0x7fffffff; return s2 % n; };
+  for (const line of fs.readFileSync(textFile, 'utf8').split('\n').filter(Boolean).slice(0, 1500)) {
+    let k = '', h = '';
+    for (const c of line.toLowerCase()) {
+      if (c === ' ') { k += '0'; h += ' '; continue; }
+      if ('.,!?'.includes(c) || c === "'" || c === '-') { k += '#'; h += ' '; continue; }
+      let t = plain(c);
+      if (!pos[t]) continue;
+      if (!r2(8) && near(t).length) t = near(t)[r2(near(t).length)];
+      k += D.wordKeys(t); h += t;
+    }
+    textLines.push(k + '\t\t' + h + '\t' + layoutRows);
+  }
+}
+inputs.push(...textLines);
 // Known words run together (compounds), some with letters typed exactly or an apostrophe.
 const COMPOUNDS = [enc('lollypops'), enc('i love lollypops'), enc('snowmanparty'), enc('bestfriendforever'),
   '5655976l77', 'l6559767767', enc('the bluebirdnest is'), '766#7468', '4663968727983', enc('kittycatz')];
@@ -138,6 +168,7 @@ for (let i = 0; i < nFuzz; i++) {
   }
 }
 
+if (learnMode) inputs.push(...textLines, '@@save');      // learned words in their own letters too
 const user = learnMode ? D.newUser(m) : null;
 const nn = nnFile ? D.buildNN(fs.readFileSync(nnFile), m) : undefined;
 const js = inputs.map(line => {
@@ -150,8 +181,8 @@ const js = inputs.map(line => {
     if (user) user.words.forEach((w, i) => { if (w.toLowerCase() === line.slice(1).toLowerCase()) user.words[i] = line.slice(1); });
     return line;
   }
-  const [k, before, hint] = line.split('\t');
-  const r = D.decode(m, k, {}, beam, 5, { user, before: before === undefined ? undefined : before.replace(/\|/g, '\n'), hint, nn });
+  const [k, before, hint, layout] = line.split('\t');
+  const r = D.decode(m, k, {}, beam, 5, { user, before: before === undefined ? undefined : before.replace(/\|/g, '\n'), hint, nn, layout: layout || undefined });
   const text = D.render(m, r, r.hyps[0]).map(p => p.text).join('');
   if (user) D.learn(m, user, r, r.hyps[0]);
   return text;

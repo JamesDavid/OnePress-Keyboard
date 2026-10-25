@@ -103,7 +103,8 @@ def compound_parts(words, logp, vocab, lang, zipf):
 # slipSub / slipDup (optional: older files stop at "unknown"): the penalty for a word one keypad
 # slip away (a neighboring key; a key pressed twice), 0 to leave those out (decoder.js slipCandidates).
 # flags (optional, an integer, not a log-prob): 1 capitalizes "i" (English), 2 opens a question or
-# exclamation with ¿ / ¡ (Spanish), 4 shows the question mark as ; (Greek).
+# exclamation with ¿ / ¡ (Spanish), 4 shows the question mark as ; (Greek), 8 puts a narrow no-break
+# space before ? ! : (French).
 PARAMS = ["qQ", "qN", "dQ", "cF", "dB", "cB", "eB", "apostrophe", "completion", "literal", "unknown",
           "slipSub", "slipDup", "flags"]
 DEFAULTS = {"qQ": 2.5, "qN": -1.5, "dQ": -1.5, "cF": -3, "dB": 0, "cB": 0, "eB": 0,
@@ -138,7 +139,7 @@ LANGS = {
             "qu'", "est", "as", "avez", "peux", "pouvez", "veux", "voulez", "sais", "savez", "es", "êtes", "vas",
             "allez", "aimes", "aimez", "connais", "connaissez", "ai", "dois", "devons", "pourrais", "pourriez"],
            ["salut", "bonjour", "bonsoir", "coucou", "alors", "bon", "ok", "oh", "ah", "eh", "et", "mais", "donc",
-            "merci", "oui", "non", "bref", "dis", "écoute", "tiens"], 0),
+            "merci", "oui", "non", "bref", "dis", "écoute", "tiens"], 8),
     "it": (["che", "cosa", "come", "dove", "quando", "perché", "quale", "quali", "chi", "quanto", "quanta",
             "quanti", "quante", "puoi", "può", "possiamo", "hai", "ha", "avete", "sei", "siete", "vuoi", "volete",
             "sai", "sapete", "ti", "vieni", "vai", "c'", "dov'", "com'", "cos'"],

@@ -15,7 +15,7 @@
  * characters 'a'-'z', '\'', '.', ',', '?', '!' and 'A'-'J' for the digits 0-9 (exact mode or
  * a held number key). Digits form numbers: #6#000#00 renders "$6,000.00".
  *
- * Memory: sizeof(op_decoder) is about 27 KB with the defaults below. Small targets can
+ * Memory: sizeof(op_decoder) is about 28 KB with the defaults below. Small targets can
  * lower the limits, e.g. -DOP_MAX_BEAM=4 -DOP_MAX_SLOTS=48 -DOP_MAX_KEYS=160 for ~7 KB.
  * -DOP_NO_QWERTY leaves out matching the letters tapped on a QWERTY layout (start.hint is then
  * only used for words no dictionary word matches), for keypad-only devices.
@@ -165,13 +165,18 @@ typedef struct {
      * messages of the conversation, one per line. Its last words are the context (they replace
      * prev and cap), and words used in it get a small bonus. A line break ends a sentence. */
     const char *before;
-    /* On a QWERTY keyboard that sends keypad digits: the letter tapped for each key press
-     * (same length as keys; any other character for presses that weren't letters), or NULL.
-     * Shown, and learned when sent, when no word matches. */
+    /* On a letter keyboard that sends keypad digits: the letter tapped for each key press (UTF-8,
+     * one character per press; any other character for presses that weren't letters), or NULL.
+     * Matched letter by letter (neighboring keys forgiven), and shown, and learned when sent,
+     * when no word matches. */
     const char *hint;
     /* The neural word model and its working memory, or NULL (op_nn_open). */
     const op_nn *nn;
     op_nn_work *nn_work;
+    /* That keyboard's letter rows, top to bottom, separated by '|' (UTF-8), or NULL for English
+     * QWERTY: "qwertzuiopü|asdfghjklöä|yxcvbnm", "йцукенгшщзхъ|фывапролджэ|ячсмитьбю". Row r is
+     * shifted right by r/2 key; keys one apart in a row, or touching in the next row, neighbor. */
+    const char *layout;
 } op_start;
 
 /* Force slot `slot` to word `id` (as decoder.js locks do). Ignored if that word isn't a candidate. */
@@ -211,7 +216,10 @@ typedef struct {
     uint16_t line[OP_NN_LINE];          /* start->before's current line, for the network */
     uint8_t n_line;
     /* Working memory. */
-    char keys[OP_MAX_KEYS], lits[OP_MAX_KEYS], hints[OP_MAX_KEYS];
+    char keys[OP_MAX_KEYS];
+    uint16_t lits[OP_MAX_KEYS];         /* exact letters (code points, lowercase), 0 for predictive */
+    uint16_t hints[OP_MAX_KEYS];        /* letters tapped (code points, lowercase), 0 for none */
+    const char *layout;                 /* start->layout, or the English rows */
     struct { uint16_t id; uint8_t parent, kind; } bp[OP_MAX_SLOTS][OP_MAX_BEAM];
     op_entry ent[OP_MAX_BEAM * OP_MAX_CANDS];
     /* The search after the last finished sentence of the previous op_decode, to resume from

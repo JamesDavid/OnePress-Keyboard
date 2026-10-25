@@ -22,9 +22,10 @@ neural network helps on phones and the web.
 
   `node tests/eval.js --nn model/onepress-nn.bin` for the network; `--slip 0.03` / `--double 0.03` for
   presses on a neighboring key / pressed twice (phone model now 87.2% / 88.9%).
-- QWERTY (letters passed as `start.hint`): `node tests/qwerty_eval.js [--miss 0.1]` types each
-  test message with that share of letters on a neighboring key. Current: 99.6% words right at 0%,
-  98.7% at 3%, 96.5% at 10%.
+- Letter keyboards (`start.hint`, `start.layout`): `node tests/qwerty_eval.js [test.txt] [--miss 0.1]
+  [--layout rows]` types each test message on the layout with that share of letters on a
+  neighboring key; parity with `--text ... --layout rows`. English now: 99.66% words right at 0%,
+  98.73% at 3%, 96.75% at 10%; other languages in SPEC.md.
 - Learning from the user (SPEC.md §3): `node tests/learn_eval.js [users_test.tsv] [--before 3]`
   replays each NUS user's messages in order. Tune on `users_dev.tsv`. Current, test users:
   predicted words 90.23% → 93.12%, punctuation 58.6% → 66.8% (US/Canada: 94.18% → 95.27%,

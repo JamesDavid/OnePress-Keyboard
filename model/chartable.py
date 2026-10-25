@@ -1,7 +1,9 @@
 """The letters beyond a-z that the decoders know: for each code point of Latin-1 / Latin
 Extended-A and -B (U+00C0-U+024F), Greek (U+0370-U+03FF) and Cyrillic (U+0400-U+045F), its keypad
 key, the plain letter it matches when typed exactly or tapped on QWERTY (Latin letters only),
-its capital, and its small letter (to lowercase the text before the cursor the same way in C).
+its capital, its small letter (to lowercase the text before the cursor the same way in C), and
+for Greek and Cyrillic its plain letter (ά -> α, ё -> е), which a tapped or exact plain letter
+matches as a plain Latin one matches an accented one.
 
     python model/chartable.py        rewrites the generated tables in web/decoder.js and
                                      c/onepress.c (between their CHARTABLE markers)
@@ -33,6 +35,14 @@ def lower_of(cp):
     low = chr(cp).lower()
     return ord(low) if len(low) == 1 and chr(cp).isupper() and -128 <= ord(low) - cp <= 127 else cp
 
+def plain_of(cp):
+    """Plain letter of a Greek or Cyrillic letter (ά -> α, ё -> е), or cp itself."""
+    c = chr(cp)
+    if not c.isalpha() or not 0x370 <= cp < 0x460:
+        return cp
+    b = unicodedata.normalize("NFD", c)[0]
+    return ord(b) if b != c and b.isalpha() and -128 <= ord(b) - cp <= 127 else cp
+
 def entry(cp):
     """(key, plain letter, capital code point) of code point cp; key '' if it isn't a letter."""
     c = chr(cp)
@@ -58,7 +68,7 @@ def key_of(c):
     """Keypad key of a letter of a model's word ('' if the decoders don't know it)."""
     if "a" <= c <= "z":
         return LATIN_KEYS[c]
-    if c == "'":
+    if c == "'" or c == "-":            # an apostrophe or a hyphen inside a word: the # key
         return "#"
     for lo, hi in RANGES:
         if lo <= ord(c) < hi:
@@ -66,10 +76,11 @@ def key_of(c):
     return ""
 
 def tables():
-    """Per range: keys ('0' = not a letter), plain letters ('0' = none), capital and small offsets."""
+    """Per range: keys ('0' = not a letter), plain Latin letters ('0' = none), capital, small and
+    plain (Greek, Cyrillic) offsets."""
     out = []
     for lo, hi in RANGES:
-        keys, base, delta, ldelta = "", "", [], []
+        keys, base, delta, ldelta, pdelta = "", "", [], [], []
         for cp in range(lo, hi):
             k, b, up = entry(cp)
             keys += k or "0"
@@ -79,22 +90,25 @@ def tables():
                 d = 0                   # (ı -> I): rare at a sentence start, left as it is
             delta.append(d)
             ldelta.append(lower_of(cp) - cp if k else 0)
-        out.append((lo, hi, keys, base, delta, ldelta))
+            pdelta.append(plain_of(cp) - cp if k else 0)
+        out.append((lo, hi, keys, base, delta, ldelta, pdelta))
     return out
 
 def js():
     rows = []
-    for lo, hi, keys, base, delta, ldelta in tables():
-        rows.append(f"  [0x{lo:04x}, '{keys}',\n   '{base}',\n   [{','.join(map(str, delta))}],\n   [{','.join(map(str, ldelta))}]],")
-    return "const CHARTABLE = [   // [first code point, keys, plain letters, capital offsets, small offsets]\n" + "\n".join(rows) + "\n];"
+    for lo, hi, keys, base, delta, ldelta, pdelta in tables():
+        rows.append(f"  [0x{lo:04x}, '{keys}',\n   '{base}',\n   [{','.join(map(str, delta))}],\n   [{','.join(map(str, ldelta))}],\n   [{','.join(map(str, pdelta))}]],")
+    return ("const CHARTABLE = [   // [first code point, keys, plain Latin letters, capital, small and plain offsets]\n"
+            + "\n".join(rows) + "\n];")
 
 def c():
-    lines = ["static const struct { uint16_t lo, hi; const char *keys, *base; const signed char *delta, *ldelta; } CHARTABLE[] = {"]
+    lines = ["static const struct { uint16_t lo, hi; const char *keys, *base; const signed char *delta, *ldelta, *pdelta; } CHARTABLE[] = {"]
     decl = []
-    for n, (lo, hi, keys, base, delta, ldelta) in enumerate(tables()):
+    for n, (lo, hi, keys, base, delta, ldelta, pdelta) in enumerate(tables()):
         decl.append(f"static const signed char CT_DELTA{n}[] = {{{','.join(map(str, delta))}}};")
         decl.append(f"static const signed char CT_LDELTA{n}[] = {{{','.join(map(str, ldelta))}}};")
-        lines.append(f'    {{ 0x{lo:04X}, 0x{hi:04X},\n      "{keys}",\n      "{base}", CT_DELTA{n}, CT_LDELTA{n} }},')
+        decl.append(f"static const signed char CT_PDELTA{n}[] = {{{','.join(map(str, pdelta))}}};")
+        lines.append(f'    {{ 0x{lo:04X}, 0x{hi:04X},\n      "{keys}",\n      "{base}", CT_DELTA{n}, CT_LDELTA{n}, CT_PDELTA{n} }},')
     return "\n".join(decl) + "\n" + "\n".join(lines) + "\n};"
 
 def replace(path, text):

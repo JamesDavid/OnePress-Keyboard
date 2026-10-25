@@ -8,13 +8,20 @@ const D = require(path.join(__dirname, '../web/decoder.js'));
 const [testFile, modelFile, outFile] = process.argv.slice(2);
 const m = D.buildModel(fs.readFileSync(modelFile));
 const lower = m.words.some(w => w.includes('ı')) ? s => s.replace(/İ/g, 'i').replace(/I/g, 'ı').toLowerCase() : s => s.toLowerCase();
-const L = '\\p{L}', TOK = new RegExp(`[${L}]+(?:'[${L}]+)?|[.,!?]`, 'gu');
+const L = '\\p{L}', TOK = new RegExp(`[${L}]+(?:'[${L}]+)?(?:-[${L}]+)*|[.,!?]`, 'gu');
 const out = fs.readFileSync(testFile, 'utf8').split('\n').filter(Boolean).map(s => (lower(s).match(TOK) || []).map(t => {
   if (/[.,!?]/.test(t)) return '.';
   const top = w => { const ids = D.exactMatches(m, D.wordKeys(w)); return ids.length ? m.words[ids[0]] : null; };
   const whole = top(t.replace(/'/g, ''));
-  if (whole || !t.includes("'")) return whole || t;
-  const a = top(t.split("'")[0] + "'"), b = top(t.slice(t.indexOf("'") + 1));      // elided: l' + homme
-  return a && b && a.endsWith("'") ? a + b : t;
+  if (whole || !/['-]/.test(t)) return whole || t;
+  // split as the decoder does: l' + homme, tom + 'a, est + -ce; each part its most frequent word
+  const ps = [];
+  for (const x of t.split(/(?=-)/)) {
+    if (!x.includes("'") || top(x)) { ps.push(x); continue; }
+    const i = x.indexOf("'");
+    ps.push(top(x.slice(0, i + 1)) ? x.slice(0, i + 1) : x.slice(0, i), top(x.slice(0, i + 1)) ? x.slice(i + 1) : x.slice(i));
+  }
+  const ws = ps.map(top);
+  return ws.every(Boolean) ? ws.join('') : t;
 }).join(' '));
 fs.writeFileSync(outFile, out.join('\n') + '\n');

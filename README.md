@@ -11,8 +11,8 @@ browser, and a short tutorial starts on your first visit.
 
 - **Whole-sentence context.** Each new word can fix the ones before it: `4663` alone is "good",
   after "on my way" it's "home". A finished sentence stays put once you start the next one.
-- **Small enough for microcontrollers.** One C99 file, no memory allocation, about 28 KB of code
-  and 7–27 KB of RAM. The model is read straight from flash.
+- **Small enough for microcontrollers.** One C99 file, no memory allocation, about 30 KB of code
+  and 7–28 KB of RAM. The model is read straight from flash.
 - **Forgives slips.** A word that no word matches is checked one slip away: a neighboring key, or
   a key pressed twice. With 3% of presses slipping, 87–89% of words still come out right (82% without).
 - **Three model sizes** from 239 KB to 3.5 MB, for radios up to phones, and an optional neural
@@ -30,9 +30,10 @@ browser, and a short tutorial starts on your first visit.
 - **Numbers, money and times.** Hold a number key for its digit: `# 6 # 000 # 00` gives
   "$6,000.00", and "at 5 # 30" gives "at 5:30" (5.30 is one tap away).
 - **Exact spelling** (multi-tap) for anything else, mixed freely with predicted words.
-- **QWERTY too.** The letters you tap count, and a tap on a neighboring key is forgiven: 99.6% of
-  words right typing accurately, 96.5% with one letter in ten on the wrong key. A word it doesn't
-  know keeps the letters you tapped.
+- **Letter keyboards too, in each language's layout** (QWERTY, QWERTZ, AZERTY, Russian, Greek,
+  ...). The letters you tap count, and a tap on a neighboring key is forgiven: in English 99.7%
+  of words right typing accurately, 96.8% with one letter in ten on the wrong key. A word it
+  doesn't know keeps the letters you tapped.
 - **Words run together.** A long word it doesn't know is tried as known words written as one
   ("icecreamtruck", "snowmanparty", "lollypops"), ranked by the compounds wordfreq knows and how
   often each word starts or ends one, with the other splits a tap away.

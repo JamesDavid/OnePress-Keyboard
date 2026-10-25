@@ -37,18 +37,28 @@ if (oovExact) args.splice(args.indexOf('--oov-exact'), 1);
 const known = new Set(m.words);
 // Turkish (a model with dotless ı) lowercases I to ı and İ to i.
 const lower = m.words.some(w => w.includes('ı')) ? s => s.replace(/İ/g, 'i').replace(/I/g, 'ı').toLowerCase() : s => s.toLowerCase();
-// An elided word (French l'homme: l' + homme) is known when both parts are, and typed with its
-// apostrophe (#), which is how the decoder tells it apart.
-const elided = w => !known.has(w) && w.includes("'") && known.has(w.split("'")[0] + "'") && known.has(w.slice(w.indexOf("'") + 1));
+// A word the decoder splits (French l'homme: l' + homme; Turkish Tom'a: tom + 'a; est-ce:
+// est + -ce, a-t-il: a + -t + -il) is known when its parts are, and typed with # for the
+// apostrophe or hyphen, which is how the decoder tells it apart.
+const parts = w => {
+  const p = w.split(/(?=-)/), out = [];
+  for (const x of p) {
+    if (known.has(x) || !x.includes("'")) { out.push(x); continue; }
+    const a = x.slice(0, x.indexOf("'") + 1), b = x.slice(x.indexOf("'") + 1);
+    if (known.has(a)) out.push(a, b); else out.push(x.slice(0, x.indexOf("'")), "'" + b);
+  }
+  return out;
+};
+const elided = w => !known.has(w) && /['-]/.test(w) && parts(w).every(x => known.has(x));
 const isOov = w => oovExact && !known.has(w) && !known.has(w.replace(/'/g, '')) && !elided(w);
 // Letters include the accented ones (other languages); exact mode has no accents, so a word
 // the model lacks is spelled with its plain letters.
 const L = '\\p{L}', plain = x => x.normalize('NFD').replace(/[̀-ͯ]/g, '');
 // Exact mode has a-z only: a Greek or Cyrillic word the model lacks is typed by its keys instead.
 const spell = x => /^[a-z']+$/.test(plain(x)) ? plain(x) : [...x].map(c => /^[2-9#]$/.test(D.wordKeys(c)) ? D.wordKeys(c) : '').join('');
-const enc = s => lower(s).split(' ').map(w => w.replace(new RegExp(`[${L}']+`, 'u'), x => isOov(x) ? spell(x)
+const enc = s => lower(s).split(' ').map(w => w.replace(new RegExp(`[${L}'-]+`, 'u'), x => isOov(x) ? spell(x)
   : elided(x) ? D.wordKeys(x) : x.replace(/'/g, '').replace(new RegExp(`[${L}]`, 'gu'), c => D.wordKeys(c)))).join('0').replace(/[.,!?]/g, '#');
-const TOK = new RegExp(`[${L}]+(?:'[${L}]+)?|[.,!?]`, 'gu');
+const TOK = new RegExp(`[${L}]+(?:'[${L}]+)?(?:-[${L}]+)*|[.,!?]`, 'gu');
 const toks = s => lower(s).match(TOK) || [];
 
 let hyps;

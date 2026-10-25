@@ -125,6 +125,9 @@ h1 { font-family: var(--f-display); font-weight: 700; font-size: 1.35rem; letter
 @media (prefers-reduced-motion: reduce) { .qk.l { transition: none; } }
 .qk.fn { max-width: 56px; flex-grow: 1.5; font-size: 0.85rem; background: var(--key-press); }
 .qk.space { max-width: none; flex-grow: 5; font-size: 0.9rem; }
+.qk.wide { max-width: 92px; flex-grow: 2.4; }          /* where iOS has return: the punctuation key */
+.qk.sym { font-size: 1.05rem; }
+.qk:disabled { opacity: 0.35; cursor: default; }
 .qk:active, .qk.down { background: var(--key-press); }
 .qk.fn:active, .qk.fn.down { background: var(--key); }
 .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
@@ -282,15 +285,27 @@ __DECODER__
   const $ = id => document.getElementById(id);
   const PAD = [['1', 'delete'], ['2', 'abc'], ['3', 'def'], ['4', 'ghi'], ['5', 'jkl'], ['6', 'mno'],
                ['7', 'pqrs'], ['8', 'tuv'], ['9', 'wxyz'], ['*', 'next · hold'], ['0', 'space'], ['#', ".,'?! · hold"]];
-  const EXAMPLES = [
-    "Are you coming home for dinner?",
-    "I'm leaving work now, see you soon!",
-    "Can you pick up the kids after school?",
-    "Want to get Starbucks after school?",
-    "I think the meeting moved to Friday.",
-    "What time is the game tonight?",
-  ];
-  const enc = s => s.toLowerCase().replace(/[.,!?]/g, '#').replace(/ /g, '0').replace(/[a-z']/g, c => wordKeys(c)); // ' maps to #
+  // Examples per language, each one its model decodes exactly from the keys alone.
+  const EXAMPLES = {
+    en: ["Are you coming home for dinner?", "I'm leaving work now, see you soon!", "Can you pick up the kids after school?",
+         "Want to get Starbucks after school?", "I think the meeting moved to Friday.", "What time is the game tonight?"],
+    es: ["¿Dónde está la estación?", "Mañana vamos a la playa.", "¿Qué haces esta noche?", "¿Cómo estás?"],
+    de: ["Kommst du heute zum Abendessen?", "Ich bin gleich zu Hause.", "Wo ist der Bahnhof?", "Was machst du heute Abend?", "Wir sehen uns morgen."],
+    pt: ["Estou saindo do trabalho agora.", "Onde fica a estação?", "Como você está?", "Chego em casa às oito."],
+    fr: ["J'arrive dans cinq minutes.", "Qu'est-ce que tu fais ?", "Où est la gare ?", "Je suis à la maison.", "Comment ça va ?"],
+    it: ["Vieni a cena stasera?", "Sto uscendo dal lavoro adesso.", "Dove sei?", "Come stai?", "Ci vediamo domani."],
+    nl: ["Ik ben er over vijf minuten.", "Waar is het station?", "Hoe gaat het?", "Wat doe je vanavond?", "Ik ben thuis."],
+    sv: ["Kommer du hem till middag?", "Jag är på väg hem nu.", "Var är stationen?", "Vad gör du i kväll?", "Vi ses i morgon."],
+    pl: ["Jestem już w drodze do domu.", "Gdzie jest dworzec?", "Co robisz dziś wieczorem?", "Jak się masz?", "Do zobaczenia jutro."],
+    cs: ["Už jsem na cestě domů.", "Kde je nádraží?", "Co děláš dnes večer?", "Jak se máš?", "Uvidíme se zítra."],
+    tr: ["Bu akşam yemeğe geliyor musun?", "Eve doğru yoldayım.", "Nerede buluşuyoruz?", "Nasılsın?", "Yarın görüşürüz."],
+    ru: ["Я уже еду домой.", "Где находится вокзал?", "Что ты делаешь сегодня вечером?", "Как дела?", "Увидимся завтра."],
+    el: ["Είμαι στο δρόμο για το σπίτι.", "Πού είναι ο σταθμός;", "Τι κάνεις απόψε;", "Πώς είσαι;", "Τα λέμε αύριο."],
+  };
+  // A sentence as keypad presses: letters to their keys, spaces to 0, marks (and ' or - inside a
+  // word) to #; ¿ ¡ and French spaces before marks are left out, as the decoder adds them.
+  const enc = s => [...s.replace(/[¿¡]/g, '').replace(/[\u00a0\u202f]| (?=[?!:;])/g, '').toLowerCase()].map(c =>
+    c === ' ' ? '0' : '.,!?;'.includes(c) ? '#' : /^[2-9#]$/.test(wordKeys(c)) ? wordKeys(c) : '').join('');
 
   let exact = false, tap = null;
   let m = null, keys = '', locks = {}, sel = null, result = null, best = null, exampleIdx = 0, isExample = false;
@@ -314,6 +329,7 @@ __DECODER__
   let nnModel = null, nnOn = true;
   try { nnOn = localStorage.getItem('nn') !== '0'; } catch (err) {}
   const startFor = id => ({ user: getUser(id), before: sentLog.map(t => t + '\n').join(''), hint: hintFor(keys),
+    layout: LAYOUTS[(MODELS.find(x => x.id === id) || { lang: 'en' }).lang] || LAYOUTS.en,
     nn: nnOn && nnModel && getModel(id).m.bos === nnModel.modelBos ? nnModel : undefined });
   // The network (6.3 MB) is downloaded only when the Phone model is used with Neural on.
   let nnLoading = null, nnFailed = false;
@@ -354,19 +370,51 @@ __DECODER__
     pad.appendChild(b);
   }
 
-  // QWERTY layout: each letter sends its keypad digit
+  // The letter keyboard of each language (its usual national layout): letter rows, '|' between
+  // them. The decoder gets the same rows (start.layout) to know which keys neighbor each other.
+  const LAYOUTS = {
+    en: 'qwertyuiop|asdfghjkl|zxcvbnm', nl: 'qwertyuiop|asdfghjkl|zxcvbnm', it: 'qwertyuiop|asdfghjkl|zxcvbnm',
+    pl: 'qwertyuiop|asdfghjkl|zxcvbnm', es: 'qwertyuiop|asdfghjklñ|zxcvbnm', pt: 'qwertyuiop|asdfghjklç|zxcvbnm',
+    de: 'qwertzuiopü|asdfghjklöä|yxcvbnm', fr: 'azertyuiop|qsdfghjklm|wxcvbn', sv: 'qwertyuiopå|asdfghjklöä|zxcvbnm',
+    cs: 'qwertzuiopú|asdfghjklů|yxcvbnm', tr: 'qwertyuıopğü|asdfghjklşi|zxcvbnmöç',
+    ru: 'йцукенгшщзхъ|фывапролджэ|ячсмитьбю', el: 'ςερτυθιοπ|ασδφγηξκλ|ζχψωβνμ',
+  };
+  const lang = () => (MODELS.find(x => x.id === modelId) || { lang: 'en' }).lang;
+  const layout = () => LAYOUTS[lang()] || LAYOUTS.en;
+  // Laid out like the iOS keyboard: where iOS has shift, next (hold: finish the word); delete at
+  // the end of the last letter row; then 123 (numbers and symbols), space, and where iOS has
+  // return, the punctuation key. Each letter sends its keypad digit.
   const qw = $('qw');
-  const ROWS = [['q','w','e','r','t','y','u','i','o','p'], ['a','s','d','f','g','h','j','k','l'],
-                ['*','z','x','c','v','b','n','m','#'], ['0', 'del']];
-  for (const row of ROWS) {
+  let builtLayout = null, symbols = false;
+  // The 123 layout, as iOS has it. Digits and . , ? ! ' : are typed exactly; the other symbols
+  // aren't something the decoder handles yet, so they are shown but off.
+  const SYMBOLS = [[...'1234567890'], ['-', '/', ':', ';', '(', ')', '$', '&', '@', '"'], ['.', ',', '?', '!', "'"]];
+  const SYMBOL_OK = new Set([...'0123456789.,?!\':']);
+  function buildKeyboard() {
+    const want = (symbols ? '123/' : '') + layout();
+    if (builtLayout === want) return;
+    builtLayout = want;
+    qw.textContent = '';
+    const rows = symbols ? SYMBOLS.map(r => r.slice()) : layout().split('|').map(r => [...r]);
+    rows[rows.length - 1] = ['*', ...rows[rows.length - 1], 'del'];
+    rows.push(['123', 'space', '#']);
+    for (const row of rows) {
     const r = document.createElement('div'); r.className = 'r';
     for (const c of row) {
       const b = document.createElement('button'); b.type = 'button';
       if (c === '*') { b.className = 'qk fn'; b.textContent = 'next'; b.setAttribute('aria-label', 'next guess; hold to finish the word'); holdable(b, () => press('*'), autocomplete); }
       else if (c === 'del') { b.className = 'qk fn'; b.textContent = '⌫'; b.setAttribute('aria-label', 'delete'); b.onclick = () => press('1'); }
-      else if (c === '0') { b.className = 'qk space'; b.textContent = 'space'; b.onclick = () => press('0'); }
-      else if (c === '#') { b.className = 'qk fn'; b.textContent = ". , ' ?"; b.setAttribute('aria-label', 'punctuation or apostrophe; hold for exact spelling'); holdable(b, () => press('#'), toggleExact); }
-      else {
+      else if (c === 'space') { b.className = 'qk space'; b.textContent = 'space'; b.onclick = () => press('0'); }
+      else if (c === '#') { b.className = 'qk fn wide'; b.textContent = '. , ? !'; b.setAttribute('aria-label', 'punctuation or apostrophe; hold for exact spelling'); holdable(b, () => press('#'), toggleExact); }
+      else if (c === '123') {
+        b.className = 'qk fn'; b.textContent = symbols ? 'ABC' : '123';
+        b.setAttribute('aria-label', symbols ? 'letters' : 'numbers and symbols');
+        b.onclick = () => { symbols = !symbols; buildKeyboard(); };
+      } else if (symbols) {
+        b.className = 'qk sym'; b.textContent = c;
+        if (!SYMBOL_OK.has(c)) { b.disabled = true; b.title = 'not supported yet'; }
+        else b.onclick = () => pressLiteral(/[0-9]/.test(c) ? String.fromCharCode(65 + +c) : c);   // digits as 'A'-'J'
+      } else {
         const d = wordKeys(c);
         b.className = 'qk l'; b.innerHTML = `${c}<sup>${d}</sup>`; b.setAttribute('aria-label', `${c}, key ${d}`);
         b.onclick = () => (exact ? pressLiteral(c) : press(d, c));
@@ -375,6 +423,8 @@ __DECODER__
       r.appendChild(b);
     }
     qw.appendChild(r);
+    }
+    sizeKeys();
   }
   function setMode(mode) {
     const isQw = mode === 'qwerty';
@@ -421,15 +471,15 @@ __DECODER__
   }
 
   // ---- Size QWERTY keys by how likely each letter is to come next ----
-  const LETTERS = 'abcdefghijklmnopqrstuvwxyz';
   function sizeKeys() {
     if (!m || qw.hidden) return;
     const p = nextLetterProbs(m, result, best);
-    let max = 0; if (p) for (const v of p) max = Math.max(max, v);
-    for (let c = 0; c < 26; c++) {
-      const el = qw.querySelector(`[data-qk="${LETTERS[c]}"]`);
-      if (!el) continue;
-      const s = p && max > 0 ? Math.sqrt(p[c] / max) : 0.4;    // 0..1
+    // a key's share: its letter, plus accented letters the keyboard has no key for (é on e)
+    const keysOn = new Set(layout().replace(/\|/g, '')), share = new Map();
+    if (p) for (const [c, v] of p) { const k = keysOn.has(c) ? c : fold(c); share.set(k, (share.get(k) || 0) + v); }
+    let max = 0; for (const v of share.values()) max = Math.max(max, v);
+    for (const el of qw.querySelectorAll('.qk.l')) {
+      const s = p && max > 0 ? Math.sqrt((share.get(el.dataset.qk) || 0) / max) : 0.4;    // 0..1
       // Scale the whole key around its own center; likelier keys sit on top.
       el.style.setProperty('--k', (0.78 + 0.6 * s).toFixed(3));
       el.style.setProperty('--s', s.toFixed(2));
@@ -441,6 +491,28 @@ __DECODER__
   // Letters are stored as themselves, digits 0-9 as 'A'-'J', space as '0'.
   const CYCLE = { '2': 'abcC', '3': 'defD', '4': 'ghiE', '5': 'jklF', '6': 'mnoG', '7': 'pqrsH',
                   '8': 'tuvI', '9': 'wxyzJ', '0': '0A', '#': ".,?!':" };
+  // Each language's letters on the keypad, as its phones label them (the keys the decoders'
+  // table gives them), for the key labels and exact mode; keys not listed keep the English ones.
+  const ALPHABETS = {
+    es: { '6': 'mnoñ' }, pt: { '2': 'abcç' }, it: {}, nl: {},
+    de: { '2': 'abcä', '6': 'mnoö', '7': 'pqrsß', '8': 'tuvü' },
+    fr: { '2': 'abcàâç', '3': 'deféèêë', '4': 'ghiîï', '6': 'mnoô', '8': 'tuvùûü' },
+    sv: { '2': 'abcåä', '6': 'mnoö' },
+    pl: { '2': 'abcąć', '3': 'defę', '5': 'jklł', '6': 'mnońó', '7': 'pqrsś', '9': 'wxyzźż' },
+    cs: { '2': 'abcáč', '3': 'defďéě', '4': 'ghií', '6': 'mnoňó', '7': 'pqrsřš', '8': 'tuvťúů', '9': 'wxyzýž' },
+    tr: { '2': 'abcç', '4': 'ghiğı', '6': 'mnoö', '7': 'pqrsş', '8': 'tuvü' },
+    ru: { '2': 'абвг', '3': 'деёжз', '4': 'ийкл', '5': 'мноп', '6': 'рсту', '7': 'фхцч', '8': 'шщъы', '9': 'ьэюя' },
+    el: { '2': 'αβγ', '3': 'δεζ', '4': 'ηθι', '5': 'κλμ', '6': 'νξο', '7': 'πρσς', '8': 'τυφ', '9': 'χψω' },
+  };
+  const alphabet = () => ALPHABETS[lang()] || null;
+  const cycleOf = d => { const a = alphabet(); return a && a[d] ? a[d] + CYCLE[d].slice(-1) : CYCLE[d]; };
+  function labelKeys() {
+    const a = alphabet();
+    for (const [d, l] of PAD) {
+      const el = document.querySelector(`#pad [data-key="${d}"] .l`);
+      if (el && /[2-9]/.test(d)) el.textContent = a && a[d] ? a[d] : l;
+    }
+  }
   const TAP_GAP = 900;
   function press(d, letter) {
     if (!m) return;
@@ -448,7 +520,7 @@ __DECODER__
     if (d === '1') { tap = null; backspace(); return; }
     isExample = false;
     if (exact && CYCLE[d]) {
-      const cyc = CYCLE[d], now = Date.now();
+      const cyc = cycleOf(d), now = Date.now();
       if (tap && tap.key === d && now - tap.time < TAP_GAP && keys.length === tap.len) {
         tap.idx = (tap.idx + 1) % cyc.length;
         keys = keys.slice(0, -1) + cyc[tap.idx];
@@ -625,7 +697,7 @@ __LANG_MENU__
     try { localStorage.removeItem('sent'); } catch (err) {}
     update();
   });
-  let modelId = 'l', comparing = false;
+  let modelId = 'l', comparing = false, shownLang = null;
   const fmtSize = b => b >= 1e6 ? (b / 1e6).toFixed(2) + ' MB' : Math.round(b / 1e3) + ' KB';
   // A model's bytes: built into the page, else fetched (only the ones picked are downloaded).
   const loading = {};
@@ -671,6 +743,10 @@ __LANG_MENU__
     $('nnToggle').checked = nnOn;
     if (id === 'l' && nnOn && !nnModel) loadNN();
     if (id !== 'custom') try { localStorage.setItem('model', id); } catch (err) {}
+    labelKeys();
+    buildKeyboard();
+    // another language: an example in it, if an example (or nothing) was showing
+    if (lang() !== shownLang) { const was = shownLang; shownLang = lang(); if (was && (isExample || !keys)) { exampleIdx = 0; loadExample(); } }
     update();
   }
 
@@ -800,7 +876,7 @@ __LANG_MENU__
   }
 
   function loadExample() {
-    const s = EXAMPLES[exampleIdx % EXAMPLES.length]; exampleIdx++;
+    const list = EXAMPLES[lang()] || EXAMPLES.en, s = list[exampleIdx % list.length]; exampleIdx++;
     keys = enc(s); locks = {}; sel = null; isExample = true; update();
   }
 
@@ -915,7 +991,7 @@ __LANG_MENU__
     if (!k) return;
     const qwOn = !$('qw').hidden;
     const sel = qwOn
-      ? (/^[a-z]$/.test(letter || '') ? `[data-qk="${letter}"]` : `[data-qk="${CSS.escape(k === '1' ? 'del' : k)}"]`)
+      ? (letter && letter !== ' ' ? `[data-qk="${CSS.escape(letter)}"]` : `[data-qk="${CSS.escape(k === '1' ? 'del' : k === '0' ? 'space' : k)}"]`)
       : `[data-key="${CSS.escape(k)}"]`;
     const b = document.querySelector(sel);
     if (!b) return; b.classList.add('down'); setTimeout(() => b.classList.remove('down'), 110);

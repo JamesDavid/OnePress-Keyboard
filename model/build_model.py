@@ -37,16 +37,21 @@ class WORD_RE:
     def match(w):
         return _WORD.match(w) and all(key_of(c) for c in w)
 def lower(t):
-    """Lowercase, with Turkish dotted and dotless i."""
+    """Lowercase, with Turkish dotted and dotless i, and Greek final sigma."""
     if LANG == "tr":
         t = t.replace("İ", "i").replace("I", "ı")
-    return t.lower()
+    t = t.lower()
+    if LANG == "el":
+        t = re.sub(r"σ(?![^\W\d_])", "ς", t)
+    return t
 PUNCT = [".", ",", "!", "?"]
 TRI_CTX_MIN = 12    # count word triples only after word pairs seen at least this often (weighted)
 
 # ---- vocabulary from wordfreq ----
 vocab = [w for w in top_n_list(LANG, 60000) if WORD_RE.match(w)][:VOCAB_N]
-freqs = [word_frequency(w, LANG) for w in vocab]
+if LANG == "el":                        # wordfreq case-folds final ς to σ
+    vocab = list(dict.fromkeys(lower(w) for w in vocab))
+freqs = [word_frequency(w if LANG != "el" else re.sub("ς$", "σ", w), LANG) for w in vocab]
 
 # ---- proper nouns: curated brands/places + first names ----
 curated = {}
@@ -79,7 +84,8 @@ SUFFIXES = {"tr": ["a", "e", "ya", "ye", "ı", "i", "u", "ü", "yı", "yi", "yu"
                    "den", "tan", "ten", "ın", "in", "un", "ün", "nın", "nin", "nun", "nün", "la", "le", "yla", "yle",
                    "dır", "dir", "dur", "dür", "ki", "lar", "ler", "ları", "leri", "nda", "nde", "na", "ne", "nı",
                    "ni", "nu", "nü", "ndan", "nden", "yım", "yim", "ım", "im", "ımız", "imiz", "dı", "di", "du", "dü"]}
-SUFFIXED = {"'" + e for e in SUFFIXES.get(LANG, [])}
+from langdata import HYPHENS
+SUFFIXED = {"'" + e for e in SUFFIXES.get(LANG, [])} | {"-" + e for e in HYPHENS.get(LANG, [])}
 for w in sorted(SUFFIXED):
     if w not in vidx:
         vidx[w] = len(vocab); vocab.append(w)
@@ -91,19 +97,23 @@ for w in list(curated) + sorted(names):
         freqs.append(max(word_frequency(w, LANG), 3e-7)); added += 1
 
 # ---- text streams: (text, weight, cased) ----
-tok_re = re.compile(f"{L}+(?:'{L}+)?|[.,!?]")
+tok_re = re.compile(f"{L}+(?:'{L}+)?(?:-{L}+)*|[.,!?]")      # hyphen words ride along (est-ce)
 def tokens(text):
     out = []
-    for t in tok_re.findall(lower(text).replace("’", "'").replace("‘", "'")):
-        if ELIDED and "'" in t and t not in vidx and t.split("'", 1)[0] + "'" in ELIDED:
-            a, b = t.split("'", 1)
-            out += [a + "'", b]
-        elif SUFFIXED and "'" in t and t not in vidx and "'" + t.split("'", 1)[1] in SUFFIXED:
-            a, b = t.split("'", 1)
-            out += [a, "'" + b]
-        else:
-            out.append(t)
+    for t0 in tok_re.findall(lower(text).replace("’", "'").replace("‘", "'")):
+        t, *hy = t0.split("-")
+        out.extend(_word(t))
+        out.extend("-" + h if "-" + h in SUFFIXED else h for h in hy)
     return out
+def _word(t):
+    """A word, or an elided word and the rest (l' homme), or a word and its ending (tom 'a)."""
+    if "'" in t and t not in vidx:
+        a, b = t.split("'", 1)
+        if a + "'" in ELIDED:
+            return [a + "'", b]
+        if "'" + b in SUFFIXED:
+            return [a, "'" + b]
+    return [t]
 
 streams = []
 gdir = os.path.join(ROOT, "gutenberg")

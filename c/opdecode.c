@@ -56,7 +56,7 @@ int main(int argc, char **argv) {
     }
 
     op_user_init(&user, &model);
-    op_start start = { model.bos, 1, learn ? &user : NULL, NULL, NULL, nn_path ? &nn : NULL, &nn_work };
+    op_start start = { model.bos, 1, learn ? &user : NULL, NULL, NULL, nn_path ? &nn : NULL, &nn_work, NULL };
     static char line[4 * OP_MAX_KEYS + 4096];
     char out[4 * OP_MAX_KEYS + 64];
     while (fgets(line, sizeof line, stdin)) {
@@ -82,16 +82,19 @@ int main(int argc, char **argv) {
             printf("%s\n", line);
             continue;
         }
-        /* keys<TAB>before<TAB>hint: the text before ('|' for a line break), the QWERTY letters */
-        char *before = strchr(line, '\t'), *hint = NULL;
+        /* keys<TAB>before<TAB>hint<TAB>layout: the text before ('|' for a line break), the letters
+         * tapped, the keyboard's letter rows ('|' between them) */
+        char *before = strchr(line, '\t'), *hint = NULL, *layout = NULL;
         if (before) {
             *before++ = 0;
             hint = strchr(before, '\t');
             if (hint) *hint++ = 0;
+            if (hint && (layout = strchr(hint, '\t')) != NULL) *layout++ = 0;
             for (char *c = before; *c; c++) if (*c == '|') *c = '\n';
         }
         start.before = before;
         start.hint = hint;
+        start.layout = layout && *layout ? layout : NULL;
         int r = op_decode(&dec, &model, line, beam, &start, NULL, 0);
         if (r == OP_OK) r = op_render(&dec, &model, &start, out, sizeof out);
         if (r >= 0 && learn) op_learn(&user, &dec, &model, &start);
