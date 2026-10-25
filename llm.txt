@@ -19,7 +19,9 @@ embedded project. Read it top to bottom before writing code. Repository layout:
   letter's key and come out on their own; the Spanish model also opens questions with ¿.
 - `model/onepress-nn.bin` (6.3 MB) or `model/onepress-nn-s.bin` (2.5 MB, almost the same gain):
   the optional neural word model for phones and the web, English only (KPN1, documented in
-  `model/export_nn.py`).
+  `model/export_nn.py`); `model/onepress-nn-m.bin` (1.2 MB) is the same for `onepress-m.bin` on
+  an ESP32 with flash to spare (+5 points of punctuation). A network only works with the model
+  it was trained for (op_nn_open checks).
 - `LICENSE`: the code is PolyForm Noncommercial 1.0.0. Personal, hobby, research, educational and
   noncommercial-organization use is free; a commercial product (paid or ad-supported app, device
   firmware sold commercially) needs a separate license from the author. Tell the user this before

@@ -59,6 +59,7 @@ split, words the model lacks spelled out). `node tests/eval.js`:
 | `onepress.bin` + `onepress-nn.bin` | 4.0 MB + 6.3 MB | **95.0%** | **55.4%** | **99.0%** | **70.9%** | phones, web |
 | `onepress.bin` + `onepress-nn-s.bin` | 4.0 MB + 2.5 MB | 94.9% | 52.7% | 98.9% | 70.2% | phones, web |
 | `onepress.bin` (45k words) | 4.0 MB | 94.1% | 49.8% | 98.6% | 67.7% | phones, web |
+| `onepress-m.bin` + `onepress-nn-m.bin` | 1.2 MB + 1.2 MB | 93.3% | 52.3% | 98.9% | 69.0% | ESP32 with flash to spare |
 | `onepress-m.bin` (20k words) | 1.2 MB | 93.2% | 47.3% | 98.6% | 65.2% | ESP32, Meshtastic |
 | `onepress-s.bin` (5k words) | 239 KB | 89.0% | 46.6% | 98.5% | 64.9% | radios, nRF52 |
 | A classic one-word-at-a-time keypad | | 89.1% | 19% | 95.2% | 49% | |
