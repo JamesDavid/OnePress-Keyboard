@@ -35,12 +35,15 @@ if (nn && nnWeight) nn.weight = +nnWeight;
 const oovExact = args.includes('--oov-exact');
 if (oovExact) args.splice(args.indexOf('--oov-exact'), 1);
 const known = new Set(m.words);
-const isOov = w => oovExact && !known.has(w) && !known.has(w.replace(/'/g, ''));
+// An elided word (French l'homme: l' + homme) is known when both parts are, and typed with its
+// apostrophe (#), which is how the decoder tells it apart.
+const elided = w => !known.has(w) && w.includes("'") && known.has(w.split("'")[0] + "'") && known.has(w.slice(w.indexOf("'") + 1));
+const isOov = w => oovExact && !known.has(w) && !known.has(w.replace(/'/g, '')) && !elided(w);
 // Letters include the accented ones (other languages); exact mode has no accents, so a word
 // the model lacks is spelled with its plain letters.
 const L = 'a-zß-öø-ÿ', plain = x => x.normalize('NFD').replace(/[̀-ͯ]/g, '');
-const enc = s => s.toLowerCase().split(' ').map(w => w.replace(new RegExp(`[${L}']+`), x => isOov(x) ? plain(x) : x.replace(/'/g, '')
-  .replace(new RegExp(`[${L}]`, 'g'), c => D.wordKeys(c)))).join('0').replace(/[.,!?]/g, '#');
+const enc = s => s.toLowerCase().split(' ').map(w => w.replace(new RegExp(`[${L}']+`), x => isOov(x) ? plain(x)
+  : elided(x) ? D.wordKeys(x) : x.replace(/'/g, '').replace(new RegExp(`[${L}]`, 'g'), c => D.wordKeys(c)))).join('0').replace(/[.,!?]/g, '#');
 const TOK = new RegExp(`[${L}]+(?:'[${L}]+)?|[.,!?]`, 'g');
 const toks = s => s.toLowerCase().match(TOK) || [];
 

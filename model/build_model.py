@@ -50,6 +50,15 @@ for f in ["male.txt", "female.txt"] if EN else []:
             names.add(n.lower())
 
 vidx = {w: i for i, w in enumerate(vocab)}
+# Elided words (French l' d' qu' ...) are words of their own, as wordfreq counts them ("l'homme"
+# is l + homme); the text is split the same way below, and the decoders split a word typed with
+# an apostrophe ("l#homme") that nothing else matches into the elided word and the rest.
+ELISIONS = {"fr": ["l", "d", "j", "qu", "n", "s", "c", "m", "t", "jusqu", "lorsqu", "puisqu", "quoiqu", "presqu"]}
+ELIDED = {e + "'" for e in ELISIONS.get(LANG, [])}
+for w in sorted(ELIDED):
+    if w not in vidx:
+        vidx[w] = len(vocab); vocab.append(w)
+        freqs.append(max(word_frequency(w[:-1], LANG), 3e-7))
 added = 0
 for w in list(curated) + sorted(names):
     if w not in vidx:
@@ -59,7 +68,14 @@ for w in list(curated) + sorted(names):
 # ---- text streams: (text, weight, cased) ----
 tok_re = re.compile(f"[{L}]+(?:'[{L}]+)?|[.,!?]")
 def tokens(text):
-    return tok_re.findall(text.lower().replace("’", "'").replace("‘", "'"))
+    out = []
+    for t in tok_re.findall(text.lower().replace("’", "'").replace("‘", "'")):
+        if ELIDED and "'" in t and t not in vidx and t.split("'", 1)[0] + "'" in ELIDED:
+            a, b = t.split("'", 1)
+            out += [a + "'", b]
+        else:
+            out.append(t)
+    return out
 
 streams = []
 gdir = os.path.join(ROOT, "gutenberg")

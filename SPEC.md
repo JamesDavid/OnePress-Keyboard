@@ -136,9 +136,11 @@ Each person gets a small fixed-size table (`newUser` / `learn` in decoder.js, `o
   | `onepress-es-s.bin` Spanish, 5k words | 173 KB | 97.54% | 14.7% | 75.1% | 92.50% |
   | `onepress-de.bin` German | 2.6 MB | 97.54% | 4.4% | 83.8% | 90.70% |
   | `onepress-pt.bin` Portuguese | 1.8 MB | 98.25% | 1.8% | 79.1% | 92.94% |
+  | `onepress-fr.bin` French | 2.4 MB | 98.18% | 2.1% | 83.9% | 83.18% |
 
   German nouns are capitalized from Tatoeba's casing. Tatoeba sentences are short and tidy, so expect less on real chat.
-- **Not yet:** French and Italian elide ("l'homme", "qu'il"), which would need the decoder to split a word at its apostrophe; hyphenated words (French "est-ce", Portuguese "dá-me") come out as two words; languages outside Latin-1 (Polish, Czech, Greek, Russian) need a wider fold table and keypad layouts.
+- **Elision (French):** wordfreq counts "l'homme" as l + homme, so the French model has the elided words (l' d' j' qu' n' s' c' m' t' jusqu' lorsqu' puisqu' quoiqu' presqu') as words of their own, and `build_model.py` splits its text the same way. Both decoders split a word typed with an apostrophe (`l#homme`) that no dictionary or learned word matches whole into the elided word (a dictionary word ending in an apostrophe whose keys and exact letters fit the part up to the first `#`) and the rest, decoded as two words with no space between and shown joined ("L'homme est là.", "Il m'a dit qu'il viendrait."). Words whole with their apostrophe (aujourd'hui, quelqu'un) stay whole; models without elided words never split. The apostrophe has to be typed in French (it's optional in English, where "dont" finds "don't"). œ is typed and shown as oe.
+- **Not yet:** hyphenated words (French "est-ce", "peut-être"; Portuguese "dá-me") are typed and come out as two words, since the keypad has no hyphen; French spaces before ? ! are not added; languages outside Latin-1 (Polish, Czech, Greek, Russian) need a wider fold table and keypad layouts. Italian would work like French with its own elision list.
 
 ### Speed
 

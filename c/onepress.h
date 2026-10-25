@@ -104,6 +104,7 @@ typedef struct {
     const uint32_t *cap_keep;   /* word << 16 | next: its usual casing before next, whatever prev says */
     uint32_t n_cap_keep;
     const int8_t *cmp_head, *cmp_tail;   /* words run together: start / end lift in 1/4 nat, or NULL */
+    uint8_t elided;             /* has words ending in an apostrophe (French l', qu'): see op_decode */
     const uint32_t *cmp_known;          /* first << 16 | second of words known written as one */
     uint32_t n_known;
 } op_model;

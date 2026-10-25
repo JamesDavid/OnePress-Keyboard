@@ -6,6 +6,8 @@ Tatoeba (tatoeba.org, CC BY 2.0 FR) is short everyday sentences written by volun
 sentences of 2-30 words made of letters (accents included), apostrophes and . , ! ? (the
 inverted ¿ ¡ are dropped: the decoder adds them), and splits them by sentence id: 1 in 20 to
 test.txt, 1 in 20 to dev.txt, the rest to train.txt (cased, for word pairs and capitalization).
+œ and æ (outside Latin-1) become oe and ae, as people often type them; a hyphen between letters
+becomes a space (the keypad has no hyphen: "est-ce" is typed, and comes out, as two words).
 """
 import bz2, hashlib, os, re, sys
 
@@ -16,6 +18,9 @@ WORD = re.compile(f"[{LETTER}]+(?:'[{LETTER}]+)?")
 
 def clean(t):
     t = t.replace("’", "'").replace("‘", "'").replace("¿", "").replace("¡", "")
+    t = t.replace("œ", "oe").replace("Œ", "Oe").replace("æ", "ae").replace("Æ", "Ae")
+    t = re.sub(f"(?<=[{LETTER}])-(?=[{LETTER}])", " ", t)
+    t = t.replace("\u00a0", " ").replace("\u202f", " ")         # French spaces before ? ! :
     t = re.sub(r"\s+", " ", t).strip()
     if BAD.search(t):
         return None                                # digits, quotes, symbols: skip

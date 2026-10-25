@@ -33,7 +33,7 @@ inputs.push(enc("Can you pick up the kids after school?"), enc("We're going to M
 if (textFile) {
   const plain = x => x.normalize('NFD').replace(/[̀-ͯ]/g, '');
   for (const line of fs.readFileSync(textFile, 'utf8').split('\n').filter(Boolean).slice(0, 2000)) {
-    const low = line.toLowerCase().replace(/'/g, '');
+    const low = line.toLowerCase();                 // apostrophes typed as #: French elisions
     const k = [...low].map(c => c === ' ' ? '0' : '.,!?'.includes(c) ? '#' : D.wordKeys(c) || '').join('');
     inputs.push(k, k + '\t' + line.split(' ').slice(0, 3).join(' ') + '\t' + [...plain(low)].map(c => /[a-z]/.test(c) ? c : ' ').join(''));
   }

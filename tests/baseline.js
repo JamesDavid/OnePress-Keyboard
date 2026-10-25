@@ -10,7 +10,10 @@ const m = D.buildModel(fs.readFileSync(modelFile));
 const L = 'a-zß-öø-ÿ', TOK = new RegExp(`[${L}]+(?:'[${L}]+)?|[.,!?]`, 'g');
 const out = fs.readFileSync(testFile, 'utf8').split('\n').filter(Boolean).map(s => (s.toLowerCase().match(TOK) || []).map(t => {
   if (/[.,!?]/.test(t)) return '.';
-  const ids = D.exactMatches(m, D.wordKeys(t.replace(/'/g, '')));
-  return ids.length ? m.words[ids[0]] : t;
+  const top = w => { const ids = D.exactMatches(m, D.wordKeys(w)); return ids.length ? m.words[ids[0]] : null; };
+  const whole = top(t.replace(/'/g, ''));
+  if (whole || !t.includes("'")) return whole || t;
+  const a = top(t.split("'")[0] + "'"), b = top(t.slice(t.indexOf("'") + 1));      // elided: l' + homme
+  return a && b && a.endsWith("'") ? a + b : t;
 }).join(' '));
 fs.writeFileSync(outFile, out.join('\n') + '\n');

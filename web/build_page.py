@@ -17,7 +17,8 @@ out = args[0] if args else os.path.join(ROOT, "web", "keypad.html")
 t = open(os.path.join(ROOT, "web", "page.template.html"), encoding="utf-8").read()
 t = t.replace("__DECODER__", open(os.path.join(ROOT, "web", "decoder.js"), encoding="utf-8").read())
 for tag, f, inline in [("L", "onepress.bin", True), ("M", "onepress-m.bin", True), ("S", "onepress-s.bin", True),
-                       ("ES", "onepress-es.bin", False), ("DE", "onepress-de.bin", False), ("PT", "onepress-pt.bin", False)]:
+                       ("ES", "onepress-es.bin", False), ("DE", "onepress-de.bin", False), ("PT", "onepress-pt.bin", False),
+                       ("FR", "onepress-fr.bin", False)]:
     data = open(os.path.join(ROOT, "model", f), "rb").read()
     t = t.replace(f"__SIZE_{tag}__", str(len(data)))
     t = t.replace(f"__WORDS_{tag}__", str(struct.unpack_from("<H", data, 8)[0]))

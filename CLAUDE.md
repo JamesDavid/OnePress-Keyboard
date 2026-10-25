@@ -30,7 +30,7 @@ neural network helps on phones and the web.
   49.5% → 62.7%).
 - Resuming after a finished sentence must change nothing: `node tests/resume_test.js` (also
   `--learn`, `--nn model/onepress-nn-s.bin`, `--model model/onepress-es.bin`) for anything touching decode.
-- Other languages (Spanish, German, Portuguese): `node tests/eval.js model/corpora/es/test.txt
+- Other languages (Spanish, German, Portuguese, French): `node tests/eval.js model/corpora/es/test.txt
   --oov-exact --model model/onepress-es.bin`; `tests/baseline.js` gives the classic keypad. Parity:
   `node tests/parity.js --model model/onepress-es.bin --text model/corpora/es/dev.txt`.
 - Small regression set: `node tests/decoder_test.js` (17/20). It overlaps `messages.txt`, so it is a

@@ -102,6 +102,8 @@ int op_model_open(op_model *m, const void *data, size_t size) {
     m->cmp_head = len[27] == m->n_words ? (const int8_t *)sec[27] : NULL;
     m->cmp_tail = len[28] == m->n_words ? (const int8_t *)sec[28] : NULL;
     m->cmp_known = (const uint32_t *)sec[29];
+    m->elided = 0;
+    for (uint16_t i = 0; i < m->n_words && !m->elided; i++) m->elided = m->word_off[i + 1] > m->word_off[i] && m->word_text[m->word_off[i + 1] - 1] == '\'';
     m->n_known = len[29] / 4;
     if (m->n_tri >= 0xFFFF || (n_sec > N_SECTIONS && (len[17] != 4u * (m->n_tri + 1) || len[18] != 2u * m->n_tri ||
         len[20] != len[19] || len[23] != 4u * (m->n_alt + 1))))
@@ -545,6 +547,53 @@ static void join_learned(op_decoder *d) {
         while (i < j) d->toks[out++] = d->toks[i++];
     }
     d->n_toks = (uint16_t)out;
+}
+
+/* French elision (see decoder.js splitElisions): a word typed with an apostrophe that no word
+ * matches whole ("l#homme") is an elided word (ending in an apostrophe: l', qu') and the rest. */
+static int word_fits(const op_decoder *d, const op_model *m, const op_tok *t, int len, int elided_only) {
+    const char *k = d->keys + t->off, *lit = d->lits + t->off;
+    int starts;
+    for (uint32_t i = lower_bound(m, m->key_idx, m->n_words, 0, k, len);
+         i < m->n_words && key_cmp(m, m->key_idx[i], 0, k, len, &starts) == 0; i++) {
+        uint16_t id = m->key_idx[i];
+        if (!lit_match(m, id, 0, lit, len)) continue;
+        if (elided_only) {
+            const char *w;
+            int wn = op_word(m, id, &w);
+            if (!wn || w[wn - 1] != '\'') continue;
+        }
+        return 1;
+    }
+    if (!elided_only && d->user && len <= OP_USER_WORD_LEN) {
+        char typed[OP_USER_WORD_LEN];
+        user_typed(k, len, typed);
+        for (int w = 0; w < d->user->n_words; w++) {
+            int f = user_match(d->user->word[w], typed, lit, len, 0);
+            if (f == 1 || f == 2) return 1;
+        }
+    }
+    return 0;
+}
+static int split_elisions(op_decoder *d, const op_model *m) {
+    if (!m->elided) return OP_OK;
+    for (int i = 0; i < d->n_toks; i++) {
+        op_tok *t = &d->toks[i];
+        if (t->type != TOK_WORD) continue;
+        const char *k = d->keys + t->off;
+        int p = 0;
+        while (p < t->len && k[p] != '#') p++;
+        if (p == 0 || p >= t->len - 1) continue;
+        if (word_fits(d, m, t, t->len, 0) || !word_fits(d, m, t, p + 1, 1)) continue;
+        if (d->n_toks == OP_MAX_KEYS) return OP_ERR_TOO_LONG;
+        memmove(t + 1, t, (size_t)(d->n_toks - i) * sizeof *t);
+        d->n_toks++;
+        t[0].len = (uint16_t)(p + 1);
+        t[1].off = (uint16_t)(t[0].off + p + 1);
+        t[1].len = (uint16_t)(t[1].len - p - 1);
+        /* t[1] is looked at next: it may hold another elision */
+    }
+    return OP_OK;
 }
 
 static int punct_index(const op_model *m, char ch) {
@@ -1227,6 +1276,7 @@ int op_decode(op_decoder *d, const op_model *m, const char *keys, int beam,
     if (r) return r;
     d->user = start && start->user && start->user->bos == m->bos ? start->user : NULL;
     if (d->user) join_learned(d);
+    if ((r = split_elisions(d, m)) != OP_OK) return r;
     d->n_slots = 0;
     for (int i = 0; i < d->n_toks; i++) {
         if (d->toks[i].type == TOK_SPACE) continue;

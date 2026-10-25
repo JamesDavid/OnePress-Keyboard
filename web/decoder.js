@@ -393,6 +393,31 @@ function slipCandidates(m, tok, have) {
   return out;
 }
 
+// French elision: a word typed with an apostrophe that no dictionary or learned word matches
+// whole ("l#homme") is an elided word (a dictionary word ending in an apostrophe: l', qu', c')
+// followed by the rest, decoded as two words and shown joined ("l'homme"). Words that are whole
+// with their apostrophe (aujourd'hui) stay whole. Models without elided words never split.
+function splitElisions(toks, m, u) {
+  if (m.elided === undefined) m.elided = m.words.some(w => w.endsWith("'"));
+  if (!m.elided) return toks;
+  const part = (t, a, b) => ({ type: 'word', keys: t.keys.slice(a, b), lit: t.lit.slice(a, b), hint: t.hint.slice(a, b) });
+  const out = [];
+  for (let cur of toks) {
+    while (cur.type === 'word') {
+      const p = cur.keys.indexOf('#');
+      if (p <= 0 || p === cur.keys.length - 1) break;
+      if (exactMatches(m, cur.keys).some(id => litMatch(m, cur, id, cur.keys))) break;
+      if (u && u.words.some(w => userMatch(w, cur, userTyped(cur.keys), false))) break;
+      const a = part(cur, 0, p + 1);
+      if (!exactMatches(m, a.keys).some(id => m.words[id].endsWith("'") && litMatch(m, a, id, a.keys))) break;
+      out.push(a);
+      cur = part(cur, p + 1);
+    }
+    out.push(cur);
+  }
+  return out;
+}
+
 // Candidates for each slot: [{text, id, partial, penalty}]
 function slotCandidates(m, tok, isLast, u) {
   const P = m.params;
@@ -661,7 +686,7 @@ function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
   const P = m.params;
   const u = start.user && start.user.bos === m.bos ? start.user : null;
   const ctx = context(m, u, start);
-  const toks = joinLearned(tokenize(keys, start.hint || ''), u);
+  const toks = splitElisions(joinLearned(tokenize(keys, start.hint || ''), u), m, u);
   const slots = [];
   toks.forEach((t, i) => { if (t.type !== 'space') slots.push({ tok: t, tokIndex: i }); });
   const lastTokIsWord = toks.length && toks[toks.length - 1].type === 'word';

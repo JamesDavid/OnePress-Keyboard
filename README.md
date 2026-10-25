@@ -11,15 +11,16 @@ browser, and a short tutorial starts on your first visit.
 
 - **Whole-sentence context.** Each new word can fix the ones before it: `4663` alone is "good",
   after "on my way" it's "home". A finished sentence stays put once you start the next one.
-- **Small enough for microcontrollers.** One C99 file, no memory allocation, about 23 KB of code
+- **Small enough for microcontrollers.** One C99 file, no memory allocation, about 24 KB of code
   and 7–27 KB of RAM. The model is read straight from flash.
 - **Forgives slips.** A word that no word matches is checked one slip away: a neighboring key, or
   a key pressed twice. With 3% of presses slipping, 87–89% of words still come out right (82% without).
 - **Three model sizes** from 239 KB to 4.0 MB, for radios up to phones, and an optional neural
   network for phones and the web (6.3 MB, or 2.5 MB with almost the same gain).
-- **Spanish, German and Portuguese too,** with accents, umlauts and ñ typed on their base
-  letter's key and filled in for you, German nouns capitalized, and Spanish questions opened
-  with ¿ (97.5–98.3% of words right on held-out sentences).
+- **Spanish, German, Portuguese and French too,** with accents, umlauts and ñ typed on their
+  base letter's key and filled in for you, German nouns capitalized, Spanish questions opened
+  with ¿, and French elisions (`l#homme` gives "l'homme"). 97.5–98.3% of words right on
+  held-out sentences.
 - **Learns from you.** Names, slang and call signs you spell once are guessed from their keys
   after that, and your own word habits and punctuation get more likely. Recent messages count too.
 - **Capitals are automatic.** Sentence starts, names and brands (iPhone, McDonald's), the words
