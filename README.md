@@ -12,7 +12,8 @@ browser, and a short tutorial starts on your first visit.
 - **Whole-sentence context.** Each new word can fix the ones before it: `4663` alone is "good",
   after "on my way" it's "home". A finished sentence stays put once you start the next one.
 - **Small enough for microcontrollers.** One C99 file, no memory allocation, about 30 KB of code
-  and 7–28 KB of RAM. The model is read straight from flash.
+  and 2–11 KB of RAM. The model is read straight from flash, or through a read function from
+  SPI flash that isn't memory-mapped.
 - **Forgives slips.** A word that no word matches is checked one slip away: a neighboring key, or
   a key pressed twice. With 3% of presses slipping, 87–89% of words still come out right (82% without).
 - **Three model sizes** from 246 KB to 3.5 MB, for radios up to phones (the ESP32/Meshtastic and radio ones know CQ, QTH,

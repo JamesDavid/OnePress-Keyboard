@@ -2,6 +2,8 @@
  *   opdecode onepress.bin [beam] [--learn] [--nn onepress-nn.bin] < keys.txt
  * --learn: one person typed every line, and each decoded line is learned before the next.
  * --nn: also score with the neural word model.
+ * Built with -DOP_EXT_MODEL, the model is read through op_ext_read at a storage address, as on
+ * a radio's SPI flash; OP_STATS=1 prints the reads per line to stderr.
  * Used by tests/parity.js to check the C decoder against web/decoder.js. */
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,6 +16,30 @@ static op_decoder dec;
 static op_user user;
 static op_nn nn;
 static op_nn_work nn_work;
+
+#ifdef OP_EXT_MODEL
+#define EXT_BASE 0x1000u        /* the model's storage address: not 0, to test the arithmetic */
+static const uint8_t *ext_blob;
+static size_t ext_size;
+static unsigned long ext_reads, ext_bytes;
+#ifdef OP_CACHE_LINES             /* a simulated read cache: OP_STATS then counts flash reads */
+static uint32_t cache_tag[OP_CACHE_LINES];
+static unsigned long cache_miss;
+static void cache_touch(uint32_t addr, uint32_t n) {
+    for (uint32_t l = addr / OP_CACHE_LINE; l <= (addr + n - 1) / OP_CACHE_LINE; l++)
+        if (cache_tag[l % OP_CACHE_LINES] != l + 1) { cache_tag[l % OP_CACHE_LINES] = l + 1; cache_miss++; }
+}
+#endif
+void op_ext_read(uint32_t addr, void *dst, uint32_t n) {
+#ifdef OP_CACHE_LINES
+    cache_touch(addr, n);
+#endif
+    if (addr < EXT_BASE || addr - EXT_BASE + n > ext_size) { fprintf(stderr, "read outside the model: %#x\n", (unsigned)addr); exit(1); }
+    memcpy(dst, ext_blob + (addr - EXT_BASE), n);
+    ext_reads++;
+    ext_bytes += n;
+}
+#endif
 
 /* The whole file, in malloc'd (so suitably aligned) memory. */
 static void *read_file(const char *path, size_t *size) {
@@ -43,7 +69,13 @@ int main(int argc, char **argv) {
     }
     size_t size;
     void *blob = read_file(argv[1], &size);
+#ifdef OP_EXT_MODEL
+    ext_blob = blob;
+    ext_size = size;
+    if (op_model_open(&model, (const void *)(uintptr_t)EXT_BASE, size) != OP_OK) {
+#else
     if (op_model_open(&model, blob, size) != OP_OK) {
+#endif
         fprintf(stderr, "%s is not a KPD2 model\n", argv[1]);
         return 1;
     }
@@ -100,6 +132,14 @@ int main(int argc, char **argv) {
         if (r >= 0 && learn) op_learn(&user, &dec, &model, &start);
         if (r < 0) printf("<error %d>\n", r);
         else printf("%s\n", out);
+#ifdef OP_EXT_MODEL
+#ifdef OP_CACHE_LINES
+        ext_reads = cache_miss;
+        cache_miss = 0;
+#endif
+        if (getenv("OP_STATS")) fprintf(stderr, "%lu reads %lu bytes\n", ext_reads, ext_bytes);
+        ext_reads = ext_bytes = 0;
+#endif
     }
     return 0;
 }

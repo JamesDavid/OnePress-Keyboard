@@ -112,7 +112,7 @@ Examples: `435560968` is "Hello you". `66069092904663` is "On my way home". `65#
 #include "onepress.h"
 
 static op_model model;      /* ~176 bytes: pointers into the model blob */
-static op_decoder dec;      /* ~28 KB working memory, never allocate per call */
+static op_decoder dec;      /* ~11 KB working memory, never allocate per call */
 static op_user user;        /* ~12 KB learned table; optional */
 
 /* blob: the whole .bin, 4-byte aligned, valid for as long as model is used. */
@@ -141,9 +141,9 @@ op_learn(&user, &dec, &model, &start);
 - Not thread-safe per decoder: use one `op_decoder` per thread. The model is read-only and can be shared.
 - Memory: lower the limits on small targets with compiler flags, e.g.
   `-DOP_MAX_BEAM=4 -DOP_MAX_SLOTS=48 -DOP_MAX_KEYS=160 -DOP_USER_WORDS=64 -DOP_USER_PAIRS=256`
-  gives a 7 KB decoder and a 3 KB user table. Code is about 35 KB at -Os; -DOP_NO_NN leaves out
-  the neural part and -DOP_NO_QWERTY the QWERTY letter matching (keypad-only devices), about
-  30 KB with both. Stack use is small (a few hundred bytes to 2 KB in op_decode).
+  gives a 3.4 KB decoder and a 3 KB user table. Code is about 25 KB at -Os on a Cortex-M0+;
+  -DOP_NO_NN leaves out the neural part and -DOP_NO_QWERTY the QWERTY letter matching
+  (keypad-only devices), about 21 KB with both. Stack use is up to about 2.5 KB (op_decode).
 - The model must be little-endian (ARM, x86, ESP32, RISC-V all are) and 4-byte aligned. It is
   read in place, so memory-mapped flash works with no copy.
 
@@ -294,8 +294,10 @@ shows the alternative of embedding it as base64.
 ## nRF52 and other small microcontrollers (radios, custom keypads)
 
 - Needs: model bytes readable at a pointer (internal flash, or memory-mapped QSPI/XIP flash),
-  about 30 KB code (-DOP_NO_NN -DOP_NO_QWERTY), 7 KB RAM for the decoder with the small limits
-  above, 3 KB for a small user table.
+  or any storage through `-DOP_EXT_MODEL` and an `op_ext_read(addr, dst, n)` you supply (plain SPI
+  flash: a small read cache helps, 8 lines of 32 bytes halve the reads); about 21 KB code
+  (-DOP_NO_NN -DOP_NO_QWERTY), 1.6-3.4 KB RAM for the decoder with the small limits above, up
+  to 2.5 KB of stack, 3 KB for a small user table.
 - Use `onepress-s.bin` (246 KB; it knows CQ, QTH, QSO, tnx, fer, repeater, node and the like). On nRF52840 put it in internal flash if there is room, or in
   external QSPI flash mapped for execute-in-place.
 - The decoder needs the model at a memory address. External SPI flash that cannot be memory-mapped

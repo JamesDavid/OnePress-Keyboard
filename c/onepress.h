@@ -15,17 +15,34 @@
  * characters 'a'-'z', '\'', '.', ',', '?', '!' and 'A'-'J' for the digits 0-9 (exact mode or
  * a held number key). Digits form numbers: #6#000#00 renders "$6,000.00".
  *
- * Memory: sizeof(op_decoder) is about 28 KB with the defaults below. Small targets can
- * lower the limits, e.g. -DOP_MAX_BEAM=4 -DOP_MAX_SLOTS=48 -DOP_MAX_KEYS=160 for ~7 KB.
+ * Memory: sizeof(op_decoder) is about 11 KB with the defaults below. Small targets can
+ * lower the limits, e.g. -DOP_MAX_BEAM=4 -DOP_MAX_SLOTS=48 -DOP_MAX_KEYS=160 for ~3.4 KB, or
+ * -DOP_MAX_BEAM=3 -DOP_MAX_SLOTS=24 -DOP_MAX_KEYS=72 (a 67-character radio message) for ~1.6 KB.
  * -DOP_NO_QWERTY leaves out matching the letters tapped on a QWERTY layout (start.hint is then
  * only used for words no dictionary word matches), for keypad-only devices.
  * The model must be little-endian (it is on ARM, x86, ESP32 and RISC-V).
+ *
+ * -DOP_EXT_MODEL: the model sits in storage the CPU can't address directly (a radio's SPI
+ * flash). Give op_model_open its storage address as data ((const void *)(uintptr_t)addr) and
+ * supply op_ext_read below; the model's arrays then hold storage addresses. Word texts are
+ * read OP_WORD_BUF bytes at most. op_word copies into a buffer of its own, valid until the
+ * next call. Decoding gives the same results either way.
  */
 #ifndef ONEPRESS_H
 #define ONEPRESS_H
 
 #include <stddef.h>
 #include <stdint.h>
+
+#ifdef OP_EXT_MODEL
+#define OP_REF(T) uint32_t      /* a storage address */
+#define OP_WORD_BUF 64          /* longest word text read */
+/* Copy n bytes at storage address addr to dst. Supplied by the platform. */
+void op_ext_read(uint32_t addr, void *dst, uint32_t n);
+#else
+#define OP_REF(T) const T *
+#define OP_WORD_BUF 1           /* texts are read in place */
+#endif
 
 #ifndef OP_MAX_KEYS
 #define OP_MAX_KEYS 256         /* key presses in one composition */
@@ -69,45 +86,51 @@ enum { OP_P_QQ, OP_P_QN, OP_P_DQ, OP_P_CF, OP_P_DB, OP_P_CB, OP_P_EB,
 
 typedef struct {
     uint16_t scale, n_words, n_punct, bos;
-    const char *word_text;
-    const uint32_t *word_off;
-    const uint16_t *key_idx, *strip_idx;
+    OP_REF(char) word_text;
+    OP_REF(uint32_t) word_off;
+    OP_REF(uint16_t) key_idx;
+    OP_REF(uint16_t) strip_idx;
     uint32_t n_strip;
-    const uint16_t *disp_id;
-    const uint32_t *disp_off;
-    const char *disp_text;
+    OP_REF(uint16_t) disp_id;
+    OP_REF(uint32_t) disp_off;
+    OP_REF(char) disp_text;
     uint32_t n_disp;
-    const int16_t *uni, *bow, *lp;
-    const uint32_t *row_start;
-    const uint16_t *next;
-    const uint16_t *q_start;
+    OP_REF(int16_t) uni;
+    OP_REF(int16_t) bow;
+    OP_REF(int16_t) lp;
+    OP_REF(uint32_t) row_start;
+    OP_REF(uint16_t) next;
+    OP_REF(uint16_t) q_start;
     uint32_t n_q;
-    const char *punct;
+    OP_REF(char) punct;
     int16_t param[OP_N_PARAMS];
     uint16_t time_id[2];        /* "am", "pm" (OP_NONE if absent) */
     uint16_t time_before[OP_TIME_BEFORE];   /* "at", "by", ... (OP_NONE if absent) */
     /* Optional sections (empty in older model files). */
-    const uint16_t *q_skip;     /* greetings skipped when finding a sentence's opener */
+    OP_REF(uint16_t) q_skip;     /* greetings skipped when finding a sentence's opener */
     uint32_t n_skip;
-    const uint32_t *tri_key, *tri_start;    /* three-word contexts p2 << 16 | p1 */
-    const int16_t *tri_bow, *tri_lp;
-    const uint16_t *tri_next;
+    OP_REF(uint32_t) tri_key;    /* three-word contexts p2 << 16 | p1 */
+    OP_REF(uint32_t) tri_start;
+    OP_REF(int16_t) tri_bow;
+    OP_REF(int16_t) tri_lp;
+    OP_REF(uint16_t) tri_next;
     uint32_t n_tri;
-    const uint32_t *cap_key;    /* prev << 16 | word: the word's other casing after prev */
+    OP_REF(uint32_t) cap_key;    /* prev << 16 | word: the word's other casing after prev */
     uint32_t n_cap;
-    const uint16_t *alt_id;
-    const uint32_t *alt_off;
-    const char *alt_text;
+    OP_REF(uint16_t) alt_id;
+    OP_REF(uint32_t) alt_off;
+    OP_REF(char) alt_text;
     uint32_t n_alt;
-    const uint32_t *cap_next;   /* word << 16 | next: the word's other casing before next */
+    OP_REF(uint32_t) cap_next;   /* word << 16 | next: the word's other casing before next */
     uint32_t n_cap_next;
-    const uint32_t *cap_keep;   /* word << 16 | next: its usual casing before next, whatever prev says */
+    OP_REF(uint32_t) cap_keep;   /* word << 16 | next: its usual casing before next, whatever prev says */
     uint32_t n_cap_keep;
-    const int8_t *cmp_head, *cmp_tail;   /* words run together: start / end lift in 1/4 nat, or NULL */
+    OP_REF(int8_t) cmp_head;   /* words run together: start / end lift in 1/4 nat, or NULL */
+    OP_REF(int8_t) cmp_tail;
     uint8_t elided;             /* has words ending in an apostrophe (French l', qu'): see op_decode */
-    const uint32_t *cmp_known;          /* first << 16 | second of words known written as one (older files) */
+    OP_REF(uint32_t) cmp_known;          /* first << 16 | second of words known written as one (older files) */
     uint32_t n_known;
-    const uint32_t *cmp_bloom;          /* the same as a Bloom filter: nBits, k, bits; or NULL */
+    OP_REF(uint32_t) cmp_bloom;          /* the same as a Bloom filter: nBits, k, bits; or NULL */
 } op_model;
 
 /* What one person types, learned by op_learn and read by op_decode: words the dictionary
@@ -221,7 +244,7 @@ typedef struct {
     uint16_t hints[OP_MAX_KEYS];        /* letters tapped (code points, lowercase), 0 for none */
     const char *layout;                 /* start->layout, or the English rows */
     struct { uint16_t id; uint8_t parent, kind; } bp[OP_MAX_SLOTS][OP_MAX_BEAM];
-    op_entry ent[OP_MAX_BEAM * OP_MAX_CANDS];
+    op_entry ent[OP_MAX_BEAM];          /* the best extensions of the beam (op_decode) */
     /* The search after the last finished sentence of the previous op_decode, to resume from
      * when the next call's keys only add to it (see op_decode). */
     struct {

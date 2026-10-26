@@ -12,6 +12,7 @@ const opt = (k) => { const i = args.indexOf(k); return i >= 0 ? args.splice(i, 2
 const outFile = opt('--out'), hypFile = opt('--hyp'), limit = +(opt('--limit') || 0);
 const modelFile = opt('--model') || path.join(__dirname, '../model/onepress.bin'), nnFile = opt('--nn');
 const slip = +(opt('--slip') || 0), double = +(opt('--double') || 0);
+const beam = +(opt('--beam') || 8);              // beam width (8, as the apps use; radios use less)
 const params = opt('--params');                  // tuning: keypad slip costs "sub,dup" in nats
 if (params && D.slipParams) D.slipParams(...params.split(',').map(Number));
 const KEYPAD_NEAR = { 2: '35', 3: '26', 4: '57', 5: '2468', 6: '359', 7: '48', 8: '579', 9: '68' };
@@ -65,7 +66,7 @@ let hyps;
 const t0 = Date.now();
 if (hypFile) hyps = fs.readFileSync(hypFile, 'utf8').split('\n').slice(0, refs.length);
 else hyps = refs.map(s => {
-  const r = D.decode(m, slip || double ? noisy(enc(s)) : enc(s), {}, 8, 5, { nn });
+  const r = D.decode(m, slip || double ? noisy(enc(s)) : enc(s), {}, beam, 5, { nn });
   return D.render(m, r, r.hyps[0]).map(p => p.text).join('');
 });
 const ms = Date.now() - t0;

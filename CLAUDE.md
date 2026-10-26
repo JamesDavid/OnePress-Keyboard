@@ -8,6 +8,9 @@ neural network helps on phones and the web.
   `gcc -std=c99 -O2 -Wall -Wextra -o build/opdecode c/onepress.c c/opdecode.c && node tests/parity.js`,
   plus `node tests/parity.js --learn` for anything touching learning and
   `node tests/parity.js --nn model/onepress-nn.bin` for anything touching the network.
+  Models in SPI flash (`-DOP_EXT_MODEL`, the radio build) must match too:
+  `gcc -std=c99 -O2 -DOP_EXT_MODEL -o build/opdecode_ext c/onepress.c c/opdecode.c && node tests/parity.js build/opdecode_ext.exe`
+  (`OP_STATS=1` prints the flash reads per line).
 - Held-out accuracy: `node tests/eval.js` (NUS SMS, US/Canada users; `model/prep_nus.py` builds the
   splits; tune on `dev.txt`, report on test). Report it for every model or decoder change. Current:
 

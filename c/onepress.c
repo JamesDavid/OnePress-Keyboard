@@ -38,12 +38,58 @@ static int find_word(const op_model *m, const char *w);
 static uint16_t rd16(const uint8_t *p) { return (uint16_t)(p[0] | p[1] << 8); }
 static uint32_t rd32(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
 
+/* Element i of a model array (OP_REF): read in place, or from storage with OP_EXT_MODEL. */
+#ifdef OP_EXT_MODEL
+static uint32_t ext_rd(uint32_t a, uint32_t n) {
+    uint8_t b[4] = { 0, 0, 0, 0 };
+    op_ext_read(a, b, n);
+    return rd32(b);
+}
+#define AU16(p, i) ((uint16_t)ext_rd((p) + 2u * (uint32_t)(i), 2))
+#define AI16(p, i) ((int16_t)ext_rd((p) + 2u * (uint32_t)(i), 2))
+#define AU32(p, i) ext_rd((p) + 4u * (uint32_t)(i), 4)
+#define AI8(p, i) ((int8_t)ext_rd((p) + (uint32_t)(i), 1))
+#define ACH(p, i) ((char)ext_rd((p) + (uint32_t)(i), 1))
+#else
+#define AU16(p, i) ((p)[i])
+#define AI16(p, i) ((p)[i])
+#define AU32(p, i) ((p)[i])
+#define AI8(p, i) ((p)[i])
+#define ACH(p, i) ((p)[i])
+#endif
+
+/* Text of word `id` (not NUL-terminated) and its length: in place, or copied into buf
+ * (OP_WORD_BUF bytes) with OP_EXT_MODEL. */
+static int word_at(const op_model *m, uint16_t id, const char **text, char *buf) {
+    uint32_t a = AU32(m->word_off, id), n = AU32(m->word_off, id + 1) - a;
+#ifdef OP_EXT_MODEL
+    if (n > OP_WORD_BUF) n = OP_WORD_BUF;
+    op_ext_read(m->word_text + a, buf, n);
+    *text = buf;
+#else
+    (void)buf;
+    *text = m->word_text + a;
+#endif
+    return (int)n;
+}
+
 int op_model_open(op_model *m, const void *data, size_t size) {
-    const uint8_t *b = (const uint8_t *)data;
-    const void *sec[N_ALL_SECTIONS];
+    OP_REF(uint8_t) sec[N_ALL_SECTIONS];
     uint32_t len[N_ALL_SECTIONS];
+#ifdef OP_EXT_MODEL
+    /* The header and section table, read from storage; every section is required. */
+    uint8_t b[16 + 8 * N_ALL_SECTIONS];
+    uint32_t base = (uint32_t)(uintptr_t)data;
+    if (!m || !base || (base & 3) || size < sizeof b) return OP_ERR_MODEL;
+    op_ext_read(base, b, sizeof b);
+    if (memcmp(b, "KPD2", 4) != 0 || rd16(b + 14) < N_ALL_SECTIONS) return OP_ERR_MODEL;
+    #define SEC(T, i) sec[i]
+#else
+    const uint8_t *b = (const uint8_t *)data;
     static const uint32_t one_zero = 0;      /* an empty triStart / altOff */
     if (!m || !b || ((uintptr_t)b & 3) || size < 16 || memcmp(b, "KPD2", 4) != 0) return OP_ERR_MODEL;
+    #define SEC(T, i) ((const T *)sec[i])
+#endif
     if (rd16(b + 4) != 1 || rd16(b + 14) < N_SECTIONS || size < 16 + 8u * N_SECTIONS) return OP_ERR_MODEL;
     m->scale = rd16(b + 6);
     m->n_words = rd16(b + 8);
@@ -54,65 +100,72 @@ int op_model_open(op_model *m, const void *data, size_t size) {
     int n_sec = rd16(b + 14) < N_ALL_SECTIONS ? rd16(b + 14) : N_ALL_SECTIONS;
     if (n_sec < 25) n_sec = N_SECTIONS;
     if (size < 16 + 8u * n_sec) return OP_ERR_MODEL;
-    for (int i = n_sec; i < N_ALL_SECTIONS; i++) { sec[i] = &one_zero; len[i] = 0; }
+#ifndef OP_EXT_MODEL
+    for (int i = n_sec; i < N_ALL_SECTIONS; i++) { sec[i] = (const uint8_t *)&one_zero; len[i] = 0; }
+#endif
     for (int i = 0; i < n_sec; i++) {
         uint32_t off = rd32(b + 16 + 8 * i);
         len[i] = rd32(b + 20 + 8 * i);
         if ((off & 3) || off > size || len[i] > size - off) return OP_ERR_MODEL;
+#ifdef OP_EXT_MODEL
+        sec[i] = base + off;
+#else
         sec[i] = b + off;
+#endif
     }
-    m->word_text = (const char *)sec[0];
-    m->word_off = (const uint32_t *)sec[1];
-    m->key_idx = (const uint16_t *)sec[2];
-    m->strip_idx = (const uint16_t *)sec[3];
+    m->word_text = SEC(char, 0);
+    m->word_off = SEC(uint32_t, 1);
+    m->key_idx = SEC(uint16_t, 2);
+    m->strip_idx = SEC(uint16_t, 3);
     m->n_strip = len[3] / 2;
-    m->disp_id = (const uint16_t *)sec[4];
+    m->disp_id = SEC(uint16_t, 4);
     m->n_disp = len[4] / 2;
-    m->disp_off = (const uint32_t *)sec[5];
-    m->disp_text = (const char *)sec[6];
-    m->uni = (const int16_t *)sec[7];
-    m->row_start = (const uint32_t *)sec[8];
-    m->bow = (const int16_t *)sec[9];
-    m->next = (const uint16_t *)sec[10];
-    m->lp = (const int16_t *)sec[11];
-    m->q_start = (const uint16_t *)sec[12];
+    m->disp_off = SEC(uint32_t, 5);
+    m->disp_text = SEC(char, 6);
+    m->uni = SEC(int16_t, 7);
+    m->row_start = SEC(uint32_t, 8);
+    m->bow = SEC(int16_t, 9);
+    m->next = SEC(uint16_t, 10);
+    m->lp = SEC(int16_t, 11);
+    m->q_start = SEC(uint16_t, 12);
     m->n_q = len[12] / 2;
-    m->punct = (const char *)sec[13];
+    m->punct = SEC(char, 13);
     if (len[13] != m->n_punct || len[14] < 2 * OP_P_SLIP_SUB || m->bos != m->n_words + m->n_punct ||
         len[1] != 4u * (m->n_words + 1u) || len[2] != 2u * m->n_words || len[8] != 4u * (m->bos + 2u))
         return OP_ERR_MODEL;
     m->param[OP_P_SLIP_SUB] = (int16_t)(-12 * m->scale);     /* defaults for files without them */
     m->param[OP_P_SLIP_DUP] = (int16_t)(-8 * m->scale);
     m->param[OP_P_FLAGS] = FLAG_I;
-    for (int i = 0; i < OP_N_PARAMS && 2u * i + 2 <= len[14]; i++) m->param[i] = (int16_t)rd16((const uint8_t *)sec[14] + 2 * i);
-    m->q_skip = (const uint16_t *)sec[15];
+    for (int i = 0; i < OP_N_PARAMS && 2u * i + 2 <= len[14]; i++) m->param[i] = AI16(SEC(int16_t, 14), i);
+    m->q_skip = SEC(uint16_t, 15);
     m->n_skip = len[15] / 2;
-    m->tri_key = (const uint32_t *)sec[16];
+    m->tri_key = SEC(uint32_t, 16);
     m->n_tri = len[16] / 4;
-    m->tri_start = (const uint32_t *)sec[17];
-    m->tri_bow = (const int16_t *)sec[18];
-    m->tri_next = (const uint16_t *)sec[19];
-    m->tri_lp = (const int16_t *)sec[20];
-    m->cap_key = (const uint32_t *)sec[21];
+    m->tri_start = SEC(uint32_t, 17);
+    m->tri_bow = SEC(int16_t, 18);
+    m->tri_next = SEC(uint16_t, 19);
+    m->tri_lp = SEC(int16_t, 20);
+    m->cap_key = SEC(uint32_t, 21);
     m->n_cap = len[21] / 4;
-    m->alt_id = (const uint16_t *)sec[22];
+    m->alt_id = SEC(uint16_t, 22);
     m->n_alt = len[22] / 2;
-    m->alt_off = (const uint32_t *)sec[23];
-    m->alt_text = (const char *)sec[24];
-    m->cap_next = (const uint32_t *)sec[25];
+    m->alt_off = SEC(uint32_t, 23);
+    m->alt_text = SEC(char, 24);
+    m->cap_next = SEC(uint32_t, 25);
     m->n_cap_next = len[25] / 4;
-    m->cap_keep = (const uint32_t *)sec[26];
+    m->cap_keep = SEC(uint32_t, 26);
     m->n_cap_keep = len[26] / 4;
-    m->cmp_head = len[27] == m->n_words ? (const int8_t *)sec[27] : NULL;
-    m->cmp_tail = len[28] == m->n_words ? (const int8_t *)sec[28] : NULL;
-    m->cmp_known = (const uint32_t *)sec[29];
+    m->cmp_head = len[27] == m->n_words ? SEC(int8_t, 27) : 0;
+    m->cmp_tail = len[28] == m->n_words ? SEC(int8_t, 28) : 0;
+    m->cmp_known = SEC(uint32_t, 29);
     m->elided = 0;
     for (uint16_t i = 0; i < m->n_words && !m->elided; i++)
-        m->elided = m->word_off[i + 1] > m->word_off[i] &&
-                    (m->word_text[m->word_off[i + 1] - 1] == '\'' || m->word_text[m->word_off[i]] == '\'' ||
-                     m->word_text[m->word_off[i]] == '-');
+        m->elided = AU32(m->word_off, i + 1) > AU32(m->word_off, i) &&
+                    (ACH(m->word_text, AU32(m->word_off, i + 1) - 1) == '\'' || ACH(m->word_text, AU32(m->word_off, i)) == '\'' ||
+                     ACH(m->word_text, AU32(m->word_off, i)) == '-');
     m->n_known = len[29] / 4;
-    m->cmp_bloom = len[30] >= 12 && len[30] >= 8 + ((const uint32_t *)sec[30])[0] / 8 ? (const uint32_t *)sec[30] : NULL;
+    m->cmp_bloom = len[30] >= 12 && len[30] >= 8 + AU32(SEC(uint32_t, 30), 0) / 8 ? SEC(uint32_t, 30) : 0;
+    #undef SEC
     if (m->n_tri >= 0xFFFF || (n_sec > N_SECTIONS && (len[17] != 4u * (m->n_tri + 1) || len[18] != 2u * m->n_tri ||
         len[20] != len[19] || len[23] != 4u * (m->n_alt + 1))))
         return OP_ERR_MODEL;
@@ -122,32 +175,33 @@ int op_model_open(op_model *m, const void *data, size_t size) {
 }
 
 int op_word(const op_model *m, uint16_t id, const char **text) {
-    *text = m->word_text + m->word_off[id];
-    return (int)(m->word_off[id + 1] - m->word_off[id]);
+    static char buf[OP_WORD_BUF];
+    return word_at(m, id, text, buf);
 }
 
 /* log P(cur | prev) in model units; prev OP_NONE (unknown word) or AFTER_NUMBER falls back to
  * the unigram, and right after a number "am" and "pm" get a bonus. */
 static int32_t lp(const op_model *m, uint16_t prev, uint16_t cur) {
     if (prev == AFTER_NUMBER)
-        return m->uni[cur] + (cur == m->time_id[0] || cur == m->time_id[1] ? TIME_BONUS * m->scale : 0);
-    if (prev > m->bos) return m->uni[cur];      /* unknown, or a learned word */
-    uint32_t lo = m->row_start[prev], hi = m->row_start[prev + 1];
+        return AI16(m->uni, cur) + (cur == m->time_id[0] || cur == m->time_id[1] ? TIME_BONUS * m->scale : 0);
+    if (prev > m->bos) return AI16(m->uni, cur);      /* unknown, or a learned word */
+    uint32_t lo = AU32(m->row_start, prev), hi = AU32(m->row_start, prev + 1);
     while (lo < hi) {
         uint32_t mid = (lo + hi) / 2;
-        uint16_t x = m->next[mid];
-        if (x == cur) return m->lp[mid];
+        uint16_t x = AU16(m->next, mid);
+        if (x == cur) return AI16(m->lp, mid);
         if (x < cur) lo = mid + 1; else hi = mid;
     }
-    return m->bow[prev] + m->uni[cur];
+    return AI16(m->bow, prev) + AI16(m->uni, cur);
 }
 
-static int in_u16(const uint16_t *a, uint32_t n, uint16_t id) {
+static int in_u16(OP_REF(uint16_t) a, uint32_t n, uint16_t id) {
     uint32_t lo = 0, hi = n;
     while (lo < hi) {
         uint32_t mid = (lo + hi) / 2;
-        if (a[mid] == id) return 1;
-        if (a[mid] < id) lo = mid + 1; else hi = mid;
+        uint16_t x = AU16(a, mid);
+        if (x == id) return 1;
+        if (x < id) lo = mid + 1; else hi = mid;
     }
     return 0;
 }
@@ -159,13 +213,13 @@ static uint8_t q_state(const op_model *m, uint16_t id) {
 }
 
 /* Index of key k in a sorted u32 array, or -1. */
-static int32_t find_u32(const uint32_t *a, uint32_t n, uint32_t k) {
+static int32_t find_u32(OP_REF(uint32_t) a, uint32_t n, uint32_t k) {
     uint32_t lo = 0, hi = n;
     while (lo < hi) {
         uint32_t mid = (lo + hi) / 2;
-        if (a[mid] < k) lo = mid + 1; else hi = mid;
+        if (AU32(a, mid) < k) lo = mid + 1; else hi = mid;
     }
-    return lo < n && a[lo] == k ? (int32_t)lo : -1;
+    return lo < n && AU32(a, lo) == k ? (int32_t)lo : -1;
 }
 
 /* Three-word context (p2, p1): its index in tri_key, or OP_NONE (also for numbers, unknown and
@@ -178,14 +232,14 @@ static uint16_t tri_find(const op_model *m, uint16_t p2, uint16_t p1) {
 /* log P(cur | context t, prev): the triple if stored, else the context's backoff + the pair. */
 static int32_t lp3(const op_model *m, uint16_t t, uint16_t prev, uint16_t cur) {
     if (t == OP_NONE) return lp(m, prev, cur);
-    uint32_t lo = m->tri_start[t], hi = m->tri_start[t + 1];
+    uint32_t lo = AU32(m->tri_start, t), hi = AU32(m->tri_start, t + 1);
     while (lo < hi) {
         uint32_t mid = (lo + hi) / 2;
-        uint16_t x = m->tri_next[mid];
-        if (x == cur) return m->tri_lp[mid];
+        uint16_t x = AU16(m->tri_next, mid);
+        if (x == cur) return AI16(m->tri_lp, mid);
         if (x < cur) lo = mid + 1; else hi = mid;
     }
-    return m->tri_bow[t] + lp(m, prev, cur);
+    return AI16(m->tri_bow, t) + lp(m, prev, cur);
 }
 
 /* Letters beyond a-z (accented Latin, Greek, Cyrillic: U+00C0-U+045F): each has its keypad key
@@ -285,7 +339,8 @@ static int u8_prefix(const char *w, int wn, int chars) {
  * Returns <0, 0, >0 like strcmp; *starts is set when the word's keys begin with q. */
 static int key_cmp(const op_model *m, uint16_t id, int strip, const char *q, int qn, int *starts) {
     const char *w;
-    int wn = op_word(m, id, &w), i = 0;
+    char wb[OP_WORD_BUF];
+    int wn = word_at(m, id, &w, wb), i = 0;
     for (int j = 0;; j++) {
         int c = -1;
         while (i < wn) {
@@ -302,12 +357,12 @@ static int key_cmp(const op_model *m, uint16_t id, int strip, const char *q, int
 }
 
 /* First position in an index whose key is >= q. */
-static uint32_t lower_bound(const op_model *m, const uint16_t *ix, uint32_t n, int strip, const char *q, int qn) {
+static uint32_t lower_bound(const op_model *m, OP_REF(uint16_t) ix, uint32_t n, int strip, const char *q, int qn) {
     uint32_t lo = 0, hi = n;
     int starts;
     while (lo < hi) {
         uint32_t mid = (lo + hi) / 2;
-        if (key_cmp(m, ix[mid], strip, q, qn, &starts) < 0) lo = mid + 1; else hi = mid;
+        if (key_cmp(m, AU16(ix, mid), strip, q, qn, &starts) < 0) lo = mid + 1; else hi = mid;
     }
     return lo;
 }
@@ -319,10 +374,11 @@ static int find_word(const op_model *m, const char *w) {
     int wn = (int)strlen(w), kn = 0, starts, ap;
     for (int i = 0; i < wn && kn < 64;) k[kn++] = (char)next_key(w, wn, &i, &ap);
     for (uint32_t i = lower_bound(m, m->key_idx, m->n_words, 0, k, kn);
-         i < m->n_words && key_cmp(m, m->key_idx[i], 0, k, kn, &starts) == 0; i++) {
+         i < m->n_words && key_cmp(m, AU16(m->key_idx, i), 0, k, kn, &starts) == 0; i++) {
         const char *t;
-        int tn = op_word(m, m->key_idx[i], &t);
-        if (tn == wn && memcmp(t, w, (size_t)wn) == 0) return m->key_idx[i];
+        char wb[OP_WORD_BUF];
+        int tn = word_at(m, AU16(m->key_idx, i), &t, wb);
+        if (tn == wn && memcmp(t, w, (size_t)wn) == 0) return AU16(m->key_idx, i);
     }
     return OP_NONE;
 }
@@ -341,19 +397,20 @@ static int lit_match_text(const char *w, int wn, int strip, const uint16_t *lit,
 }
 static int lit_match(const op_model *m, uint16_t id, int strip, const uint16_t *lit, int n) {
     const char *w;
-    int wn = op_word(m, id, &w);
+    char wb[OP_WORD_BUF];
+    int wn = word_at(m, id, &w, wb);
     return lit_match_text(w, wn, strip, lit, n);
 }
 
 /* ---- learned words ---- */
 
-/* Text of a dictionary or learned word. */
-static int tok_text(const op_model *m, const op_user *u, uint16_t id, const char **text) {
+/* Text of a dictionary or learned word (buf: OP_WORD_BUF bytes, see word_at). */
+static int tok_text(const op_model *m, const op_user *u, uint16_t id, const char **text, char *buf) {
     if (id > m->bos) {
         *text = u->word[id - m->bos - 1];
         return (int)strlen(*text);
     }
-    return op_word(m, id, text);
+    return word_at(m, id, text, buf);
 }
 
 /* Index of pair (prev, cur), or -(insertion point) - 1. */
@@ -653,12 +710,13 @@ static int word_fits(const op_decoder *d, const op_model *m, const op_tok *t, in
     const uint16_t *lit = d->lits + t->off;
     int starts;
     for (uint32_t i = lower_bound(m, m->key_idx, m->n_words, 0, k, len);
-         i < m->n_words && key_cmp(m, m->key_idx[i], 0, k, len, &starts) == 0; i++) {
-        uint16_t id = m->key_idx[i];
+         i < m->n_words && key_cmp(m, AU16(m->key_idx, i), 0, k, len, &starts) == 0; i++) {
+        uint16_t id = AU16(m->key_idx, i);
         if (!lit_match(m, id, 0, lit, len)) continue;
         if (kind == 1 || kind == 2) {
             const char *w;
-            int wn = op_word(m, id, &w);
+            char wb[OP_WORD_BUF];
+            int wn = word_at(m, id, &w, wb);
             if (!wn || (kind == 1 ? w[wn - 1] != '\'' : w[0] != '\'' && w[0] != '-')) continue;
         }
         return 1;
@@ -724,7 +782,11 @@ static int split_elisions(op_decoder *d, const op_model *m) {
 }
 
 static int punct_index(const op_model *m, char ch) {
-    for (int i = 0; i < m->n_punct; i++) if (m->punct[i] == ch) return i;
+    for (int i = 0; i < m->n_punct; i++) if (ACH(m->punct, i) == ch) return i;
+    return 0;
+}
+static int has_punct(const op_model *m, char ch) {
+    for (int i = 0; i < m->n_punct; i++) if (ACH(m->punct, i) == ch) return 1;
     return 0;
 }
 
@@ -747,10 +809,10 @@ static uint32_t fmix32(uint32_t h) {
 static int known_pair(const op_model *m, uint16_t a, uint16_t b) {
     uint32_t key = (uint32_t)a << 16 | b;
     if (!m->cmp_bloom) return find_u32(m->cmp_known, m->n_known, key) >= 0;
-    uint32_t nbits = m->cmp_bloom[0], h1 = fmix32(key), h2 = fmix32(key ^ 0x9e3779b9u) | 1;
-    for (uint32_t i = 0; i < m->cmp_bloom[1]; i++) {
+    uint32_t nbits = AU32(m->cmp_bloom, 0), h1 = fmix32(key), h2 = fmix32(key ^ 0x9e3779b9u) | 1;
+    for (uint32_t i = 0; i < AU32(m->cmp_bloom, 1); i++) {
         uint32_t bit = (h1 + i * h2) % nbits;
-        if (!(m->cmp_bloom[2 + (bit >> 5)] & (1u << (bit & 31)))) return 0;
+        if (!(AU32(m->cmp_bloom, 2 + (bit >> 5)) & (1u << (bit & 31)))) return 0;
     }
     return 1;
 }
@@ -763,20 +825,21 @@ static int compound_part(const op_model *m, const char *k, const uint16_t *lit, 
     int strip = !memchr(k, '#', (size_t)kn), starts, n = 0;
     uint32_t a = lower_bound(m, m->key_idx, m->n_words, 0, k, kn);
     uint32_t b = lower_bound(m, m->strip_idx, m->n_strip, 1, k, kn);
-    int a_ok = a < m->n_words && key_cmp(m, m->key_idx[a], 0, k, kn, &starts) == 0;
-    int b_ok = b < m->n_strip && key_cmp(m, m->strip_idx[b], 1, k, kn, &starts) == 0;
+    int a_ok = a < m->n_words && key_cmp(m, AU16(m->key_idx, a), 0, k, kn, &starts) == 0;
+    int b_ok = b < m->n_strip && key_cmp(m, AU16(m->strip_idx, b), 1, k, kn, &starts) == 0;
     while ((a_ok || b_ok) && n < COMPOUND_WORDS) {
-        int from_strip = !a_ok || (b_ok && m->strip_idx[b] < m->key_idx[a]);
+        int from_strip = !a_ok || (b_ok && AU16(m->strip_idx, b) < AU16(m->key_idx, a));
         uint16_t w;
         if (from_strip) {
-            w = m->strip_idx[b++];
-            b_ok = b < m->n_strip && key_cmp(m, m->strip_idx[b], 1, k, kn, &starts) == 0;
+            w = AU16(m->strip_idx, b++);
+            b_ok = b < m->n_strip && key_cmp(m, AU16(m->strip_idx, b), 1, k, kn, &starts) == 0;
         } else {
-            w = m->key_idx[a++];
-            a_ok = a < m->n_words && key_cmp(m, m->key_idx[a], 0, k, kn, &starts) == 0;
+            w = AU16(m->key_idx, a++);
+            a_ok = a < m->n_words && key_cmp(m, AU16(m->key_idx, a), 0, k, kn, &starts) == 0;
         }
         const char *wt;             /* endings ('a, -ce) and elided words (l') attach only through a typed # */
-        int wtn = op_word(m, w, &wt);
+        char wb[OP_WORD_BUF];
+        int wtn = word_at(m, w, &wt, wb);
         if (wtn && (wt[0] == '\'' || wt[0] == '-' || wt[wtn - 1] == '\'')) continue;
         if (!lit_match(m, w, strip, lit, kn)) continue;
         id[n] = w;
@@ -787,8 +850,8 @@ static int compound_part(const op_model *m, const char *k, const uint16_t *lit, 
 
 static int32_t compound_score(const op_model *m, uint16_t id, int first, int last) {
     int32_t q = m->scale >> 2, s = 0;
-    if (!last) s += m->uni[id] + (m->cmp_head ? m->cmp_head[id] : 0) * q;
-    if (!first) s += m->uni[id] + (m->cmp_tail ? m->cmp_tail[id] : 0) * q;
+    if (!last) s += AI16(m->uni, id) + (m->cmp_head ? AI8(m->cmp_head, id) : 0) * q;
+    if (!first) s += AI16(m->uni, id) + (m->cmp_tail ? AI8(m->cmp_tail, id) : 0) * q;
     return s;
 }
 
@@ -798,7 +861,8 @@ static void compound_add(const op_model *m, compound *best, int *nb, int32_t sco
     c.len = 0;
     for (int i = 0; i < np; i++) {
         const char *w;
-        int wn = op_word(m, ids[i], &w);
+        char wb[OP_WORD_BUF];
+        int wn = word_at(m, ids[i], &w, wb);
         memcpy(c.text + c.len, w, (size_t)wn);        /* at most 2 * COMPOUND_KEYS: fits */
         c.len = (uint8_t)(c.len + wn);
     }
@@ -834,7 +898,7 @@ static void compound_split(const op_model *m, const char *k, const uint16_t *lit
     for (int i = 0; i + 1 < np; i++)
         for (int x = 0; x < cnt[i]; x++)
             for (int y = 0; y < cnt[i + 1]; y++) {
-                int32_t g = lp(m, id[i][x], id[i + 1][y]) - m->uni[id[i + 1][y]];
+                int32_t g = lp(m, id[i][x], id[i + 1][y]) - AI16(m->uni, id[i + 1][y]);
                 pl[i][x][y] = g > 0 ? COMPOUND_PAIR * g : 0;
                 if (np == 2 && known_pair(m, id[0][x], id[1][y]))
                     pl[i][x][y] += COMPOUND_KNOWN * m->scale;
@@ -889,12 +953,12 @@ static int compounds(const op_model *m, const char *k, const uint16_t *lit, int 
 static int prefix_best(const op_model *m, const char *k, int kn, const uint16_t *lit, uint16_t *best) {
     int nb = 0, starts;
     for (int strip = 0; strip < 2; strip++) {
-        const uint16_t *ix = strip ? m->strip_idx : m->key_idx;
+        OP_REF(uint16_t) ix = strip ? m->strip_idx : m->key_idx;
         uint32_t ixn = strip ? m->n_strip : m->n_words;
         for (uint32_t i = lower_bound(m, ix, ixn, strip, k, kn); i < ixn; i++) {
-            key_cmp(m, ix[i], strip, k, kn, &starts);
+            key_cmp(m, AU16(ix, i), strip, k, kn, &starts);
             if (!starts) break;
-            uint16_t id = ix[i];
+            uint16_t id = AU16(ix, i);
             if (lit && !lit_match(m, id, strip, lit, kn)) continue;
             int dup = 0;
             for (int j = 0; j < nb; j++) if (best[j] == id) dup = 1;
@@ -996,9 +1060,9 @@ static void qw_walk(qw_walk_state *w, int len) {
     const op_model *m = w->m;
     int starts, any = 0;
     for (int strip = 0; strip < 2 && !any; strip++) {
-        const uint16_t *ix = strip ? m->strip_idx : m->key_idx;
+        OP_REF(uint16_t) ix = strip ? m->strip_idx : m->key_idx;
         uint32_t ixn = strip ? m->n_strip : m->n_words, i = lower_bound(m, ix, ixn, strip, w->pre, len);
-        if (i < ixn) { key_cmp(m, ix[i], strip, w->pre, len, &starts); any = starts; }
+        if (i < ixn) { key_cmp(m, AU16(ix, i), strip, w->pre, len, &starts); any = starts; }
     }
     if (!any) return;
     if (len < w->t->len) {
@@ -1006,23 +1070,24 @@ static void qw_walk(qw_walk_state *w, int len) {
         return;
     }
     const char *text;
+    char wb[OP_WORD_BUF];
     for (int strip = 0; strip < 2; strip++) {
-        const uint16_t *ix = strip ? m->strip_idx : m->key_idx;
+        OP_REF(uint16_t) ix = strip ? m->strip_idx : m->key_idx;
         uint32_t ixn = strip ? m->n_strip : m->n_words;
-        for (uint32_t i = lower_bound(m, ix, ixn, strip, w->pre, len); i < ixn && key_cmp(m, ix[i], strip, w->pre, len, &starts) == 0; i++) {
-            int tn = op_word(m, ix[i], &text);
+        for (uint32_t i = lower_bound(m, ix, ixn, strip, w->pre, len); i < ixn && key_cmp(m, AU16(ix, i), strip, w->pre, len, &starts) == 0; i++) {
+            int tn = word_at(m, AU16(ix, i), &text, wb);
             int32_t pen = (strip ? m->param[OP_P_APOSTROPHE] : 0) + tap_cost(m, w->d, w->t, text, tn);
-            qw_add(&w->ex, (cand){ ix[i], OP_WORD, pen }, m->uni[ix[i]] + pen);
+            qw_add(&w->ex, (cand){ AU16(ix, i), OP_WORD, pen }, AI16(m->uni, AU16(ix, i)) + pen);
         }
     }
     if (w->is_last) {
         uint16_t best[OP_MAX_COMPLETIONS];
         int nb = prefix_best(m, w->pre, len, NULL, best);
         for (int j = 0; j < nb; j++) {
-            int tn = op_word(m, best[j], &text);
+            int tn = word_at(m, best[j], &text, wb);
             if (u8_len(text, tn) <= len) continue;
             int32_t pen = m->param[OP_P_COMPLETION] + tap_cost(m, w->d, w->t, text, tn);
-            qw_add(&w->comp, (cand){ best[j], OP_PARTIAL, pen }, m->uni[best[j]] + pen);
+            qw_add(&w->comp, (cand){ best[j], OP_PARTIAL, pen }, AI16(m->uni, best[j]) + pen);
         }
     }
 }
@@ -1082,11 +1147,11 @@ static const char *const KEYPAD_NEAR[8] = { "35", "26", "57", "2468", "359", "48
 static void slip_add(const op_model *m, const char *k, int kn, int32_t pen, qw_list *l) {
     int starts;
     for (int strip = 0; strip < 2; strip++) {
-        const uint16_t *ix = strip ? m->strip_idx : m->key_idx;
+        OP_REF(uint16_t) ix = strip ? m->strip_idx : m->key_idx;
         uint32_t ixn = strip ? m->n_strip : m->n_words;
-        for (uint32_t i = lower_bound(m, ix, ixn, strip, k, kn); i < ixn && key_cmp(m, ix[i], strip, k, kn, &starts) == 0; i++) {
+        for (uint32_t i = lower_bound(m, ix, ixn, strip, k, kn); i < ixn && key_cmp(m, AU16(ix, i), strip, k, kn, &starts) == 0; i++) {
             int32_t p = pen + (strip ? m->param[OP_P_APOSTROPHE] : 0);
-            qw_add(l, (cand){ ix[i], OP_WORD, p }, m->uni[ix[i]] + p);
+            qw_add(l, (cand){ AU16(ix, i), OP_WORD, p }, AI16(m->uni, AU16(ix, i)) + p);
         }
     }
 }
@@ -1133,7 +1198,7 @@ static int slot_cands(const op_decoder *d, const op_model *m, const op_tok *t, i
         return 2;
     }
     if (t->type == TOK_PUNCT) {
-        if (t->lit && !memchr(m->punct, t->lit, m->n_punct)) { out[0] = (cand){ OP_NONE, OP_LITERAL, 0 }; return 1; }   /* ':' */
+        if (t->lit && !has_punct(m, t->lit)) { out[0] = (cand){ OP_NONE, OP_LITERAL, 0 }; return 1; }   /* ':' */
         if (t->lit) { out[0] = (cand){ (uint16_t)(m->n_words + punct_index(m, t->lit)), OP_PUNCT, 0 }; return 1; }
         for (int i = 0; i < m->n_punct; i++) out[i] = (cand){ (uint16_t)(m->n_words + i), OP_PUNCT, 0 };
         return m->n_punct;
@@ -1155,11 +1220,11 @@ static int slot_cands(const op_decoder *d, const op_model *m, const op_tok *t, i
         int starts;
         uint32_t a = lower_bound(m, m->key_idx, m->n_words, 0, k, kn), ae = a;
         uint32_t b = lower_bound(m, m->strip_idx, m->n_strip, 1, k, kn), be = b;
-        while (ae < m->n_words && key_cmp(m, m->key_idx[ae], 0, k, kn, &starts) == 0) ae++;
-        while (be < m->n_strip && key_cmp(m, m->strip_idx[be], 1, k, kn, &starts) == 0) be++;
+        while (ae < m->n_words && key_cmp(m, AU16(m->key_idx, ae), 0, k, kn, &starts) == 0) ae++;
+        while (be < m->n_strip && key_cmp(m, AU16(m->strip_idx, be), 1, k, kn, &starts) == 0) be++;
         while ((a < ae || b < be) && n < OP_MAX_EXACT) {
-            int from_strip = a >= ae || (b < be && m->strip_idx[b] < m->key_idx[a]);
-            uint16_t id = from_strip ? m->strip_idx[b++] : m->key_idx[a++];
+            int from_strip = a >= ae || (b < be && AU16(m->strip_idx, b) < AU16(m->key_idx, a));
+            uint16_t id = from_strip ? AU16(m->strip_idx, b++) : AU16(m->key_idx, a++);
             if (has_lit && !lit_match(m, id, !has_hash, lit, kn)) continue;
             out[n++] = (cand){ id, OP_WORD, from_strip ? m->param[OP_P_APOSTROPHE] : 0 };
         }
@@ -1171,12 +1236,13 @@ static int slot_cands(const op_decoder *d, const op_model *m, const op_tok *t, i
         user_cands(m, u, k, lit, kn, is_last && !all_lit, out + n, &n_uexact, upart, &n_upart);
         if (qw) {               /* what the taps say about each learned word */
             const char *w;
+            char wb[OP_WORD_BUF];
             for (int j = 0; j < n_uexact; j++) {
-                int wn = tok_text(m, u, out[n + j].id, &w);
+                int wn = tok_text(m, u, out[n + j].id, &w, wb);
                 out[n + j].pen += tap_cost(m, d, t, w, wn);
             }
             for (int j = 0; j < n_upart; j++) {
-                int wn = tok_text(m, u, upart[j].id, &w);
+                int wn = tok_text(m, u, upart[j].id, &w, wb);
                 upart[j].pen += tap_cost(m, d, t, w, wn);
             }
         }
@@ -1207,7 +1273,8 @@ static int slot_cands(const op_decoder *d, const op_model *m, const op_tok *t, i
         int kept = 0;
         for (int e = 0; e < n; e++) {
             const char *w;
-            int wn = tok_text(m, u, out[e].id, &w);
+            char wb[OP_WORD_BUF];
+            int wn = tok_text(m, u, out[e].id, &w, wb);
             if (u8_len(w, wn) == kn && same_letters(w, wn, lit, kn)) out[kept++] = out[e];
         }
         if (kept) return kept;
@@ -1338,7 +1405,7 @@ static void context(op_decoder *d, const op_model *m, const op_start *start,
 
 static int recent_bonus(const op_decoder *d, const op_model *m, uint16_t id) {
     for (int i = 0; i < d->n_recent; i++)
-        if (d->recent[i] == id) return id > m->bos || m->uni[id] < RECENT_MAX_UNI * m->scale ? RECENT_BONUS * m->scale : 0;
+        if (d->recent[i] == id) return id > m->bos || AI16(m->uni, id) < RECENT_MAX_UNI * m->scale ? RECENT_BONUS * m->scale : 0;
     return 0;
 }
 
@@ -1420,10 +1487,29 @@ static int32_t nn_score(const op_nn *nn, const int16_t *p, uint16_t tok) {
 
 /* ---- beam search ---- */
 
-static int cmp_entry(const void *x, const void *y) {
-    const op_entry *a = (const op_entry *)x, *b = (const op_entry *)y;
-    if (a->score != b->score) return a->score > b->score ? -1 : 1;
-    return (int)a->seq - (int)b->seq;   /* ties keep generation order, like decoder.js's stable sort */
+/* Does a come before b: a higher score, ties in generation order (decoder.js's stable sort)? */
+static int entry_before(const op_entry *a, const op_entry *b) {
+    return a->score != b->score ? a->score > b->score : a->seq < b->seq;
+}
+/* decoder.js sorts every extension of the beam, then keeps the best one per state (previous
+ * token + opener states) until it has `beam`: the `beam` best states by their best entry. Kept
+ * here as they are made, in k[0..*nk) best first, so only `beam` entries are stored. An entry
+ * pushed out never comes back: the last kept only gets better. */
+static void keep_entry(op_entry *k, int *nk, int beam, const op_entry *e) {
+    int i = 0;
+    while (i < *nk && !(k[i].prev == e->prev && k[i].tri == e->tri && k[i].first == e->first && k[i].cf == e->cf)) i++;
+    if (i < *nk) {                  /* the same state: the better of the two */
+        if (!entry_before(e, &k[i])) return;
+        memmove(k + i, k + i + 1, (size_t)(*nk - i - 1) * sizeof *k);
+        (*nk)--;
+    } else if (*nk == beam) {
+        if (!entry_before(e, &k[beam - 1])) return;
+        (*nk)--;
+    }
+    int j = *nk;
+    for (; j > 0 && entry_before(e, &k[j - 1]); j--) k[j] = k[j - 1];
+    k[j] = *e;
+    (*nk)++;
 }
 
 
@@ -1527,94 +1613,78 @@ int op_decode(op_decoder *d, const op_model *m, const char *keys, int beam,
             for (int i = 0; i < nc; i++) if (c[i].id == locks[l].id) c[hit++] = c[i];
             if (hit) nc = hit;
         }
-        int ne = 0;
-        for (int h = 0; h < nb; h++) {
-            for (int ci = 0; ci < nc; ci++) {
-                uint16_t id = c[ci].id, p;
-                uint8_t f = first[h], g = cf[h];
-                int32_t step;
-                if (id == OP_TIME_ID) {
-                    int before = 0;
-                    for (int i = 0; i < OP_TIME_BEFORE; i++) if (prev[h] != OP_NONE && prev[h] == m->time_before[i]) before = 1;
-                    step = m->scale * ((before ? TIME_PREV : -TIME_ALONE) - (tk == '.' ? TIME_LITERAL : 0));
-                    p = AFTER_NUMBER;
-                } else if (c[ci].kind == OP_COMPOUND) {
-                    step = P[OP_P_UNKNOWN];
-                    p = OP_NONE;
-                } else if (id == OP_NONE) {
-                    step = c[ci].kind == OP_NUMBER ? 0 : c[ci].kind == OP_LITERAL ? P[OP_P_LITERAL] : P[OP_P_UNKNOWN];
-                    p = c[ci].kind == OP_NUMBER ? (tk ? AFTER_DECIMAL : AFTER_NUMBER) : OP_NONE;
-                } else {
-                    step = token_score(m, d->user, prev[h], id, tri[h]) + c[ci].pen + recent_bonus(d, m, id);
-                    p = id;
-                }
-                if (nn)
-                    step += ((id >= m->n_words && id < m->bos ? nn->punct_weight : nn->weight) * nn_score(nn, w->p[cur][h], NN_TOK(id))) >> 8;
-                if (id != OP_NONE && id >= m->n_words && id < m->bos) {
-                    /* Punctuation: a word-pair model can't see how the sentence began,
-                     * so use the sentence's first word to judge question vs statement. */
-                    int q = f == 1 || g == 1;
-                    char ch = m->punct[id - m->n_words];
-                    if (ch == '?') step += q ? P[OP_P_QQ] : P[OP_P_QN];
-                    else if (ch == '.') step += P[OP_P_DB] + (q ? P[OP_P_DQ] : 0);
-                    else if (ch == ',') step += P[OP_P_CB] + (is_final ? P[OP_P_CF] : 0);
-                    else if (ch == '!') step += P[OP_P_EB];
-                    if (ch != ',') { p = m->bos; f = 0; }
-                    g = 0;
-                } else {
-                    int skip = id != OP_NONE && in_u16(m->q_skip, m->n_skip, id);
-                    if (!f && !skip) f = q_state(m, id);
-                    if (!g && !skip) g = q_state(m, id);
-                }
-                op_entry *e = &d->ent[ne];
-                e->score = score[h] + step;
-                e->seq = (uint16_t)ne;
-                e->prev = p;
-                e->id = id;
-                e->parent = (uint8_t)h;
-                e->kind = c[ci].kind;
-                e->first = f;
-                e->cf = g;
-                e->tri = p == m->bos ? OP_NONE : tri_find(m, prev[h], p);
-                ne++;
-            }
-        }
-        /* Finished sentences are frozen (decoder.js): at a punctuation slot with more typed after
-         * it, find what decoding showed when the keys stopped here; if that ended the sentence,
-         * keep only the entries from its parent, so the words before it can't change. */
-        if (t->type == TOK_PUNCT && !is_final) {
-            int top = -1;
+        /* Each hypothesis extended by each candidate, in order (seq), and the best kept. Finished
+         * sentences are frozen (decoder.js): at a punctuation slot with more typed after it, a
+         * first pass finds what decoding showed when the keys stopped here; if that ended the
+         * sentence, only the entries from its parent are kept, so the words before it can't
+         * change. */
+        int nk = 0, from = -1;
+        for (int pass = t->type == TOK_PUNCT && !is_final ? 0 : 1; pass < 2; pass++) {
+            int seq = 0, top_parent = -1;
+            uint16_t top_id = OP_NONE;
             int32_t best = 0;
-            for (int i = 0; i < ne; i++) {
-                const op_entry *e = &d->ent[i];
-                int comma = e->id != OP_NONE && m->punct[e->id - m->n_words] == ',';
-                int32_t sc = e->score + (comma ? P[OP_P_CF] : 0);
-                if (top < 0 || sc > best) { top = i; best = sc; }
+            for (int h = 0; h < nb; h++) {
+                for (int ci = 0; ci < nc; ci++) {
+                    uint16_t id = c[ci].id, p;
+                    uint8_t f = first[h], g = cf[h];
+                    int32_t step;
+                    if (id == OP_TIME_ID) {
+                        int before = 0;
+                        for (int i = 0; i < OP_TIME_BEFORE; i++) if (prev[h] != OP_NONE && prev[h] == m->time_before[i]) before = 1;
+                        step = m->scale * ((before ? TIME_PREV : -TIME_ALONE) - (tk == '.' ? TIME_LITERAL : 0));
+                        p = AFTER_NUMBER;
+                    } else if (c[ci].kind == OP_COMPOUND) {
+                        step = P[OP_P_UNKNOWN];
+                        p = OP_NONE;
+                    } else if (id == OP_NONE) {
+                        step = c[ci].kind == OP_NUMBER ? 0 : c[ci].kind == OP_LITERAL ? P[OP_P_LITERAL] : P[OP_P_UNKNOWN];
+                        p = c[ci].kind == OP_NUMBER ? (tk ? AFTER_DECIMAL : AFTER_NUMBER) : OP_NONE;
+                    } else {
+                        step = token_score(m, d->user, prev[h], id, tri[h]) + c[ci].pen + recent_bonus(d, m, id);
+                        p = id;
+                    }
+                    if (nn)
+                        step += ((id >= m->n_words && id < m->bos ? nn->punct_weight : nn->weight) * nn_score(nn, w->p[cur][h], NN_TOK(id))) >> 8;
+                    if (id != OP_NONE && id >= m->n_words && id < m->bos) {
+                        /* Punctuation: a word-pair model can't see how the sentence began,
+                         * so use the sentence's first word to judge question vs statement. */
+                        int q = f == 1 || g == 1;
+                        char ch = ACH(m->punct, id - m->n_words);
+                        if (ch == '?') step += q ? P[OP_P_QQ] : P[OP_P_QN];
+                        else if (ch == '.') step += P[OP_P_DB] + (q ? P[OP_P_DQ] : 0);
+                        else if (ch == ',') step += P[OP_P_CB] + (is_final ? P[OP_P_CF] : 0);
+                        else if (ch == '!') step += P[OP_P_EB];
+                        if (ch != ',') { p = m->bos; f = 0; }
+                        g = 0;
+                    } else {
+                        int skip = id != OP_NONE && in_u16(m->q_skip, m->n_skip, id);
+                        if (!f && !skip) f = q_state(m, id);
+                        if (!g && !skip) g = q_state(m, id);
+                    }
+                    op_entry e;
+                    e.score = score[h] + step;
+                    e.seq = (uint16_t)seq++;
+                    e.prev = p;
+                    e.id = id;
+                    e.parent = (uint8_t)h;
+                    e.kind = c[ci].kind;
+                    e.first = f;
+                    e.cf = g;
+                    e.tri = p == m->bos ? OP_NONE : tri_find(m, prev[h], p);
+                    if (pass == 0) {
+                        int comma = e.id != OP_NONE && ACH(m->punct, e.id - m->n_words) == ',';
+                        int32_t sc = e.score + (comma ? P[OP_P_CF] : 0);
+                        if (top_parent < 0 || sc > best) { top_parent = h; top_id = e.id; best = sc; }
+                    } else if (from < 0 || h == from) {
+                        keep_entry(d->ent, &nk, beam, &e);     /* with the network too: the best keeps its own state */
+                    }
+                }
             }
-            uint16_t tid = d->ent[top].id;
-            char tc = tid != OP_NONE ? m->punct[tid - m->n_words] : 0;
-            if (tc == '.' || tc == '!' || tc == '?') {
-                uint8_t parent = d->ent[top].parent;
-                int k = 0;
-                for (int i = 0; i < ne; i++) if (d->ent[i].parent == parent) d->ent[k++] = d->ent[i];
-                ne = k;
-            }
-        }
-        qsort(d->ent, (size_t)ne, sizeof(op_entry), cmp_entry);
-        /* Keep the best hypothesis per state (previous token + opener states): the rest
-         * would score every future slot the same way. */
-        int kept[OP_MAX_BEAM], nk = 0;
-        for (int i = 0; i < ne && nk < beam; i++) {
-            const op_entry *e = &d->ent[i];
-            int dup = 0;
-            for (int k = 0; k < nk && !dup; k++) {     /* with the network too: the best keeps its own state */
-                const op_entry *o = &d->ent[kept[k]];
-                dup = o->prev == e->prev && o->tri == e->tri && o->first == e->first && o->cf == e->cf;
-            }
-            if (!dup) kept[nk++] = i;
+            char tc = pass == 0 && top_id != OP_NONE ? ACH(m->punct, top_id - m->n_words) : 0;
+            if (tc == '.' || tc == '!' || tc == '?') from = top_parent;
         }
         for (int k = 0; k < nk; k++) {
-            const op_entry *e = &d->ent[kept[k]];
+            const op_entry *e = &d->ent[k];
             score[k] = e->score;
             prev[k] = e->prev;
             first[k] = e->first;
@@ -1656,15 +1726,25 @@ int op_decode(op_decoder *d, const op_model *m, const char *keys, int beam,
 /* ---- rendering ---- */
 
 /* Text of id in a casing table (display or alt), or -1. */
-static int cased(const uint16_t *ids, uint32_t n, const uint32_t *off, const char *text, uint16_t id, const char **out) {
+static int cased(OP_REF(uint16_t) ids, uint32_t n, OP_REF(uint32_t) off, OP_REF(char) text, uint16_t id,
+                 const char **out, char *buf) {
     uint32_t lo = 0, hi = n;
     while (lo < hi) {
         uint32_t mid = (lo + hi) / 2;
-        if (ids[mid] == id) {
-            *out = text + off[mid];
-            return (int)(off[mid + 1] - off[mid]);
+        uint16_t x = AU16(ids, mid);
+        if (x == id) {
+            uint32_t a = AU32(off, mid), len = AU32(off, mid + 1) - a;
+#ifdef OP_EXT_MODEL
+            if (len > OP_WORD_BUF) len = OP_WORD_BUF;
+            op_ext_read(text + a, buf, len);
+            *out = buf;
+#else
+            (void)buf;
+            *out = text + a;
+#endif
+            return (int)len;
         }
-        if (ids[mid] < id) lo = mid + 1; else hi = mid;
+        if (x < id) lo = mid + 1; else hi = mid;
     }
     return -1;
 }
@@ -1672,12 +1752,12 @@ static int cased(const uint16_t *ids, uint32_t n, const uint32_t *off, const cha
  * ("in May") or (id, next) a capNextKey pair ("Will Smith"), unless (id, next) is a capKeepKey
  * pair ("like apple pie"); else its usual one (iPhone, Friday), else -1 for plain lowercase.
  * See decoder.js capFlip. */
-static int display(const op_model *m, uint16_t prev, uint16_t id, uint16_t next, const char **text) {
+static int display(const op_model *m, uint16_t prev, uint16_t id, uint16_t next, const char **text, char *buf) {
     int keep = next < m->n_words && find_u32(m->cap_keep, m->n_cap_keep, (uint32_t)id << 16 | next) >= 0;
     if (id < m->n_words && !keep && ((prev <= m->bos && find_u32(m->cap_key, m->n_cap, (uint32_t)prev << 16 | id) >= 0) ||
         (next < m->n_words && find_u32(m->cap_next, m->n_cap_next, (uint32_t)id << 16 | next) >= 0)))
-        return cased(m->alt_id, m->n_alt, m->alt_off, m->alt_text, id, text);
-    return cased(m->disp_id, m->n_disp, m->disp_off, m->disp_text, id, text);
+        return cased(m->alt_id, m->n_alt, m->alt_off, m->alt_text, id, text, buf);
+    return cased(m->disp_id, m->n_disp, m->disp_off, m->disp_text, id, text, buf);
 }
 
 /* Call signs are shown in capitals: 1-2 letters, a digit, 1-4 letters (ke7aqa), or digit,
@@ -1712,7 +1792,7 @@ int op_render(const op_decoder *d, const op_model *m, const op_start *start, cha
         op_choice ch = d->choice[j++];
         if (t->type == TOK_PUNCT) {
             if (n + 1 >= cap) return OP_ERR_SPACE;
-            out[n++] = ch.kind == OP_LITERAL ? t->lit : m->punct[ch.id - m->n_words];
+            out[n++] = ch.kind == OP_LITERAL ? t->lit : ACH(m->punct, ch.id - m->n_words);
             cap_next = out[n - 1] == '.' || out[n - 1] == '!' || out[n - 1] == '?';
             if (cap_next) mark_next = 0;
             prev = ch.kind == OP_LITERAL ? OP_NONE : out[n - 1] == ',' ? ch.id : m->bos;
@@ -1751,7 +1831,8 @@ int op_render(const op_decoder *d, const op_model *m, const op_start *start, cha
             int k = i + 1;
             while (k < d->n_toks && d->toks[k].type == TOK_SPACE) k++;
             if (k < d->n_toks && d->toks[k].type == TOK_WORD && d->choice[j].kind == OP_WORD) next = d->choice[j].id;
-            int wn = tok_text(m, d->user, ch.id, &w), dn = display(m, prev, ch.id, next, &shown);
+            char wb[OP_WORD_BUF], sb[OP_WORD_BUF];
+            int wn = tok_text(m, d->user, ch.id, &w, wb), dn = display(m, prev, ch.id, next, &shown, sb);
             call = dn >= 0 ? call_sign(shown, dn) : call_sign(w, wn);
             int chars = u8_len(w, wn);
             if (ch.kind == OP_PARTIAL && chars > t->len) chars = t->len;   /* only what's typed so far */
@@ -1810,7 +1891,7 @@ int op_render(const op_decoder *d, const op_model *m, const op_start *start, cha
             int k = i + 1, comma = 0;
             while (k < d->n_toks && d->toks[k].type == TOK_SPACE) k++;
             if (k < d->n_toks && d->toks[k].type == TOK_PUNCT)
-                comma = d->choice[j].kind != OP_LITERAL && m->punct[d->choice[j].id - m->n_words] == ',';
+                comma = d->choice[j].kind != OP_LITERAL && ACH(m->punct, d->choice[j].id - m->n_words) == ',';
             mark_next = comma && ch.id != OP_NONE && in_u16(m->q_skip, m->n_skip, ch.id);
             char end = 0;
             if (mark_next) end = 1;             /* not here */
@@ -1819,7 +1900,7 @@ int op_render(const op_decoder *d, const op_model *m, const op_start *start, cha
                 if (tk->type == TOK_SPACE) continue;
                 op_choice c2 = d->choice[jj++];
                 if (tk->type != TOK_PUNCT) continue;
-                char p = c2.kind == OP_LITERAL ? tk->lit : m->punct[c2.id - m->n_words];
+                char p = c2.kind == OP_LITERAL ? tk->lit : ACH(m->punct, c2.id - m->n_words);
                 if (p == '.' || p == '!' || p == '?') end = p;
             }
             if (end == '?' || end == '!') {
@@ -2001,7 +2082,7 @@ int op_learn(op_user *u, const op_decoder *d, const op_model *m, const op_start 
         }
         user_bump(u, USER_ANY, id);
         if (prev != OP_NONE && prev != AFTER_NUMBER) user_bump(u, prev, id);
-        prev = id >= m->n_words && id < m->bos && m->punct[id - m->n_words] != ',' ? m->bos : id;
+        prev = id >= m->n_words && id < m->bos && ACH(m->punct, id - m->n_words) != ',' ? m->bos : id;
     }
     return OP_OK;
 }
