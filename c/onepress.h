@@ -270,6 +270,10 @@ int op_model_open(op_model *m, const void *data, size_t size);
 int op_decode(op_decoder *d, const op_model *m, const char *keys, int beam,
               const op_start *start, const op_lock *locks, int n_locks);
 
+/* The candidate ids of slot `slot` in the last op_decode (most frequent first, at most max):
+ * lock one to show another guess. Returns how many. */
+int op_candidates(const op_decoder *d, const op_model *m, int slot, uint16_t *ids, int max);
+
 /* Write the decoded text (NUL-terminated) and return its length, or OP_ERR_SPACE. */
 int op_render(const op_decoder *d, const op_model *m, const op_start *start, char *out, int cap);
 

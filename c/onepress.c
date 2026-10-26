@@ -1723,6 +1723,19 @@ int op_decode(op_decoder *d, const op_model *m, const char *keys, int beam,
     return OP_OK;
 }
 
+/* The candidates op_decode weighed for slot `slot` of its last call: dictionary, learned and
+ * punctuation ids (numbers, letters typed exactly and words run together left out), in the
+ * order it took them (most frequent first). Lock one to show another guess. Returns how many. */
+int op_candidates(const op_decoder *d, const op_model *m, int slot, uint16_t *ids, int max) {
+    if (!d || !m || !ids || slot < 0 || slot >= d->n_slots) return OP_ERR_ARG;
+    int last_word = slot == d->n_slots - 1 && d->toks[d->n_toks - 1].type == TOK_WORD;
+    cand c[OP_MAX_CANDS];
+    int nc = slot_cands(d, m, &d->toks[d->slot_tok[slot]], last_word, c), n = 0;
+    for (int i = 0; i < nc && n < max; i++)
+        if (c[i].id != OP_NONE && c[i].id != OP_TIME_ID && c[i].kind != OP_COMPOUND) ids[n++] = c[i].id;
+    return n;
+}
+
 /* ---- rendering ---- */
 
 /* Text of id in a casing table (display or alt), or -1. */
