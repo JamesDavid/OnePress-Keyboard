@@ -37,6 +37,7 @@ embedded project. Read it top to bottom before writing code. Repository layout:
 |---|---|---|
 | Phones, web, desktop | `onepress.bin` (+ `onepress-nn.bin` or `-nn-s.bin`) | 94.1% of words (95.0% / 94.9% with the network) |
 | ESP32 (4 MB+ flash), Meshtastic nodes | `onepress-m.bin` | 94.1% |
+| Radios with ~500 KB of flash for it (UV-K1: OnePress firmware) | `onepress-r.bin` | 92.0% |
 | nRF52, radios, anything with ~250 KB free flash | `onepress-s.bin` | 89.0% |
 | Other languages: phones / ESP32 / radios | `onepress-<lang>.bin` / `-<lang>-m.bin` / `-<lang>-s.bin` | 96-98.7% (held-out Tatoeba sentences; SPEC.md lists each) |
 
@@ -298,7 +299,9 @@ shows the alternative of embedding it as base64.
   flash: a small read cache helps, 8 lines of 32 bytes halve the reads); about 21 KB code
   (-DOP_NO_NN -DOP_NO_QWERTY), 1.6-3.4 KB RAM for the decoder with the small limits above, up
   to 2.5 KB of stack, 3 KB for a small user table.
-- Use `onepress-s.bin` (246 KB; it knows CQ, QTH, QSO, tnx, fer, repeater, node and the like). On nRF52840 put it in internal flash if there is room, or in
+- Quansheng UV-K1 / UV-K5 V3: a working port, [OnePress firmware](https://github.com/JamesDavid/uv-k1-k5v3-firmware-custom/tree/onepress) (`App/app/onepress_svc.c`
+  is the glue: model in SPI flash through `op_ext_read`, read cache, app API).
+- Use `onepress-r.bin` (491 KB, 13k words) when about 500 KB is free, else `onepress-s.bin` (246 KB; both know CQ, QTH, QSO, tnx, fer, repeater, node and the like). On nRF52840 put it in internal flash if there is room, or in
   external QSPI flash mapped for execute-in-place.
 - The decoder needs the model at a memory address. External SPI flash that cannot be memory-mapped
   is not supported yet (it would need a read callback in `op_model_open`).

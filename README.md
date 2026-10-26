@@ -11,6 +11,8 @@ browser, and a short tutorial starts on your first visit.
 
 - **Whole-sentence context.** Each new word can fix the ones before it: `4663` alone is "good",
   after "on my way" it's "home". A finished sentence stays put once you start the next one.
+- **On a radio.** The [OnePress firmware](https://github.com/JamesDavid/uv-k1-k5v3-firmware-custom/tree/onepress) for the Quansheng UV-K1 / UV-K5 V3 types
+  messages on the keypad and sends them as APRS messages or Morse.
 - **Small enough for microcontrollers.** One C99 file, no memory allocation, about 30 KB of code
   and 2–11 KB of RAM. The model is read straight from flash, or through a read function from
   SPI flash that isn't memory-mapped.
@@ -105,8 +107,15 @@ one picks each word alone, by how common it is. OnePress makes far fewer mistake
 | `onepress.bin` (45k words) | 3.5 MB | 94.1% | 49.8% | 98.6% | 67.7% | phones, web |
 | `onepress-m.bin` + `onepress-nn-m.bin` | 1.5 MB + 1.7 MB | 94.4% | 51.0% | 98.8% | 69.2% | ESP32 with flash to spare |
 | `onepress-m.bin` (29k words, plus radio words) | 1.5 MB | 94.1% | 47.2% | 98.5% | 65.2% | ESP32, Meshtastic |
+| `onepress-r.bin` (13k words, plus radio words) | 491 KB | 92.0% | 47.8% | 98.4% | 65.1% | UV-K1 radios |
 | `onepress-s.bin` (5k words, plus radio words) | 246 KB | 89.0% | 46.7% | 98.5% | 64.9% | radios, nRF52 |
 | A classic one-word-at-a-time keypad | | 89.1% | 19% | 95.2% | 49% | |
+
+Texting words count a word the model lacks as wrong; chat words count it as spelled out exactly
+(`--oov-exact`). The small models lack more words: 3.6% of texting words for `onepress-r.bin`,
+8.3% for `onepress-s.bin`, which are typed with multi-tap. With those spelled out on both sides,
+against a classic keypad with the same dictionary: `onepress-r.bin` 94.9% vs 90.0% of texting
+words, `onepress-s.bin` 96.2% vs 91.4%; on radio messages 96.0% vs 78.9% and 95.9% vs 81.9%.
 
 **Other languages** are measured on held-out Tatoeba sentences (`tests/eval.js --oov-exact`,
 against `tests/baseline.js`):

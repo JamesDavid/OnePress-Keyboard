@@ -17,6 +17,7 @@ fi
 # Three sizes, cutoffs chosen on the NUS dev split (see CLAUDE.md for accuracy):
 #   onepress.bin    phones, web    45k words, three-word context
 #   onepress-m.bin  ESP32 nodes    20k words
+#   onepress-r.bin  UV-K1 radios   13k words, no context casing, at most 0x7C000 bytes (496 KB)
 #   onepress-s.bin  radios, nRF52   5k words, no context casing (in May)
 "$PY" export_bin.py model.json onepress.bin --ambig-only --min-count 3 --tri-min 6 --known-compounds 1.1
 # The ESP32 (Meshtastic) and radio models also know amateur radio and mesh words (data/radio.txt:
@@ -25,6 +26,7 @@ fi
 # (train_nn.py on the -m vocabulary, data/radio_messages.txt included; see SPEC.md).
 "$PY" build_model.py corpora model-radio.json data/messages.txt data/proper.txt,data/radio.txt corpora/nus/train.txt:3 corpora/nus/train_na.txt:10   corpora/chat/topical_chat.txt:1:cased corpora/chat/taskmaster.txt:1:cased corpora/chat/persona.txt:1:cased data/radio_messages.txt:25
 "$PY" export_bin.py model-radio.json onepress-m.bin --vocab 20000 --ambig-only --min-count 6 --known-compounds 1.1 --compound-parts 1.1 --keep data/radio.txt
+"$PY" export_bin.py model-radio.json onepress-r.bin --vocab 13000 --ambig-only --min-count 17 --no-context-case --keep data/radio.txt
 "$PY" export_bin.py model-radio.json onepress-s.bin --vocab 5000 --ambig-only --min-count 20 --no-context-case --keep data/radio.txt
 [ -f corpora/chat/tc_test_freq.json ] && "$PY" prep_chat_test.py model.json corpora/chat   # second test set
 # Other languages: wordfreq + Tatoeba, in the three sizes (build_langs.sh)
