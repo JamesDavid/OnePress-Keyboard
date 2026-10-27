@@ -269,7 +269,7 @@ body { padding-block: clamp(8px, 2.2dvh, 20px) clamp(10px, 3dvh, 28px); }
   </div>
 
   <div class="notes">
-    <p>Press each key once per letter. <b>0</b> is a space, <b>1</b> deletes (on the keyboard, holding ⌫ deletes a word at a time), and <b>*</b> swaps the selected word for the next guess, and holding it finishes the word you're typing. <b>#</b> is punctuation: the model picks . , ! or ?, and between letters it's an apostrophe. Apostrophes are optional, so "dont" also gives "don't". <b>Hold any number key</b> to type that digit (hold 1 for "1", hold 0 for "0"). Digits end the word, so hold 4 then type 3837 for "4ever". <b>#</b> next to digits makes money and decimals: # 6 # 000 # 00 gives "$6,000.00". For call signs, spell them once in exact mode (ke7aqa) and send: after that one press per character works, 5 3 7 2 7 2, with the 7 tapped or held.</p>
+    <p>Press each key once per letter. <b>0</b> is a space, <b>1</b> deletes (on the keyboard, holding ⌫ deletes a word at a time), and <b>*</b> takes the gray completion of the word you're typing, or else swaps the selected word for the next guess. <b>Hold *</b> to fix an earlier word: <b>0</b> and <b>#</b> move back and forward a word, <b>*</b> cycles its guesses, and holding <b>*</b> again, or typing, goes back to the end. <b>#</b> is punctuation: the model picks . , ! or ?, and between letters it's an apostrophe. Apostrophes are optional, so "dont" also gives "don't". <b>Hold any number key</b> to type that digit (hold 1 for "1", hold 0 for "0"). Digits end the word, so hold 4 then type 3837 for "4ever". <b>#</b> next to digits makes money and decimals: # 6 # 000 # 00 gives "$6,000.00". For call signs, spell them once in exact mode (ke7aqa) and send: after that one press per character works, 5 3 7 2 7 2, with the 7 tapped or held.</p>
     <p><b>Hold #</b> for exact spelling, for names and words the model doesn't know. Press a key repeatedly to cycle its letters and then its digit (2 = a, b, c, 2), and pause or press another key to move on. # cycles . , ? ! ' : and 0 gives a space, or the digit 0 on a second press. On QWERTY, exact mode types the letter you tap. Hold # again to go back to predictive.</p>
     <p>Capitals are automatic: sentence starts, I, names, places, brands and apps with their usual capitalization (iPhone, McDonald's, YouTube), the words around a word ("in May" but "I may", "Will Smith"), and call signs (KE7AQA). For a word it learned from you, tap it and <b>Aa</b> to capitalize it from then on.</p>
     <p>A number that could be a time offers both: 5 # 30 is 5.30 on its own and 5:30 after at, by or until, or with am or pm after it. Tap it to switch.</p>
@@ -322,6 +322,9 @@ __DECODER__
 
   let exact = false, tap = null;
   let m = null, keys = '', locks = {}, sel = null, result = null, best = null, exampleIdx = 0, isExample = false;
+  // Edit mode (hold *), for keypads without arrow keys: 0 / # select the word before / after,
+  // * cycles its guesses; hold * again, a letter, delete, or # past the last word go back to the end.
+  let editing = false;
   // The letter tapped for each press on QWERTY (or a computer keyboard), which sends only the
   // keypad digit: shown, and learned on Send, when no word matches (start.hint). hintKeys is the
   // key string it was made for; where keys changed since, the letters are dropped.
@@ -383,7 +386,7 @@ __DECODER__
     b.type = 'button'; b.className = 'k' + (/[*#01]/.test(d) ? ' fn' : ''); b.dataset.key = d;
     b.setAttribute('aria-label', d + ' ' + l + (/[0-9]/.test(d) ? '; hold for the digit ' + d : ''));
     b.innerHTML = `<span class="d">${d === '1' ? '⌫' : d}</span><span class="l">${d === '1' ? '1 delete' : l}</span>`;
-    if (d === '*') holdable(b, () => press('*'), autocomplete);
+    if (d === '*') holdable(b, () => (ghostShown && sel === null && !editing ? autocomplete() : press('*')), toggleEdit);
     else if (d === '#') holdable(b, () => press('#'), toggleExact);
     else holdable(b, () => press(d), () => pressLiteral(String.fromCharCode(65 + +d)));   // hold: the digit itself ('A'-'J')
     pad.appendChild(b);
@@ -559,12 +562,20 @@ __DECODER__
     for (const [d, l] of PAD) {
       const el = document.querySelector(`#pad [data-key="${d}"] .l`);
       if (el && /[2-9]/.test(d)) el.textContent = a && a[d] ? a[d] : l;
-      if (el && d === '0') el.textContent = cjk() ? 'commit' : l;
+      if (el && d === '0') el.textContent = editing ? '◀ word' : cjk() ? 'commit' : l;
+      if (el && d === '#') el.textContent = editing ? 'word ▶' : l;
+      if (el && d === '*') el.textContent = editing ? 'guess · hold: done' : l;
     }
   }
   const TAP_GAP = 900;
   function press(d, letter) {
     if (!m) return;
+    if (editing) {
+      if (d === '0' || d === '#') { moveSel(d === '0' ? -1 : 1, true); return; }
+      if (d === '*') { tap = null; nextGuess(); return; }
+      editing = false; sel = null;                 // a letter or delete: back to the end, then as usual
+      labelKeys();
+    }
     if (d === '0' && cjk() && !exact) { tap = null; commit(); return; }
     if (d === '*') { tap = null; nextGuess(); return; }
     if (d === '1') { tap = null; backspace(); return; }
@@ -590,6 +601,7 @@ __DECODER__
   }
   function pressLiteral(ch) {
     if (!m) return;
+    if (editing) { editing = false; labelKeys(); }
     tap = null; isExample = false;
     keys += ch; sel = null; update();
   }
@@ -625,6 +637,7 @@ __DECODER__
     return render(m, result, best).map(p => cjk() && p.partial ? p.partial : p.text).join('');
   }
   function backspace() {
+    if (editing) { editing = false; sel = null; labelKeys(); }
     if (!keys && committed) { committed = [...committed].slice(0, -1).join(''); commitPrev = -1; update(); return; }
     if (!keys) return;
     isExample = false;
@@ -713,11 +726,20 @@ __DECODER__
 
   // Move the selected word (null: the last, following the typing) by d words, punctuation
   // included; moving past the last goes back to following the typing. Typing does too.
-  function moveSel(d) {
+  function moveSel(d, inEdit = false) {
     if (!result || !result.slots.length) return;
     const n = result.slots.length, j = selectedSlot() + d;
-    sel = j >= n - 1 ? null : Math.max(0, j);
+    if (inEdit && j === n - 1) sel = j;              // edit mode can select the last word itself
+    else sel = j >= n - 1 ? null : Math.max(0, j);
+    if (sel === null && editing) { editing = false; labelKeys(); }
     update();
+  }
+  function toggleEdit() {
+    tap = null;
+    if (editing) { editing = false; sel = null; }
+    else if (result && result.slots.length) { editing = true; sel = Math.max(0, result.slots.length - 2); }
+    else return;
+    labelKeys(); update();
   }
   $('navPrev').addEventListener('click', () => moveSel(-1));
   $('navNext').addEventListener('click', () => moveSel(1));
@@ -762,7 +784,7 @@ __DECODER__
     const caret = document.createElement('span'); caret.className = 'caret'; out.appendChild(caret);
     if (sel === null) out.scrollTop = out.scrollHeight;
     $('keysShown').textContent = cjk() && best ? reading() || ' ' : keys || ' ';
-    $('exampleTag').textContent = exact ? 'ABC · exact spelling' : (isExample ? 'Example' : (keys ? keys.length + ' presses' : ''));
+    $('exampleTag').textContent = editing ? 'Edit: 0 ◀ # ▶ * guess' : exact ? 'ABC · exact spelling' : (isExample ? 'Example' : (keys ? keys.length + ' presses' : ''));
     renderAlts();
     const qn = $('qwNext');
     if (qn) qn.textContent = ghostShown && sel === null ? 'accept' : 'next';
@@ -1001,7 +1023,7 @@ __LANG_MENU__
     keys = enc(s); locks = {}; sel = null; isExample = true; update();
   }
 
-  $('clear').addEventListener('click', () => { keys = ''; committed = ''; commitPrev = undefined; locks = {}; sel = null; isExample = false; update(); });
+  $('clear').addEventListener('click', () => { editing = false; labelKeys(); keys = ''; committed = ''; commitPrev = undefined; locks = {}; sel = null; isExample = false; update(); });
   $('example').addEventListener('click', loadExample);
   // Send: copy the text, learn from it (unless it's an untouched example) and clear.
   $('copy').addEventListener('click', () => {
