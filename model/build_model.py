@@ -5,6 +5,9 @@ Usage: python build_model.py corpora model.json data/messages.txt data/proper.tx
 
 --lang (default en): the wordfreq language. Other languages take no English extras (Gutenberg,
 movie reviews, names, messages.txt; give - for the two files) and allow accented letters.
+--lang zh: Chinese, from prep_zh.py's text (words separated by spaces). Each word is stored as
+its toneless pinyin (pypinyin, ü as v: 绿色 lvse), which gives its keys, with its characters as
+its display form; several words can share a pinyin (是 事 时 shi), as any words can share keys.
 
 - Vocabulary and unigram frequencies: wordfreq (data CC BY-SA 4.0), plus curated proper nouns
   (data/proper.txt) and first names from the NLTK names corpus.
@@ -40,7 +43,14 @@ _WORD = re.compile(f"^{L}+(?:'{L}+)?$")
 class WORD_RE:
     @staticmethod
     def match(w):
+        if LANG == "zh":
+            return re.fullmatch("[㐀-䶿一-鿿]+", w) and pinyin(w)
         return _WORD.match(w) and all(key_of(c) for c in w)
+def pinyin(w):
+    """Toneless pinyin of a Chinese word, ü as v (绿色 lvse), or None."""
+    from pypinyin import lazy_pinyin
+    p = "".join(lazy_pinyin(w))
+    return p if re.fullmatch("[a-z]+", p) else None
 def lower(t):
     """Lowercase, with Turkish dotted and dotless i, and Greek final sigma."""
     if LANG == "tr":
@@ -57,6 +67,8 @@ vocab = [w for w in top_n_list(LANG, 60000) if WORD_RE.match(w)][:VOCAB_N]
 if LANG == "el":                        # wordfreq case-folds final ς to σ
     vocab = list(dict.fromkeys(lower(w) for w in vocab))
 freqs = [word_frequency(w if LANG != "el" else re.sub("ς$", "σ", w), LANG) for w in vocab]
+if LANG == "zh":                        # a few rare words wordfreq splits score 0 whole (揶揄)
+    freqs = [max(f, 1e-8) for f in freqs]
 
 # ---- proper nouns: curated brands/places + first names ----
 curated = {}                    # (several files: comma-separated, e.g. data/proper.txt,data/radio.txt)
@@ -245,6 +257,8 @@ for i, w in enumerate(vocab):
         continue
     if (c + l >= 3 and c / (c + l) > 0.75) or (c + l < 3 and w in names):
         display[i] = w[0].upper() + w[1:]
+if LANG == "zh":                        # every word is shown as its characters
+    display = dict(enumerate(vocab))
 # "mcdonalds" typed without the apostrophe should still show as McDonald's
 for w, shown in curated.items():
     if "'" in w and w.replace("'", "") in vidx:
@@ -288,7 +302,7 @@ print("added proper nouns:", added, "capitalized:", len(display),
 
 model = {
     "lang": LANG,
-    "words": vocab,
+    "words": [pinyin(w) for w in vocab] if LANG == "zh" else vocab,
     "display": {str(k): v for k, v in display.items()},
     "logp": [round(math.log(f), 2) for f in freqs],
     "punct": PUNCT,

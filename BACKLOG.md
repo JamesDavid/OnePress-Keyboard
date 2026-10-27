@@ -73,6 +73,14 @@ Toneless pinyin, one press per letter (`4664` is hong / gong), decoded to charac
 whole sentence picking the words. Phones once had pinyin keypads that made you pick characters
 word by word. OnePress would choose them from the sentence.
 
+### Status (2026-10-27)
+
+Version 1 is in: `model/prep_zh.py`, `build_model.py --lang zh`, `onepress-zh.bin` (45k words) and
+`onepress-zh-m.bin` (20k), flag 32 in both decoders (parity), the page's 中文 models, and
+`tests/eval.js` / `tests/baseline.js` for Chinese. Held-out: 85.4% of words, 88.2% of characters
+(classic pinyin keypad 78.2% / 81.9%). No new model section was needed: a word is stored as its
+pinyin and shown as its characters. Next: step 5 (no spaces between words), then more text.
+
 ### What's new compared with the other languages
 
 1. **No spaces.** Chinese has no spaces between words, so the decoder has to split the key

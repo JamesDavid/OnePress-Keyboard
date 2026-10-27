@@ -36,3 +36,8 @@ for l in spa:es deu:de por:pt fra:fr ita:it nld:nl swe:sv pol:pl ces:cs tur:tr r
   curl -sSfL -o corpora/$c/${t}_sentences.tsv.bz2 "https://downloads.tatoeba.org/exports/per_language/$t/${t}_sentences.tsv.bz2"
   "${PYTHON:-$(command -v python || command -v python3)}" prep_tatoeba.py corpora/$c/${t}_sentences.tsv.bz2 corpora/$c
 done
+# Chinese (onepress-zh*.bin): Tatoeba Mandarin sentences (CC BY 2.0 FR), made Simplified and split
+# into words by prep_zh.py (pip install jieba pypinyin).
+mkdir -p corpora/zh
+curl -sSfL -o corpora/zh/cmn_sentences.tsv.bz2 "https://downloads.tatoeba.org/exports/per_language/cmn/cmn_sentences.tsv.bz2"
+"${PYTHON:-$(command -v python || command -v python3)}" prep_zh.py corpora/zh/cmn_sentences.tsv.bz2 corpora/zh

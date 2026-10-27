@@ -7,6 +7,21 @@ const fs = require('fs'), path = require('path');
 const D = require(path.join(__dirname, '../web/decoder.js'));
 const [testFile, modelFile, outFile] = process.argv.slice(2);
 const m = D.buildModel(fs.readFileSync(modelFile));
+// Chinese (model flag 32; lines "characters<TAB>pinyin", model/prep_zh.py): each word's pinyin keys
+// become the most frequent word with those keys, shown as its characters; one word per space.
+if (m.params.flags & 32) {
+  const split = s => s.match(/[^\s.,!?]+|[.,!?]/g) || [], shown = new Set(m.display.filter(Boolean));
+  const lines = fs.readFileSync(testFile, 'utf8').split('\n').filter(Boolean).map(l => {
+    const [a, b] = l.split('\t'), ref = split(a);
+    return split(b).map((p, j) => {
+      if (/^[.,!?]$/.test(p)) return '.';
+      const ids = D.exactMatches(m, [...p].map(c => D.wordKeys(c)).join(''));
+      return ids.length && shown.has(ref[j]) ? m.display[ids[0]] : ref[j];
+    }).join(' ');
+  });
+  fs.writeFileSync(outFile, lines.join('\n') + '\n');
+  process.exit(0);
+}
 const lower = m.words.some(w => w.includes('ı')) ? s => s.replace(/İ/g, 'i').replace(/I/g, 'ı').toLowerCase() : s => s.toLowerCase();
 const L = '\\p{L}', TOK = new RegExp(`[${L}]+(?:'[${L}]+)?(?:-[${L}]+)*|[.,!?]`, 'gu');
 const out = fs.readFileSync(testFile, 'utf8').split('\n').filter(Boolean).map(s => (lower(s).match(TOK) || []).map(t => {

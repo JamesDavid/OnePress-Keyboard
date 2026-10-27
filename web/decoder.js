@@ -58,8 +58,12 @@ const PARAMS = ['qQ', 'qN', 'dQ', 'cF', 'dB', 'cB', 'eB', 'apostrophe', 'complet
   'slipSub', 'slipDup', 'flags'];    // optional: older files stop at 'unknown' (defaults below)
 // params.flags: FLAG_I capitalizes "i" (English), FLAG_INVERTED opens a question or exclamation
 // with ¿ / ¡ (Spanish), FLAG_GREEK_Q shows the question mark as ; (Greek), FLAG_FR_SPACE puts a
-// narrow no-break space before ? ! : (French), FLAG_ARABIC shows ? and , as ؟ and ، (Arabic).
-const FLAG_I = 1, FLAG_INVERTED = 2, FLAG_GREEK_Q = 4, FLAG_FR_SPACE = 8, FLAG_ARABIC = 16;
+// narrow no-break space before ? ! : (French), FLAG_ARABIC shows ? and , as ؟ and ، (Arabic),
+// FLAG_CJK (Chinese: words are their pinyin, shown as their characters) shows no spaces between
+// words, the marks full width (，。？！), a word still being typed as its pinyin so far, and no
+// capitals.
+const FLAG_I = 1, FLAG_INVERTED = 2, FLAG_GREEK_Q = 4, FLAG_FR_SPACE = 8, FLAG_ARABIC = 16, FLAG_CJK = 32;
+const CJK_MARKS = { '.': '。', ',': '，', '?': '？', '!': '！' };
 const MAX_EXACT = 40, MAX_COMPLETIONS = 12;
 const AFTER_NUMBER = -2;           // beam state after a number (the model has no number token)
 const AFTER_DECIMAL = -3;          // after a number that could have been a time but was read as 5.30
@@ -776,7 +780,8 @@ function beforeTokens(s) {
   return out;
 }
 function wordId(m, u, w) {
-  if (!m.wordIndex) m.wordIndex = new Map(m.words.map((x, i) => [x, i]));
+  // words that share a text (Chinese pinyin: 是 事 shi) take the first, most frequent, as C does
+  if (!m.wordIndex) { m.wordIndex = new Map(); m.words.forEach((x, i) => { if (!m.wordIndex.has(x)) m.wordIndex.set(x, i); }); }
   if (m.wordIndex.has(w) && !/[0-9]/.test(w) && new TextEncoder().encode(w).length < 64) return m.wordIndex.get(w);
   const k = u ? u.words.findIndex(x => x.toLowerCase() === w) : -1;
   return k >= 0 ? m.bos + 1 + k : -1;
@@ -817,7 +822,7 @@ function context(m, u, start) {
 // decoder does the same. lastScores: for each candidate of the last slot (index into its
 // cands), the best score of a full hypothesis ending in it (null if none), as a decode with that
 // candidate locked would score it (up to the beam), so the alternatives cost no extra decodes.
-const lockKey = (locks, j) => JSON.stringify(Object.keys(locks).filter(k => +k <= j).sort().map(k => [k, locks[k].keys, locks[k].text]));
+const lockKey = (locks, j) => JSON.stringify(Object.keys(locks).filter(k => +k <= j).sort().map(k => [k, locks[k].keys, locks[k].text, locks[k].id]));
 function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
   const P = m.params;
   const u = start.user && start.user.bos === m.bos ? start.user : null;
@@ -832,7 +837,8 @@ function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
     s.all = c;
     const lock = locks[j];
     if (lock && lock.keys === s.tok.keys) {
-      const hit = c.filter(x => (x.partial || x.text) === lock.text);
+      // id (optional) picks one of words sharing a text: Chinese 是 事 时 are all shi
+      const hit = c.filter(x => (x.partial || x.text) === lock.text && (lock.id === undefined || x.id === lock.id));
       if (hit.length) c = hit;
     }
     s.cands = c;
@@ -970,9 +976,10 @@ function render(m, result, hyp, start = {}) {
   const ctx = result.ctx || context(m, null, start);
   let capNext = ctx.cap, markNext = false;      // markNext: the inverted mark waits past "Hola,"
   let prev = ctx.prev;                                            // as decode's context
-  const pieces = [];
+  const pieces = [], cjk = m.params.flags & FLAG_CJK;
+  if (cjk) capNext = false;
   toks.forEach((t, i) => {
-    if (t.type === 'space') { pieces.push({ text: ' ', slot: -1 }); return; }
+    if (t.type === 'space') { pieces.push({ text: cjk ? '' : ' ', slot: -1 }); return; }
     const j = bySlotTok.get(i);
     const c = slots[j].cands[hyp.path[j]];
     let text = c.text;
@@ -988,7 +995,7 @@ function render(m, result, hyp, start = {}) {
       const next = nc && !nc.partial ? nc.id : -1;
       const shown = c.id >= 0 && (capFlip(m, prev, c.id, next) ? m.alt[c.id] : m.display[c.id]);
       const full = shown || c.partial || text;
-      if (shown) text = c.partial ? shown.slice(0, text.length) : shown;
+      if (shown && !(c.partial && cjk)) text = c.partial ? shown.slice(0, text.length) : shown;
       if (CALL_SIGN.test(full.toLowerCase())) text = text.toUpperCase();
       const joined = t.hyphen ? '-' : '';         // the second word of a hyphenated pair
       if ((m.params.flags & FLAG_I) && (text === 'i' || text.startsWith("i'"))) text = 'I' + text.slice(1);
@@ -1007,12 +1014,13 @@ function render(m, result, hyp, start = {}) {
       capNext = false;
       prev = c.id >= 0 && c.id < m.n && !c.partial ? c.id : -1;
     } else {
-      capNext = /^[.!?]$/.test(text);
+      capNext = /^[.!?]$/.test(text) && !cjk;
       if (capNext) markNext = false;
       prev = c.id < 0 ? -1 : c.text === ',' ? c.id : m.bos;
       if (text === '?' && (m.params.flags & FLAG_GREEK_Q)) text = ';';
       if ((m.params.flags & FLAG_FR_SPACE) && /^[?!:]$/.test(text)) text = '\u202f' + text;
       if (m.params.flags & FLAG_ARABIC) text = text === '?' ? '\u061f' : text === ',' ? '\u060c' : text;
+      if (cjk) text = CJK_MARKS[text] || text;
     }
     pieces.push({ text, slot: j, partial, unknown: c.unknown });
   });

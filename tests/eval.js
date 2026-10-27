@@ -35,6 +35,62 @@ if (nn && nnWeight) nn.weight = +nnWeight;
 // (for test sets that keep them, like test_chat.txt).
 const oovExact = args.includes('--oov-exact');
 if (oovExact) args.splice(args.indexOf('--oov-exact'), 1);
+// Chinese (model flag 32): each test line is the words in characters, a tab, and their pinyin
+// (model/prep_zh.py). The pinyin is typed and the characters scored, word by word and by
+// character (edit distance over the sentence without its marks; not with --oov-exact).
+if (m.params.flags & 32) {
+  const shown = new Set(m.display.filter(Boolean)), mark = { '。': '.', '，': ',', '？': '?', '！': '!' };
+  const split = s => s.match(/[^\s.,!?]+|[.,!?]/g) || [];
+  const cases = refs.map(l => { const [a, b] = l.split('\t'); return { ref: split(a), pin: split(b) }; });
+  const keysOf = (w, oov) => oov ? w : [...w].map(c => D.wordKeys(c)).join('');
+  const enc = c => c.pin.map((p, j) => /^[.,!?]$/.test(p) ? '#' : (j && !/^[.,!?]$/.test(c.pin[j - 1]) ? '0' : '') +
+    keysOf(p, oovExact && !shown.has(c.ref[j]))).join('').replace(/#(?=[^#])/g, '#0');
+  const t0 = Date.now();
+  const hyps = hypFile ? fs.readFileSync(hypFile, 'utf8').split('\n').slice(0, cases.length).map(split) : cases.map(c => {
+    const r = D.decode(m, slip || double ? noisy(enc(c)) : enc(c), {}, beam, 5, { nn });
+    return D.render(m, r, r.hyps[0]).map(p => mark[p.text] || p.text).filter(Boolean);
+  });
+  const ms = Date.now() - t0;
+  if (outFile) fs.writeFileSync(outFile, hyps.map(h => h.join(' ')).join('\n') + '\n');
+  const dist = (a, b) => {
+    let row = Array.from({ length: b.length + 1 }, (_, j) => j);
+    for (let i = 1; i <= a.length; i++) {
+      const nx = [i];
+      for (let j = 1; j <= b.length; j++) nx[j] = Math.min(row[j] + 1, nx[j - 1] + 1, row[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      row = nx;
+    }
+    return row[b.length];
+  };
+  const st = { sent: 0, w: 0, wt: 0, a: 0, at: 0, p: 0, pt: 0, oov: 0, ch: 0, cht: 0 }, errs = new Map();
+  cases.forEach((c, i) => {
+    const b = hyps[i] || [];
+    if (c.ref.join(' ') === b.join(' ')) st.sent++;
+    const chars = s => [...s.filter(x => !/^[.,!?]$/.test(x)).join('')];
+    const rc = chars(c.ref);
+    st.cht += rc.length; st.ch += Math.max(0, rc.length - dist(rc, chars(b)));
+    c.ref.forEach((x, j) => {
+      const ok = x === b[j];
+      if (/^[.,!?]$/.test(x)) { st.pt++; st.p += ok; return; }
+      if (oovExact && !shown.has(x)) { st.oov++; return; }
+      st.wt++; st.w += ok;
+      if (D.exactMatches(m, keysOf(c.pin[j])).length > 1) {
+        st.at++; st.a += ok;
+        if (!ok) { const k = `${x} -> ${b[j]}`; errs.set(k, (errs.get(k) || 0) + 1); }
+      }
+    });
+  });
+  const pct = (a, b) => (100 * a / b).toFixed(2) + '%';
+  console.log(`${path.basename(testFile)}: ${cases.length} messages${hypFile ? '' : `, ${(ms / cases.length).toFixed(1)} ms/msg`}`);
+  console.log(`  sentences exact   ${pct(st.sent, cases.length)}`);
+  console.log(`  words             ${pct(st.w, st.wt)}  (${st.wt})`);
+  // spelled pinyin is no characters, so with --oov-exact the characters aren't comparable
+  if (!oovExact) console.log(`  characters        ${pct(st.ch, st.cht)}  (${st.cht})`);
+  if (oovExact) console.log(`  spelled exactly   ${pct(st.oov, st.oov + st.wt)}  (${st.oov} words the model lacks, not scored)`);
+  console.log(`  ambiguous words   ${pct(st.a, st.at)}  (${st.at})`);
+  console.log(`  punctuation       ${pct(st.p, st.pt)}  (${st.pt})`);
+  console.log('  top ambiguous errors: ' + [...errs].sort((x, y) => y[1] - x[1]).slice(0, 12).map(([k, c]) => `${k} (${c})`).join(', '));
+  process.exit(0);
+}
 const known = new Set(m.words);
 // Turkish (a model with dotless ı) lowercases I to ı and İ to i.
 const lower = m.words.some(w => w.includes('ı')) ? s => s.replace(/İ/g, 'i').replace(/I/g, 'ı').toLowerCase() : s => s.toLowerCase();

@@ -25,7 +25,8 @@ The corpora are not stored here; `model/fetch_corpora.sh` downloads them.
 | Project Gutenberg selections (via NLTK) | word pairs and triples, casing, neural model | Public domain |
 | Movie Review Data, Bo Pang and Lillian Lee (via NLTK) | word pairs and triples, neural model | CC BY 4.0 |
 | Names Corpus v1.3, Mark Kantrowitz, additions by Bill Ross (via NLTK) | first names in the vocabulary | Free to use with credit; names from it are in the model's vocabulary, so its README is included as [`model/data/NAMES-README.txt`](model/data/NAMES-README.txt) |
-| [Tatoeba](https://tatoeba.org) sentences in Spanish, German, Portuguese, French, Italian, Dutch, Swedish, Polish, Czech, Turkish, Russian, Greek and Arabic | those languages' models: word pairs and triples, casing (train split); their test splits are the evaluation | [CC BY 2.0 FR](https://creativecommons.org/licenses/by/2.0/fr/) |
+| [Tatoeba](https://tatoeba.org) sentences in Spanish, German, Portuguese, French, Italian, Dutch, Swedish, Polish, Czech, Turkish, Russian, Greek, Arabic and Mandarin Chinese | those languages' models: word pairs and triples, casing (train split); their test splits are the evaluation | [CC BY 2.0 FR](https://creativecommons.org/licenses/by/2.0/fr/) |
+| [pypinyin](https://github.com/mozillazg/python-pinyin) and its pinyin data; [jieba](https://github.com/fxsjy/jieba) with wordfreq's dictionary | the Chinese words' pinyin (their keys); splitting Chinese text into words | MIT |
 | `model/data/messages.txt`, `model/data/proper.txt` | everyday messages, brand and place names | Written for this project; same license as the code |
 | `model/data/radio.txt`, `model/data/radio_messages.txt`, `tests/radio_test.txt` | amateur radio and mesh words and exchanges (the radio model; its sanity test) | Written for this project; same license as the code |
 

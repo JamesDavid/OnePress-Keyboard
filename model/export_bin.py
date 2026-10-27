@@ -104,7 +104,8 @@ def compound_parts(words, logp, vocab, lang, zipf):
 # slip away (a neighboring key; a key pressed twice), 0 to leave those out (decoder.js slipCandidates).
 # flags (optional, an integer, not a log-prob): 1 capitalizes "i" (English), 2 opens a question or
 # exclamation with ¿ / ¡ (Spanish), 4 shows the question mark as ; (Greek), 8 puts a narrow no-break
-# space before ? ! : (French).
+# space before ? ! : (French), 16 shows ? and , as Arabic ؟ ، , 32 is Chinese: no spaces between
+# words, the marks shown full width (，。？！), and a word being typed shown as its pinyin so far.
 PARAMS = ["qQ", "qN", "dQ", "cF", "dB", "cB", "eB", "apostrophe", "completion", "literal", "unknown",
           "slipSub", "slipDup", "flags"]
 DEFAULTS = {"qQ": 2.5, "qN": -1.5, "dQ": -1.5, "cF": -3, "dB": 0, "cB": 0, "eB": 0,
@@ -175,6 +176,8 @@ LANGS = {
             "está", "estás", "é", "há", "sabe", "sabes", "quer", "queres", "posso"],
            ["olá", "oi", "bem", "então", "e", "mas", "ok", "ah", "eh", "obrigado", "obrigada", "sim", "não", "bom",
             "olha", "ei"], 0),
+    # Chinese marks a question at its end (吗 呢 吧), which the word pairs carry: no openers.
+    "zh": ([], [], 32),
 }
 LAMBDA_K = 40   # lambda = c / (c + LAMBDA_K), Witten-Bell style
 TRI_K = int(__import__("os").environ.get("TRI_K", 40))      # the same for three-word contexts

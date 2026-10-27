@@ -268,7 +268,7 @@ body { padding-block: clamp(8px, 2.2dvh, 20px) clamp(10px, 3dvh, 28px); }
     <p>Tap any word to see other words with the same keys. Picking one locks it, and the rest of the sentence re-decodes around it.</p>
     <p>The QWERTY keyboard sends only each letter's keypad number (shown in the corner), so the model decodes it exactly as if you'd used the keypad. When no word fits, it keeps the letters you tapped. Keys grow and shrink in place with how likely each letter is to come next. A computer keyboard works the same way, and Tab finishes the word.</p>
     <p><b>Neural</b> (Phone model) adds a small neural network that reads everything typed before each word, not just the last two words. It's downloaded once next to the page and runs here too.</p>
-    <p>Runs entirely in this page. <b>Model</b> picks the word model: Phone (45,000 words), ESP32 / Meshtastic (29,000) and nRF52 / radio (5,000) are the same files the C decoder runs on those devices, so you can see how each would behave. The other languages (Español, Deutsch, Português, Français, Italiano, Nederlands, Svenska, Polski, Čeština, Türkçe, Русский, Ελληνικά, العربية), each in the same three sizes, download when first picked: accents come out on their own (type the plain letter's key: á on 2, ł on 5), Greek, Russian and Arabic use their usual phone keypads (Russian 2 абвг, Greek 2 αβγ, Arabic 2 بتث) and Arabic is shown right to left with ؟ and ،, German nouns are capitalized, Spanish questions open with ¿, and in French and Italian <b>#</b> between letters makes the apostrophe of l'homme or dov'è. <b>Load .bin file…</b> opens any model built with <code>model/export_bin.py</code>. <b>Compare sizes</b> shows what each model makes of the same keys, with the words that differ from the selected model highlighted.</p>
+    <p>Runs entirely in this page. <b>Model</b> picks the word model: Phone (45,000 words), ESP32 / Meshtastic (29,000) and nRF52 / radio (5,000) are the same files the C decoder runs on those devices, so you can see how each would behave. The other languages (Español, Deutsch, Português, Français, Italiano, Nederlands, Svenska, Polski, Čeština, Türkçe, Русский, Ελληνικά, العربية, 中文), each in the same three sizes but Chinese, download when first picked: accents come out on their own (type the plain letter's key: á on 2, ł on 5), Greek, Russian and Arabic use their usual phone keypads (Russian 2 абвг, Greek 2 αβγ, Arabic 2 بتث) and Arabic is shown right to left with ؟ and ،, 中文 (Chinese, Phone and ESP32 sizes) is typed as toneless pinyin with a space between words (ü as v) and shown in characters, German nouns are capitalized, Spanish questions open with ¿, and in French and Italian <b>#</b> between letters makes the apostrophe of l'homme or dov'è. <b>Load .bin file…</b> opens any model built with <code>model/export_bin.py</code>. <b>Compare sizes</b> shows what each model makes of the same keys, with the words that differ from the selected model highlighted.</p>
   </div>
 </div>
 
@@ -302,6 +302,8 @@ __DECODER__
     ru: ["Я уже еду домой.", "Где находится вокзал?", "Что ты делаешь сегодня вечером?", "Как дела?", "Увидимся завтра."],
     el: ["Είμαι στο δρόμο για το σπίτι.", "Πού είναι ο σταθμός;", "Τι κάνεις απόψε;", "Πώς είσαι;", "Τα λέμε αύριο."],
     ar: ["أنا في الطريق إلى البيت.", "أين أنت؟", "ماذا تفعل الليلة؟", "كيف حالك؟", "أراك غدا."],
+    // Chinese is typed as pinyin, one press per letter, a space between words
+    zh: ["women mingtian qu beijing ba.", "ni zai nali?", "wo mashang jiu dao.", "wo xianzai huijia.", "wo ai ni."],
   };
   // A sentence as keypad presses: letters to their keys, spaces to 0, marks (and ' or - inside a
   // word) to #; ¿ ¡ and French spaces before marks are left out, as the decoder adds them.
@@ -605,31 +607,35 @@ __DECODER__
   }
 
   // Rank every candidate for slot j by the best full-sentence score with it locked in.
+  // Chinese (model flag 32): words share pinyin (是 事 时 shi), so a guess is its characters and is
+  // locked by its id too.
+  const cjk = () => m && (m.params.flags & 32);
+  const labelOf = c => cjk() && c.id >= 0 && c.id < m.n && m.display[c.id] ? m.display[c.id] : c.partial || c.text;
+  const lockFor = (keys, a) => cjk() && a.id !== undefined ? { keys, text: a.text, id: a.id } : { keys, text: a.text };
   function alternatives(j) {
     const s = result.slots[j];
     const seen = new Map();
     if (j === result.slots.length - 1 && !locks[j] && result.lastScores) {
       // The word being typed: the decode already scored each candidate (no decode per guess).
       s.cands.forEach((c, ci) => {
-        const label = c.partial || c.text, score = result.lastScores[ci];
+        const label = labelOf(c), score = result.lastScores[ci];
         if (c.unknown || score === null || (seen.has(label) && seen.get(label).score >= score)) return;
-        seen.set(label, { label, score, completion: c.partial ? c.partial : null });
+        seen.set(label, { label, text: c.partial || c.text, id: c.id, score, completion: c.partial ? c.partial : null });
       });
       return [...seen.values()].sort((a, b) => b.score - a.score).slice(0, 8);
     }
     for (const c of s.all.slice(0, 30)) {
-      const label = c.partial || c.text;
+      const label = labelOf(c), a = { label, text: c.partial || c.text, id: c.id };
       if (seen.has(label) || c.unknown) continue;
-      const r = decode(m, keys, Object.assign({}, locks, { [j]: { keys: s.tok.keys, text: label } }), 20, 1, startFor(modelId));
+      const r = decode(m, keys, Object.assign({}, locks, { [j]: lockFor(s.tok.keys, a) }), 20, 1, startFor(modelId));
       if (!r.hyps.length) continue;
-      seen.set(label, { label, score: r.hyps[0].score, completion: c.partial ? c.partial : null });
+      seen.set(label, Object.assign(a, { score: r.hyps[0].score, completion: c.partial ? c.partial : null }));
     }
     return [...seen.values()].sort((a, b) => b.score - a.score).slice(0, 8);
   }
 
   function currentLabel(j) {
-    const c = result.slots[j].cands[best.path[j]];
-    return c.partial || c.text;
+    return labelOf(result.slots[j].cands[best.path[j]]);
   }
 
   function choose(j, alt) {
@@ -638,9 +644,9 @@ __DECODER__
       // finish the word: add the remaining keys, then lock it as an exact word
       const full = wordKeys(alt.completion);
       keys += full.slice(s.tok.keys.length);
-      locks[j] = { keys: full, text: alt.completion };
+      locks[j] = lockFor(full, alt);
     } else {
-      locks[j] = { keys: s.tok.keys, text: alt.label };
+      locks[j] = lockFor(s.tok.keys, alt);
     }
     isExample = false;
     sel = j; update();
@@ -654,7 +660,7 @@ __DECODER__
     const cur = currentLabel(j);
     const i = alts.findIndex(a => a.label === cur);
     const nxt = alts[(i + 1) % alts.length];
-    locks[j] = { keys: result.slots[j].tok.keys, text: nxt.label };
+    locks[j] = lockFor(result.slots[j].tok.keys, nxt);
     sel = j; update();
   }
 
@@ -685,7 +691,7 @@ __DECODER__
         out.appendChild(span);
         if (piece.partial) {
           const g = document.createElement('span');
-          g.className = 'ghost'; g.textContent = piece.partial.slice(piece.text.length);
+          g.className = 'ghost'; g.textContent = cjk() ? piece.partial : piece.partial.slice(piece.text.length);
           ghostShown = true;
           out.appendChild(g);
         }
@@ -913,7 +919,7 @@ __LANG_MENU__
     for (const a of alts) {
       const b = document.createElement('button');
       b.type = 'button'; b.className = 'chip' + (a.label === cur ? ' on' : '');
-      if (a.completion) {
+      if (a.completion && !cjk()) {
         const typed = result.slots[j].tok.keys.length;
         b.innerHTML = '';
         b.append(document.createTextNode(a.label.slice(0, typed)));

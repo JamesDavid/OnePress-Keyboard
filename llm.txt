@@ -42,7 +42,9 @@ embedded project. Read it top to bottom before writing code. Repository layout:
 | Other languages: phones / ESP32 / radios | `onepress-<lang>.bin` / `-<lang>-m.bin` / `-<lang>-s.bin` | 96-98.7% (held-out Tatoeba sentences; SPEC.md lists each) |
 
 Languages (`<lang>`): es Spanish, de German, pt Portuguese, fr French, it Italian, nl Dutch,
-sv Swedish, pl Polish, cs Czech, tr Turkish, ru Russian, el Greek, ar Arabic. Accented letters
+sv Swedish, pl Polish, cs Czech, tr Turkish, ru Russian, el Greek, ar Arabic, zh Chinese (phone
+and -m sizes only: typed as toneless pinyin with 0 between words, shown as characters with no spaces
+and full-width ，。？！; 85.4% of words right). Accented letters
 are typed on their plain letter's key; Russian, Greek and Arabic use the usual phone keypad
 layouts (SPEC.md). Arabic output is right to left: show it in a field with dir="auto" or rtl.
 

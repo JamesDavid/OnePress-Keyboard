@@ -15,6 +15,8 @@ static const char FIRST_LETTER[8] = "adgjmptw";     /* first letter of keys 2-9 
 #define FLAG_GREEK_Q 4          /* show the question mark as ; (Greek) */
 #define FLAG_FR_SPACE 8         /* a narrow no-break space (U+202F) before ? ! : (French) */
 #define FLAG_ARABIC 16          /* show ? and , as Arabic U+061F and U+060C */
+#define FLAG_CJK 32             /* Chinese: no spaces between words, the marks full width, a word
+                                 * being typed as its pinyin so far, no capitals */
 #define AFTER_NUMBER 0xFFFE     /* beam state after a number (the model has no number token) */
 #define AFTER_DECIMAL 0xFFFC    /* after a number that could have been a time but was read as 5.30 */
 #define TIME_BONUS 8            /* nats for "am"/"pm" right after a number or a time */
@@ -1792,12 +1794,14 @@ static int call_sign(const char *w, int n) {
 }
 
 int op_render(const op_decoder *d, const op_model *m, const op_start *start, char *out, int cap) {
-    int n = 0, cap_next = d->ctx_cap, mark_next = 0;     /* mark_next: the inverted mark waits past "Hola," */
+    int cjk = m->param[OP_P_FLAGS] & FLAG_CJK;
+    int n = 0, cap_next = d->ctx_cap && !cjk, mark_next = 0;    /* mark_next: the inverted mark waits past "Hola," */
     uint16_t prev = d->ctx_prev;                      /* as op_decode's context */
     (void)start;
     for (int i = 0, j = 0; i < d->n_toks; i++) {
         const op_tok *t = &d->toks[i];
         if (t->type == TOK_SPACE) {
+            if (cjk) continue;
             if (n + 1 >= cap) return OP_ERR_SPACE;
             out[n++] = ' ';
             continue;
@@ -1806,7 +1810,7 @@ int op_render(const op_decoder *d, const op_model *m, const op_start *start, cha
         if (t->type == TOK_PUNCT) {
             if (n + 1 >= cap) return OP_ERR_SPACE;
             out[n++] = ch.kind == OP_LITERAL ? t->lit : ACH(m->punct, ch.id - m->n_words);
-            cap_next = out[n - 1] == '.' || out[n - 1] == '!' || out[n - 1] == '?';
+            cap_next = (out[n - 1] == '.' || out[n - 1] == '!' || out[n - 1] == '?') && !cjk;
             if (cap_next) mark_next = 0;
             prev = ch.kind == OP_LITERAL ? OP_NONE : out[n - 1] == ',' ? ch.id : m->bos;
             if (out[n - 1] == '?' && (m->param[OP_P_FLAGS] & FLAG_GREEK_Q)) out[n - 1] = ';';
@@ -1821,6 +1825,16 @@ int op_render(const op_decoder *d, const op_model *m, const op_start *start, cha
                 out[n] = (char)(out[n - 1] == '?' ? 0x9F : 0x8C);
                 out[n - 1] = (char)0xD8;
                 n++;
+            }
+            if (cjk) {                              /* 。 ， ？ ！ */
+                char p = out[n - 1];
+                const char *w = p == '.' ? "\xE3\x80\x82" : p == ',' ? "\xEF\xBC\x8C" : p == '?' ? "\xEF\xBC\x9F" :
+                                p == '!' ? "\xEF\xBC\x81" : NULL;
+                if (w) {
+                    if (n + 2 >= cap) return OP_ERR_SPACE;
+                    memcpy(out + n - 1, w, 3);
+                    n += 2;
+                }
             }
             continue;
         }
@@ -1849,7 +1863,7 @@ int op_render(const op_decoder *d, const op_model *m, const op_start *start, cha
             call = dn >= 0 ? call_sign(shown, dn) : call_sign(w, wn);
             int chars = u8_len(w, wn);
             if (ch.kind == OP_PARTIAL && chars > t->len) chars = t->len;   /* only what's typed so far */
-            if (dn >= 0) {
+            if (dn >= 0 && !(cjk && ch.kind == OP_PARTIAL)) {
                 len = ch.kind == OP_WORD ? dn : u8_prefix(shown, dn, chars);
                 src = shown;
             } else {

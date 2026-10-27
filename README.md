@@ -30,6 +30,10 @@ browser, and a short tutorial starts on your first visit.
   (`well#known` gives "well-known"). 96–98.7% of words right on held-out sentences, against
   83–95% for a classic keypad; Arabic, whose keypad puts far more common words on the same keys,
   81–82% against 66%.
+- **Chinese, first version:** type toneless pinyin, one press per letter with a space between
+  words, and the sentence picks the characters (`426` is hao, gao or gan: 好 号 高 干 感…). 85.6% of words right
+  against 78.2% for a classic pinyin keypad that takes each word's most common characters; phone
+  and ESP32 sizes. Next: no spaces needed (see [BACKLOG.md](BACKLOG.md)).
 - **Learns from you.** Names, slang and call signs you spell once are guessed from their keys
   after that, and your own word habits and punctuation get more likely. Recent messages count too.
 - **Capitals are automatic.** Sentence starts, names and brands (iPhone, McDonald's), the words
@@ -122,6 +126,9 @@ against `tests/baseline.js`):
 - OnePress gets 96.1–98.7% of words right, against 83–95% for a classic keypad.
 - Arabic is much harder: its keypad puts far more common words on the same keys, and words are
   written without short vowels. It gets 81–82%, against 66%.
+- Chinese, typed as pinyin with a space between words: 85.6% of words and 88.2% of characters
+  right, against 78.2% and 81.9% one word at a time. Many of the misses are 他 / 她 / 它, all
+  "ta".
 - The full table is in [SPEC.md](SPEC.md).
 
 **With learning:** replaying each person's messages in order (`node tests/learn_eval.js`, all 84
