@@ -34,6 +34,9 @@ browser, and a short tutorial starts on your first visit.
   characters (`426` is hao, gao or gan: 好 号 高 干 感…). No spaces between words: the decoder finds
   the words itself, and `0` commits the characters, as space does on Chinese keyboards. 88.7% of characters right with spaces (a classic pinyin keypad
   that takes each word's commonest characters: 81.9%), 83.6% without; phone and ESP32 sizes.
+- **Fix any word without deleting.** Move back to an earlier word and cycle its guesses; the
+  rest of the sentence re-decodes around your choice. Arrow keys where a device has them (the
+  UV-K1's UP / DOWN, ← → on a computer), or hold `*` for edit mode on a plain keypad.
 - **Learns from you.** Names, slang and call signs you spell once are guessed from their keys
   after that, and your own word habits and punctuation get more likely. Recent messages count too.
 - **Capitals are automatic.** Sentence starts, names and brands (iPhone, McDonald's), the words
@@ -59,12 +62,18 @@ browser, and a short tutorial starts on your first visit.
 | Key | Tap | Hold |
 |---|---|---|
 | `2`–`9` | a letter on that key | the digit |
-| `0` | space | the digit 0 |
+| `0` | space (Chinese: commit) | the digit 0 |
 | `#` | punctuation (the model picks `. , ? !`); between letters, an apostrophe | exact spelling on/off |
-| `*` | next guess for the selected word | finish the word |
+| `*` | take the gray completion of the word being typed, else the next guess for the selected word | edit mode on/off |
 | `1` | delete | the digit 1 |
 
 Apostrophes are optional ("dont" gives "don't").
+
+**Edit mode** fixes an earlier word on a keypad with no arrow keys. Hold `*`: the word before the
+last is selected. `0` and `#` move back and forward a word, and `*` cycles its guesses, best first
+for the whole sentence; the words around it re-decode. Hold `*` again, or just keep typing, to go
+back to the end with the fixes kept. On the demo page you can also tap a word, or use `‹ ›` and the
+arrow keys.
 
 ## Accuracy, and how it compares
 
@@ -221,6 +230,7 @@ details.
 | `SPEC.md` | Full specification |
 | `llm.txt` | Integration guide |
 | `DATA.md` | Where the training data comes from, and its terms |
+| `BACKLOG.md` | Planned work: the T-Echo Lite Meshtastic port, Chinese next steps, Japanese |
 
 ## Build and test
 
@@ -230,6 +240,7 @@ node tests/parity.js              # C and JS give identical output
 node tests/parity.js --learn      # ... while learning
 node tests/parity.js --nn model/onepress-nn.bin   # ... with the neural model
 node tests/eval.js                # held-out accuracy (needs the corpora: model/fetch_corpora.sh)
+node tests/eval.js model/corpora/zh/test.txt --model model/onepress-zh.bin --no-spaces   # Chinese
 cd model && ./build.sh            # rebuild the word models and the demo page (pip install wordfreq)
 ```
 
