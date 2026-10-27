@@ -101,6 +101,11 @@ h1 { font-family: var(--f-display); font-weight: 700; font-size: 1.35rem; letter
 
 .alts { display: flex; gap: 8px; flex-wrap: nowrap; height: 44px; align-items: center; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; overscroll-behavior-x: contain; }
 .alts::-webkit-scrollbar { display: none; }
+.altrow { display: flex; align-items: center; gap: 6px; }
+.altrow .alts { flex: 1; min-width: 0; }
+.nav { flex-shrink: 0; width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--key-edge);
+  background: var(--key); color: var(--ink); font-size: 1.1rem; line-height: 1; cursor: pointer; padding: 0; }
+.nav:disabled { opacity: 0.35; cursor: default; }
 .alts > * { flex-shrink: 0; white-space: nowrap; }
 .alts .label { font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-right: 2px; }
 .chip {
@@ -190,7 +195,7 @@ body { padding-block: clamp(8px, 2.2dvh, 20px) clamp(10px, 3dvh, 28px); }
 .row .act { padding: clamp(5px, 1.2dvh, 10px) 8px; }
 .wrap.tutorial .lcd { height: clamp(3.6rem, 12dvh, 8rem); }
 .wrap.tutorial .status, .wrap.tutorial .mode { display: none; }    /* the tutorial uses the keypad */
-.wrap.tutorial.no-alts .alts { display: none; }                    /* only the guesses step needs them */
+.wrap.tutorial.no-alts .altrow { display: none; }                    /* only the guesses step needs them */
 @media (max-height: 700px) {
   body { padding-block: 6px 8px; }
   .wrap, .pad { gap: 5px; }
@@ -244,7 +249,11 @@ body { padding-block: clamp(8px, 2.2dvh, 20px) clamp(10px, 3dvh, 28px); }
 
   <div class="compare" id="compare" hidden aria-label="The same keys decoded by each model"></div>
 
-  <div class="alts" id="alts" aria-label="Other guesses for the selected word"></div>
+  <div class="altrow">
+    <button type="button" class="nav" id="navPrev" aria-label="previous word">‹</button>
+    <div class="alts" id="alts" aria-label="Other guesses for the selected word"></div>
+    <button type="button" class="nav" id="navNext" aria-label="next word">›</button>
+  </div>
 
   <div class="mode" role="group" aria-label="Keyboard">
     <button type="button" id="modePad" aria-pressed="true">Phone keypad</button>
@@ -266,7 +275,7 @@ body { padding-block: clamp(8px, 2.2dvh, 20px) clamp(10px, 3dvh, 28px); }
     <p>A number that could be a time offers both: 5 # 30 is 5.30 on its own and 5:30 after at, by or until, or with am or pm after it. Tap it to switch.</p>
     <p><b>Send</b> copies the text, clears it and learns from it: the words you use and the words you use together get more likely, and a word you spelled exactly, or typed on QWERTY when no word matched, is guessed from its keys next time. That covers punctuation too. The next message also starts with your last few in mind, so words you just used are likelier. Once you start a new sentence, the one before it stays as it is. What it learns stays in this browser, kept for each model separately. <b>Forget</b> clears it.</p>
     <p><b>Tutorial</b> (next to the title) walks through all of this in a few steps.</p>
-    <p>Tap any word to see other words with the same keys. Picking one locks it, and the rest of the sentence re-decodes around it.</p>
+    <p>Tap any word to see other words with the same keys. Picking one locks it, and the rest of the sentence re-decodes around it. Without touching: <b>‹ ›</b> beside the guesses (← → on a computer keyboard) move to an earlier word, <b>*</b> (↓, and ↑ for the one before) cycles its guesses, and typing goes back to the end.</p>
     <p>The QWERTY keyboard sends only each letter's keypad number (shown in the corner), so the model decodes it exactly as if you'd used the keypad. When no word fits, it keeps the letters you tapped. Keys grow and shrink in place with how likely each letter is to come next. A computer keyboard works the same way, and Tab finishes the word.</p>
     <p><b>Neural</b> (Phone model) adds a small neural network that reads everything typed before each word, not just the last two words. It's downloaded once next to the page and runs here too.</p>
     <p>Runs entirely in this page. <b>Model</b> picks the word model: Phone (45,000 words), ESP32 / Meshtastic (29,000) and nRF52 / radio (5,000) are the same files the C decoder runs on those devices, so you can see how each would behave. The other languages (Español, Deutsch, Português, Français, Italiano, Nederlands, Svenska, Polski, Čeština, Türkçe, Русский, Ελληνικά, العربية, 中文), each in the same three sizes but Chinese, download when first picked: accents come out on their own (type the plain letter's key: á on 2, ł on 5), Greek, Russian and Arabic use their usual phone keypads (Russian 2 абвг, Greek 2 αβγ, Arabic 2 بتث) and Arabic is shown right to left with ؟ and ،, 中文 (Chinese, Phone and ESP32 sizes) is typed as toneless pinyin (ü as v) with no spaces and shown in characters, and <b>0</b> commits them as space does on Chinese keyboards, German nouns are capitalized, Spanish questions open with ¿, and in French and Italian <b>#</b> between letters makes the apostrophe of l'homme or dov'è. <b>Load .bin file…</b> opens any model built with <code>model/export_bin.py</code>. <b>Compare sizes</b> shows what each model makes of the same keys, with the words that differ from the selected model highlighted.</p>
@@ -420,7 +429,7 @@ __DECODER__
         // the usual fix.)
         b.className = 'qk fn'; b.id = 'qwNext'; b.textContent = 'next';
         b.setAttribute('aria-label', 'accept the suggestion, or the next guess; hold for the next guess');
-        holdable(b, () => (ghostShown ? autocomplete() : press('*')), () => press('*'));
+        holdable(b, () => (ghostShown && sel === null ? autocomplete() : press('*')), () => press('*'));
       }
       else if (c === 'del') { b.className = 'qk fn'; b.textContent = '⌫'; b.setAttribute('aria-label', 'delete; hold to delete words'); deleteKey(b); }
       else if (c === 'space') { b.className = 'qk space'; b.textContent = 'space'; tapKey(b, () => press('0')); }
@@ -689,17 +698,29 @@ __DECODER__
     sel = j; update();
   }
 
-  function nextGuess() {
+  // The selected word's next guess (step -1: the one before), locked in; the rest re-decodes.
+  function nextGuess(step = 1) {
     const j = selectedSlot();
     if (j === null) return;
     const alts = alternatives(j);
     if (alts.length < 2) return;
     const cur = currentLabel(j);
     const i = alts.findIndex(a => a.label === cur);
-    const nxt = alts[(i + 1) % alts.length];
+    const nxt = alts[(i + step + alts.length) % alts.length];
     locks[j] = lockFor(result.slots[j].tok.keys, nxt);
     sel = j; update();
   }
+
+  // Move the selected word (null: the last, following the typing) by d words, punctuation
+  // included; moving past the last goes back to following the typing. Typing does too.
+  function moveSel(d) {
+    if (!result || !result.slots.length) return;
+    const n = result.slots.length, j = selectedSlot() + d;
+    sel = j >= n - 1 ? null : Math.max(0, j);
+    update();
+  }
+  $('navPrev').addEventListener('click', () => moveSel(-1));
+  $('navNext').addEventListener('click', () => moveSel(1));
 
   function plainText() {
     if (!best) return '';
@@ -744,7 +765,10 @@ __DECODER__
     $('exampleTag').textContent = exact ? 'ABC · exact spelling' : (isExample ? 'Example' : (keys ? keys.length + ' presses' : ''));
     renderAlts();
     const qn = $('qwNext');
-    if (qn) qn.textContent = ghostShown ? 'accept' : 'next';
+    if (qn) qn.textContent = ghostShown && sel === null ? 'accept' : 'next';
+    const j0 = selectedSlot();
+    $('navPrev').disabled = j0 === null || j0 === 0;
+    $('navNext').disabled = sel === null;
     sizeKeys();
     renderCompare();
     tutCheck();
@@ -1073,6 +1097,9 @@ __LANG_MENU__
   document.addEventListener('keydown', e => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     let k = e.key;
+    if (/^(SELECT|INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
+    if (k === 'ArrowLeft' || k === 'ArrowRight') { e.preventDefault(); moveSel(k === 'ArrowLeft' ? -1 : 1); return; }
+    if (k === 'ArrowDown' || k === 'ArrowUp') { e.preventDefault(); flash('*'); nextGuess(k === 'ArrowDown' ? 1 : -1); return; }
     if (k === 'Tab') { e.preventDefault(); flash('*'); autocomplete(); return; }
     if (k === 'Backspace') { e.preventDefault(); flash('1'); (e.ctrlKey || e.altKey ? deleteWord : backspace)(); return; }
     if (exact && /^[a-zA-Z'.,!?]$/.test(k)) { e.preventDefault(); flash(/[a-z]/i.test(k) ? wordKeys(k.toLowerCase()) : '#', k.toLowerCase()); pressLiteral(k.toLowerCase()); return; }
