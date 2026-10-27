@@ -116,3 +116,42 @@ word by word. OnePress would choose them from the sentence.
 - Accuracy on Tatoeba's small corpus. Is it worth an initial-letters mode (`wmyq` for 我们一起)?
 - Simplified first, Traditional after?
 - Whether to show pinyin while typing, or only the characters.
+
+## Japanese (kana rows on the keypad)
+
+Japanese phones put one kana row on each key (`1` あ, `2` か, `3` さ, `4` た, `5` な, `6` は, `7` ま,
+`8` や, `9` ら, `0` わ) and the user pressed a key up to five times for the vowel. With OnePress one press
+per mora is enough: `2` is any of か き く け こ (and が ぎ ぐ げ ご, since the voicing mark is on the same
+key), and the model chooses kana and then kanji from the whole sentence. It reuses nearly
+everything from Chinese, so do it after Chinese.
+
+### Same as Chinese
+
+- No spaces, so the same word splitting (version 1 could ask for a separator).
+- Keys from each word's reading, not its characters: the same key-string section in the model. A
+  reading's keys are its kana's rows (small kana ゃ ゅ ょ っ on their full kana's key, ー on its own key).
+- A font for microcontrollers: JIS X 0208 (about 6,900 characters) plus kana, about the same size
+  as Chinese's.
+
+### Different from Chinese
+
+- **The keypad.** `0` is the わ row and `1` the あ row, so space and punctuation move: `#` for
+  punctuation (、。？！), with `*` for next guess. Spaces are rarely typed in Japanese.
+- **Kana inside words.** Many words are written partly or wholly in kana (食べる, する, ありがとう).
+  Each word's written form comes from the corpus, so the model learns that; a reading with no
+  kanji form is shown as kana.
+- **Katakana** for loanwords (コーヒー) comes from the written forms in the corpus too.
+
+### Data (commercial-OK terms only)
+
+- Tatoeba `jpn` is large (well over 200k sentences, CC BY 2.0 FR), more than its Chinese.
+- wordfreq `ja` frequencies (CC BY-SA). Tokenizing needs MeCab (`wordfreq[mecab]`).
+- Readings: UniDic (BSD / GPL / LGPL) through MeCab or fugashi, or JMdict (EDRDG, CC BY-SA 4.0).
+
+### Plan
+
+1. Tokenize Tatoeba `jpn` with readings and map readings to key rows.
+2. Build with the Chinese key-string section, then a first version with a separator, evaluated
+   on the Tatoeba test split against a classic kana keypad that converts word by word.
+3. Word splitting (shared with Chinese), and keypad labels and Example sentences in Japanese.
+4. Font and rendering for the radio and Meshtastic ports.
