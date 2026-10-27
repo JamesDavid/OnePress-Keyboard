@@ -229,8 +229,9 @@ const utf8Len = s => { let n = 0; for (const c of s) n += c < '\x80' ? 1 : c < '
 // Digits end a word: "4" + 3837 is "4" then "ever". A number runs on through further digits
 // and through '#', '.' or ',' between digits; a '#' just before a number is '$', so
 // #6#000#00 is "$6,000.00" (see formatNumber). Digits next to exactly spelled letters stay in
-// the word, for call signs like ke7aqa.
-function tokenize(keys, hint = '') {
+// the word, for call signs like ke7aqa. cjk (Chinese): '#' is always punctuation (no apostrophes
+// or hyphens), so a sentence can go straight on after its mark.
+function tokenize(keys, hint = '', cjk = false) {
   const toks = [];
   // a tapped letter (any letter with a key, lowercased like exact letters), or null
   const hintAt = i => { const c = hint[i] || ''; return /[a-z]/.test(c) ? c : /[A-Z]/.test(c) ? c.toLowerCase() : tableLetter(c) ? litOf(c) : null; };
@@ -243,7 +244,7 @@ function tokenize(keys, hint = '') {
       last.keys += ch === '#' ? 's' : ch;       // 's': a separator for formatNumber to choose
     } else if (ch === '#') {
       // A predictive '#' between two letters is an apostrophe; otherwise punctuation.
-      if (last && last.type === 'word' && isLetterKey(nxt)) { last.keys += '#'; last.lit.push(null); last.hint.push(null); }
+      if (last && last.type === 'word' && isLetterKey(nxt) && !cjk) { last.keys += '#'; last.lit.push(null); last.hint.push(null); }
       else toks.push({ type: 'punct' });
     } else if (LIT_PUNCT.has(ch) || ch === ':') {
       toks.push({ type: 'punct', lit: ch });
@@ -823,14 +824,17 @@ function context(m, u, start) {
 // cands), the best score of a full hypothesis ending in it (null if none), as a decode with that
 // candidate locked would score it (up to the beam), so the alternatives cost no extra decodes.
 // Chinese (FLAG_CJK) is typed without spaces between words, so each run of predictive letter
-// keys (no exact letters, taps or '#') of 2 to SEG_RUN presses is split into words first: the
+// keys (no exact letters or '#') of 2 to SEG_RUN presses is split into words first: the
 // best path through the words whose keys cover it exactly, scored by word pairs (from the start
 // of the sentence, or nothing after a space or number) and SEG_PEN per word (1/4 nat, so it
 // doesn't break words into single characters). The run's last piece may be the start of a longer
 // word while it's still being typed (its most frequent one, with the completion penalty). Each
 // position keeps its SEG_BEAM best paths, one per last word, inserted in order (p, path, length,
 // word id; the C decoder does the same): a path that ties keeps the one found first. The pieces
-// become word tokens of their own, decoded as usual; a run with no such path stays whole.
+// become word tokens of their own, decoded as usual; a run with no such path stays whole. On a
+// letter keyboard (start.hint) a piece whose letters were all tapped tries the words spelled with
+// those letters (still the SEG_CANDS most frequent), and the others only if none is; the last
+// piece's completion likewise starts with the letters if any word does.
 const SEG_RUN = 128;
 let SEG_WHOLE = 1, SEG_BEAM = 8, SEG_MAXLEN = 16, SEG_CANDS = 16, SEG_PEN = -4;
 function segParams(pen, beam, cands, maxlen, whole = 1) { SEG_WHOLE = whole; SEG_PEN = pen; SEG_BEAM = beam; SEG_CANDS = cands; SEG_MAXLEN = maxlen; }  // tuning only
@@ -839,7 +843,7 @@ function segmentRuns(m, toks) {
   const out = [];
   toks.forEach((t, i) => {
     const k = t.keys, L = t.type === 'word' ? k.length : 0;
-    if (L < 2 || L > SEG_RUN || !/^[2-9]+$/.test(k) || t.lit.some(x => x !== null) || t.hint.some(x => x !== null) || t.hyphen ||
+    if (L < 2 || L > SEG_RUN || !/^[2-9]+$/.test(k) || t.lit.some(x => x !== null) || t.hyphen ||
         (SEG_WHOLE && exactMatches(m, k).length)) {
       out.push(t); return;
     }
@@ -863,8 +867,13 @@ function segmentRuns(m, toks) {
       const ids = [], pre = [];
       for (let l = 1; l <= SEG_MAXLEN && p + l <= L; l++) {
         const sub = k.slice(p, p + l);
-        ids.push(exactMatches(m, sub).slice(0, SEG_CANDS));
-        pre.push(isLast && p + l === L ? prefixCandidates(m, sub, 1, (id, key) => key.length > sub.length) : []);
+        const typed = t.hint.slice(p, p + l).every(x => x !== null && x >= 'a' && x <= 'z') ? t.hint.slice(p, p + l).join('') : null;
+        const all = exactMatches(m, sub), same = typed ? all.filter(id => m.words[id] === typed) : [];
+        ids.push((same.length ? same : all).slice(0, SEG_CANDS));
+        if (isLast && p + l === L) {
+          const longer = (id, key) => key.length > sub.length, spelled = typed && prefixCandidates(m, sub, 1, (id, key) => longer(id, key) && m.words[id].startsWith(typed));
+          pre.push(spelled && spelled.length ? spelled : prefixCandidates(m, sub, 1, longer));
+        } else pre.push([]);
       }
       st[p].forEach((h, s) => {
         for (let l = 1; l <= ids.length; l++) {
@@ -890,7 +899,7 @@ function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
   const P = m.params;
   const u = start.user && start.user.bos === m.bos ? start.user : null;
   const ctx = context(m, u, start);
-  const toks = segmentRuns(m, splitElisions(joinLearned(tokenize(keys, start.hint || ''), u), m, u, layoutNear(start.layout)));
+  const toks = segmentRuns(m, splitElisions(joinLearned(tokenize(keys, start.hint || '', !!(m.params.flags & FLAG_CJK)), u), m, u, layoutNear(start.layout)));
   const slots = [];
   toks.forEach((t, i) => { if (t.type !== 'space') slots.push({ tok: t, tokIndex: i }); });
   const lastTokIsWord = toks.length && toks[toks.length - 1].type === 'word';

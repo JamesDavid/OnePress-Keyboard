@@ -43,7 +43,8 @@ embedded project. Read it top to bottom before writing code. Repository layout:
 
 Languages (`<lang>`): es Spanish, de German, pt Portuguese, fr French, it Italian, nl Dutch,
 sv Swedish, pl Polish, cs Czech, tr Turkish, ru Russian, el Greek, ar Arabic, zh Chinese (phone
-and -m sizes only: typed as toneless pinyin, 0 between words optional (the decoder splits words),
+and -m sizes only: typed as toneless pinyin with no spaces (the decoder splits words; apps should
+make 0 commit the composition and pass its last word as start.prev, as SPEC.md describes),
 shown as characters with no spaces and full-width ，。？！; 88.2% of characters right, 83.6% unspaced). Accented letters
 are typed on their plain letter's key; Russian, Greek and Arabic use the usual phone keypad
 layouts (SPEC.md). Arabic output is right to left: show it in a field with dir="auto" or rtl.

@@ -268,7 +268,7 @@ body { padding-block: clamp(8px, 2.2dvh, 20px) clamp(10px, 3dvh, 28px); }
     <p>Tap any word to see other words with the same keys. Picking one locks it, and the rest of the sentence re-decodes around it.</p>
     <p>The QWERTY keyboard sends only each letter's keypad number (shown in the corner), so the model decodes it exactly as if you'd used the keypad. When no word fits, it keeps the letters you tapped. Keys grow and shrink in place with how likely each letter is to come next. A computer keyboard works the same way, and Tab finishes the word.</p>
     <p><b>Neural</b> (Phone model) adds a small neural network that reads everything typed before each word, not just the last two words. It's downloaded once next to the page and runs here too.</p>
-    <p>Runs entirely in this page. <b>Model</b> picks the word model: Phone (45,000 words), ESP32 / Meshtastic (29,000) and nRF52 / radio (5,000) are the same files the C decoder runs on those devices, so you can see how each would behave. The other languages (Español, Deutsch, Português, Français, Italiano, Nederlands, Svenska, Polski, Čeština, Türkçe, Русский, Ελληνικά, العربية, 中文), each in the same three sizes but Chinese, download when first picked: accents come out on their own (type the plain letter's key: á on 2, ł on 5), Greek, Russian and Arabic use their usual phone keypads (Russian 2 абвг, Greek 2 αβγ, Arabic 2 بتث) and Arabic is shown right to left with ؟ and ،, 中文 (Chinese, Phone and ESP32 sizes) is typed as toneless pinyin (ü as v), spaces between words optional, and shown in characters, German nouns are capitalized, Spanish questions open with ¿, and in French and Italian <b>#</b> between letters makes the apostrophe of l'homme or dov'è. <b>Load .bin file…</b> opens any model built with <code>model/export_bin.py</code>. <b>Compare sizes</b> shows what each model makes of the same keys, with the words that differ from the selected model highlighted.</p>
+    <p>Runs entirely in this page. <b>Model</b> picks the word model: Phone (45,000 words), ESP32 / Meshtastic (29,000) and nRF52 / radio (5,000) are the same files the C decoder runs on those devices, so you can see how each would behave. The other languages (Español, Deutsch, Português, Français, Italiano, Nederlands, Svenska, Polski, Čeština, Türkçe, Русский, Ελληνικά, العربية, 中文), each in the same three sizes but Chinese, download when first picked: accents come out on their own (type the plain letter's key: á on 2, ł on 5), Greek, Russian and Arabic use their usual phone keypads (Russian 2 абвг, Greek 2 αβγ, Arabic 2 بتث) and Arabic is shown right to left with ؟ and ،, 中文 (Chinese, Phone and ESP32 sizes) is typed as toneless pinyin (ü as v) with no spaces and shown in characters, and <b>0</b> commits them as space does on Chinese keyboards, German nouns are capitalized, Spanish questions open with ¿, and in French and Italian <b>#</b> between letters makes the apostrophe of l'homme or dov'è. <b>Load .bin file…</b> opens any model built with <code>model/export_bin.py</code>. <b>Compare sizes</b> shows what each model makes of the same keys, with the words that differ from the selected model highlighted.</p>
   </div>
 </div>
 
@@ -549,8 +549,9 @@ const utf8Len = s => { let n = 0; for (const c of s) n += c < '\x80' ? 1 : c < '
 // Digits end a word: "4" + 3837 is "4" then "ever". A number runs on through further digits
 // and through '#', '.' or ',' between digits; a '#' just before a number is '$', so
 // #6#000#00 is "$6,000.00" (see formatNumber). Digits next to exactly spelled letters stay in
-// the word, for call signs like ke7aqa.
-function tokenize(keys, hint = '') {
+// the word, for call signs like ke7aqa. cjk (Chinese): '#' is always punctuation (no apostrophes
+// or hyphens), so a sentence can go straight on after its mark.
+function tokenize(keys, hint = '', cjk = false) {
   const toks = [];
   // a tapped letter (any letter with a key, lowercased like exact letters), or null
   const hintAt = i => { const c = hint[i] || ''; return /[a-z]/.test(c) ? c : /[A-Z]/.test(c) ? c.toLowerCase() : tableLetter(c) ? litOf(c) : null; };
@@ -563,7 +564,7 @@ function tokenize(keys, hint = '') {
       last.keys += ch === '#' ? 's' : ch;       // 's': a separator for formatNumber to choose
     } else if (ch === '#') {
       // A predictive '#' between two letters is an apostrophe; otherwise punctuation.
-      if (last && last.type === 'word' && isLetterKey(nxt)) { last.keys += '#'; last.lit.push(null); last.hint.push(null); }
+      if (last && last.type === 'word' && isLetterKey(nxt) && !cjk) { last.keys += '#'; last.lit.push(null); last.hint.push(null); }
       else toks.push({ type: 'punct' });
     } else if (LIT_PUNCT.has(ch) || ch === ':') {
       toks.push({ type: 'punct', lit: ch });
@@ -1143,14 +1144,17 @@ function context(m, u, start) {
 // cands), the best score of a full hypothesis ending in it (null if none), as a decode with that
 // candidate locked would score it (up to the beam), so the alternatives cost no extra decodes.
 // Chinese (FLAG_CJK) is typed without spaces between words, so each run of predictive letter
-// keys (no exact letters, taps or '#') of 2 to SEG_RUN presses is split into words first: the
+// keys (no exact letters or '#') of 2 to SEG_RUN presses is split into words first: the
 // best path through the words whose keys cover it exactly, scored by word pairs (from the start
 // of the sentence, or nothing after a space or number) and SEG_PEN per word (1/4 nat, so it
 // doesn't break words into single characters). The run's last piece may be the start of a longer
 // word while it's still being typed (its most frequent one, with the completion penalty). Each
 // position keeps its SEG_BEAM best paths, one per last word, inserted in order (p, path, length,
 // word id; the C decoder does the same): a path that ties keeps the one found first. The pieces
-// become word tokens of their own, decoded as usual; a run with no such path stays whole.
+// become word tokens of their own, decoded as usual; a run with no such path stays whole. On a
+// letter keyboard (start.hint) a piece whose letters were all tapped tries the words spelled with
+// those letters (still the SEG_CANDS most frequent), and the others only if none is; the last
+// piece's completion likewise starts with the letters if any word does.
 const SEG_RUN = 128;
 let SEG_WHOLE = 1, SEG_BEAM = 8, SEG_MAXLEN = 16, SEG_CANDS = 16, SEG_PEN = -4;
 function segParams(pen, beam, cands, maxlen, whole = 1) { SEG_WHOLE = whole; SEG_PEN = pen; SEG_BEAM = beam; SEG_CANDS = cands; SEG_MAXLEN = maxlen; }  // tuning only
@@ -1159,7 +1163,7 @@ function segmentRuns(m, toks) {
   const out = [];
   toks.forEach((t, i) => {
     const k = t.keys, L = t.type === 'word' ? k.length : 0;
-    if (L < 2 || L > SEG_RUN || !/^[2-9]+$/.test(k) || t.lit.some(x => x !== null) || t.hint.some(x => x !== null) || t.hyphen ||
+    if (L < 2 || L > SEG_RUN || !/^[2-9]+$/.test(k) || t.lit.some(x => x !== null) || t.hyphen ||
         (SEG_WHOLE && exactMatches(m, k).length)) {
       out.push(t); return;
     }
@@ -1183,8 +1187,13 @@ function segmentRuns(m, toks) {
       const ids = [], pre = [];
       for (let l = 1; l <= SEG_MAXLEN && p + l <= L; l++) {
         const sub = k.slice(p, p + l);
-        ids.push(exactMatches(m, sub).slice(0, SEG_CANDS));
-        pre.push(isLast && p + l === L ? prefixCandidates(m, sub, 1, (id, key) => key.length > sub.length) : []);
+        const typed = t.hint.slice(p, p + l).every(x => x !== null && x >= 'a' && x <= 'z') ? t.hint.slice(p, p + l).join('') : null;
+        const all = exactMatches(m, sub), same = typed ? all.filter(id => m.words[id] === typed) : [];
+        ids.push((same.length ? same : all).slice(0, SEG_CANDS));
+        if (isLast && p + l === L) {
+          const longer = (id, key) => key.length > sub.length, spelled = typed && prefixCandidates(m, sub, 1, (id, key) => longer(id, key) && m.words[id].startsWith(typed));
+          pre.push(spelled && spelled.length ? spelled : prefixCandidates(m, sub, 1, longer));
+        } else pre.push([]);
       }
       st[p].forEach((h, s) => {
         for (let l = 1; l <= ids.length; l++) {
@@ -1210,7 +1219,7 @@ function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
   const P = m.params;
   const u = start.user && start.user.bos === m.bos ? start.user : null;
   const ctx = context(m, u, start);
-  const toks = segmentRuns(m, splitElisions(joinLearned(tokenize(keys, start.hint || ''), u), m, u, layoutNear(start.layout)));
+  const toks = segmentRuns(m, splitElisions(joinLearned(tokenize(keys, start.hint || '', !!(m.params.flags & FLAG_CJK)), u), m, u, layoutNear(start.layout)));
   const slots = [];
   toks.forEach((t, i) => { if (t.type !== 'space') slots.push({ tok: t, tokIndex: i }); });
   const lastTokIsWord = toks.length && toks[toks.length - 1].type === 'word';
@@ -1655,7 +1664,12 @@ if (typeof module !== 'undefined') module.exports = { segParams, buildModel, dec
   // GitHub Pages serves it) or from ../model when opened from the repository.
   let nnModel = null, nnOn = true;
   try { nnOn = localStorage.getItem('nn') !== '0'; } catch (err) {}
-  const startFor = id => ({ user: getUser(id), before: sentLog.map(t => t + '\n').join(''), hint: hintFor(keys),
+  // Chinese commits with 0, as Chinese keyboards do with space: the committed text stays before the
+  // cursor and the next composition goes on from its last word (commitPrev; the text before is
+  // read as letters, so the sent messages aren't used).
+  let committed = '', commitPrev;
+  const startFor = id => getModel(id).m.params.flags & 32 ? { user: getUser(id), hint: hintFor(keys), prev: commitPrev,
+    cap: false, layout: LAYOUTS.en } : ({ user: getUser(id), before: sentLog.map(t => t + '\n').join(''), hint: hintFor(keys),
     layout: LAYOUTS[(MODELS.find(x => x.id === id) || { lang: 'en' }).lang] || LAYOUTS.en,
     nn: nnOn && nnModel && getModel(id).m.bos === nnModel.modelBos ? nnModel : undefined });
   // The network (6.3 MB) is downloaded only when the Phone model is used with Neural on.
@@ -1821,6 +1835,7 @@ if (typeof module !== 'undefined') module.exports = { segParams, buildModel, dec
       choose(j, comp);            // appends the rest of the word's keys and locks it
     }
     isExample = false;
+    if (cjk()) { sel = null; update(); return; }          // Chinese: 0 would commit
     keys += '0'; sel = null; update();
   }
 
@@ -1866,11 +1881,13 @@ if (typeof module !== 'undefined') module.exports = { segParams, buildModel, dec
     for (const [d, l] of PAD) {
       const el = document.querySelector(`#pad [data-key="${d}"] .l`);
       if (el && /[2-9]/.test(d)) el.textContent = a && a[d] ? a[d] : l;
+      if (el && d === '0') el.textContent = cjk() ? 'commit' : l;
     }
   }
   const TAP_GAP = 900;
   function press(d, letter) {
     if (!m) return;
+    if (d === '0' && cjk() && !exact) { tap = null; commit(); return; }
     if (d === '*') { tap = null; nextGuess(); return; }
     if (d === '1') { tap = null; backspace(); return; }
     isExample = false;
@@ -1903,7 +1920,24 @@ if (typeof module !== 'undefined') module.exports = { segParams, buildModel, dec
     document.documentElement.classList.toggle('exact', exact);
     update();
   }
+  // Chinese: the composition becomes committed text, a word still being typed as its completion; 0
+  // with nothing composed types a space.
+  function commit() {
+    isExample = false;
+    if (!keys) { committed += ' '; commitPrev = -1; update(); return; }
+    if (!best) return;
+    learn(m, getUser(modelId), result, best); saveUser(modelId);
+    committed += composedText();
+    const j = result.slots.length - 1, c = j >= 0 ? result.slots[j].cands[best.path[j]] : null;
+    if (c) commitPrev = c.id >= 0 && c.id < m.n ? c.id : c.id >= m.n && c.id < m.bos ? (c.text === ',' ? c.id : m.bos) : -1;
+    keys = ''; locks = {}; sel = null; update();
+  }
+  function composedText() {
+    if (!best) return '';
+    return render(m, result, best).map(p => cjk() && p.partial ? p.partial : p.text).join('');
+  }
   function backspace() {
+    if (!keys && committed) { committed = [...committed].slice(0, -1).join(''); commitPrev = -1; update(); return; }
     if (!keys) return;
     isExample = false;
     keys = keys.slice(0, -1); sel = null; update();
@@ -1911,6 +1945,7 @@ if (typeof module !== 'undefined') module.exports = { segParams, buildModel, dec
   // The last word: the spaces after it, then everything back to the space before it (its
   // punctuation too), as a phone keyboard's held delete does.
   function deleteWord() {
+    if (!keys && committed) { backspace(); return; }
     if (!keys) return;
     isExample = false; tap = null;
     keys = keys.replace(/0+$/, '').replace(/[^0]+$/, ''); sel = null; update();
@@ -1998,7 +2033,8 @@ if (typeof module !== 'undefined') module.exports = { segParams, buildModel, dec
     const out = $('out');
     out.textContent = '';
     ghostShown = false;
-    if (!keys) {
+    if (committed) out.appendChild(document.createTextNode(committed));
+    if (!keys && !committed) {
       const p = document.createElement('span');
       p.className = 'placeholder'; p.textContent = 'Start pressing keys…';
       out.appendChild(p);
@@ -2154,7 +2190,7 @@ if (typeof module !== 'undefined') module.exports = { segParams, buildModel, dec
       }
     }
     const e = getModel(id);
-    m = e.m; modelId = id;
+    m = e.m; modelId = id; commitPrev = undefined;
     $('modelPick').value = id;
     const withNN = nnOn && nnModel && e.m.bos === nnModel.modelBos;
     $('status').textContent = describe(e) + (withNN ? ` + neural ${fmtSize(nnModel.size)}` : '') + ' · runs offline';
@@ -2299,13 +2335,13 @@ if (typeof module !== 'undefined') module.exports = { segParams, buildModel, dec
     keys = enc(s); locks = {}; sel = null; isExample = true; update();
   }
 
-  $('clear').addEventListener('click', () => { keys = ''; locks = {}; sel = null; isExample = false; update(); });
+  $('clear').addEventListener('click', () => { keys = ''; committed = ''; commitPrev = undefined; locks = {}; sel = null; isExample = false; update(); });
   $('example').addEventListener('click', loadExample);
   // Send: copy the text, learn from it (unless it's an untouched example) and clear.
   $('copy').addEventListener('click', () => {
-    const t = plainText(); const btn = $('copy');
+    const t = committed + (cjk() ? composedText() : plainText()); const btn = $('copy');
     if (!t) return;
-    if (!isExample) { learn(m, getUser(modelId), result, best); saveUser(modelId); }
+    if (!isExample && keys) { learn(m, getUser(modelId), result, best); saveUser(modelId); }
     const done = () => { btn.textContent = 'Sent and copied'; setTimeout(() => btn.textContent = 'Send', 1400); };
     try {
       navigator.clipboard.writeText(t).then(done, () => { btn.textContent = 'Sent'; setTimeout(() => btn.textContent = 'Send', 1400); });
@@ -2315,7 +2351,7 @@ if (typeof module !== 'undefined') module.exports = { segParams, buildModel, dec
       sentLog = sentLog.concat(t).slice(-3);
       try { localStorage.setItem('sent', JSON.stringify(sentLog)); } catch (err) {}
     }
-    keys = ''; locks = {}; sel = null; isExample = false; update();
+    keys = ''; committed = ''; commitPrev = undefined; locks = {}; sel = null; isExample = false; update();
   });
 
   // ---- Tutorial: short steps, each checked against what's on the display ----

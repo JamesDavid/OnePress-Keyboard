@@ -31,8 +31,8 @@ browser, and a short tutorial starts on your first visit.
   83–95% for a classic keypad; Arabic, whose keypad puts far more common words on the same keys,
   81–82% against 66%.
 - **Chinese:** type toneless pinyin, one press per letter, and the sentence picks the
-  characters (`426` is hao, gao or gan: 好 号 高 干 感…). Spaces between words are optional: the
-  decoder finds the words itself. 88.2% of characters right with spaces (a classic pinyin keypad
+  characters (`426` is hao, gao or gan: 好 号 高 干 感…). No spaces between words: the decoder finds
+  the words itself, and `0` commits the characters, as space does on Chinese keyboards. 88.2% of characters right with spaces (a classic pinyin keypad
   that takes each word's commonest characters: 81.9%), 83.6% without; phone and ESP32 sizes.
 - **Learns from you.** Names, slang and call signs you spell once are guessed from their keys
   after that, and your own word habits and punctuation get more likely. Recent messages count too.

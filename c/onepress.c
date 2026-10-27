@@ -485,7 +485,8 @@ static uint16_t lit_of(int ch) {
  * between digits; a '#' just before a number is '$'. Digits next to exactly spelled letters
  * stay in the word (call signs). A number's span of keys[] holds '$', '0'-'9', '.', ',' and
  * 's' for a separator format_number chooses. See decoder.js tokenize. */
-static int tokenize(op_decoder *d, const char *keys, const char *hint) {
+/* cjk (Chinese): '#' is always punctuation (decoder.js tokenize). */
+static int tokenize(op_decoder *d, const char *keys, const char *hint, int cjk) {
     int n = (int)strlen(keys), nk = 0, hn = 0;
     if (n > OP_MAX_KEYS) return OP_ERR_TOO_LONG;
     d->n_toks = 0;
@@ -510,7 +511,7 @@ static int tokenize(op_decoder *d, const char *keys, const char *hint) {
                    d->keys[nk - 1] >= '0' && d->keys[nk - 1] <= '9' && is_digit_lit(nxt)) {
             d->keys[nk] = ch == '#' ? 's' : ch; d->lits[nk++] = 0; last->len++;
         } else if (ch == '#') {
-            if (last && last->type == TOK_WORD && is_letter_key(nxt)) {
+            if (last && last->type == TOK_WORD && is_letter_key(nxt) && !cjk) {
                 d->keys[nk] = '#'; d->lits[nk++] = 0; last->len++;
             } else {
                 t->type = TOK_PUNCT; t->lit = 0; d->n_toks++;
@@ -809,8 +810,36 @@ static int seg_exact(const op_model *m, const char *k, int kn, uint16_t *ids, in
     }
     return nb;
 }
-/* The most frequent word whose keys start with k[0..kn) and are longer, or OP_NONE. */
-static uint16_t seg_prefix(const op_model *m, const char *k, int kn) {
+/* Is word id spelled h[0..hn) (whole, or at its start if prefix)? hn letters a-z, as tapped. */
+static int seg_spelled(const op_model *m, uint16_t id, const uint16_t *h, int hn, int prefix) {
+    const char *w;
+    char wb[OP_WORD_BUF];
+    int wn = word_at(m, id, &w, wb);
+    if (wn < hn || (!prefix && wn != hn)) return 0;
+    for (int i = 0; i < hn; i++) if ((unsigned char)w[i] != h[i]) return 0;
+    return 1;
+}
+/* The n most frequent ids with keys k[0..kn) spelled h (decoder.js: exactMatches filtered). */
+static int seg_exact_spelled(const op_model *m, const char *k, int kn, const uint16_t *h, uint16_t *ids, int n) {
+    int nb = 0, starts;
+    for (int strip = 0; strip < 2; strip++) {
+        OP_REF(uint16_t) ix = strip ? m->strip_idx : m->key_idx;
+        uint32_t ixn = strip ? m->n_strip : m->n_words;
+        for (uint32_t i = lower_bound(m, ix, ixn, strip, k, kn); i < ixn; i++) {
+            if (key_cmp(m, AU16(ix, i), strip, k, kn, &starts) != 0) break;
+            uint16_t id = AU16(ix, i);
+            if (!seg_spelled(m, id, h, kn, 0)) continue;
+            if (nb < n) ids[nb++] = id;
+            else if (id < ids[n - 1]) ids[n - 1] = id;
+            else continue;
+            for (int j = nb - 1; j > 0 && ids[j] < ids[j - 1]; j--) { uint16_t x = ids[j]; ids[j] = ids[j - 1]; ids[j - 1] = x; }
+        }
+    }
+    return nb;
+}
+/* The most frequent word whose keys start with k[0..kn) and are longer (and, with h, whose
+ * letters start with h), or OP_NONE. */
+static uint16_t seg_prefix(const op_model *m, const char *k, int kn, const uint16_t *h) {
     uint16_t best = OP_NONE;
     int starts;
     for (int strip = 0; strip < 2; strip++) {
@@ -819,7 +848,7 @@ static uint16_t seg_prefix(const op_model *m, const char *k, int kn) {
         for (uint32_t i = lower_bound(m, ix, ixn, strip, k, kn); i < ixn; i++) {
             int c = key_cmp(m, AU16(ix, i), strip, k, kn, &starts);
             if (!starts) break;
-            if (c > 0 && AU16(ix, i) < best) best = AU16(ix, i);
+            if (c > 0 && AU16(ix, i) < best && (!h || seg_spelled(m, AU16(ix, i), h, kn, 1))) best = AU16(ix, i);
         }
     }
     return best;
@@ -859,8 +888,16 @@ static OP_NOINLINE int segment_run(op_decoder *d, const op_model *m, int i, int 
         uint16_t ids[SEG_MAXLEN][SEG_CANDS], pre[SEG_MAXLEN];
         int nid[SEG_MAXLEN], maxl = L - p < SEG_MAXLEN ? L - p : SEG_MAXLEN;
         for (int l = 1; l <= maxl; l++) {
-            nid[l - 1] = seg_exact(m, k + p, l, ids[l - 1], SEG_CANDS);
-            pre[l - 1] = is_last && p + l == L ? seg_prefix(m, k + p, l) : OP_NONE;
+            const uint16_t *h = d->hints + t->off + p;      /* the letters tapped, if all were */
+            int typed = 1;
+            for (int j = 0; j < l && typed; j++) typed = h[j] >= 'a' && h[j] <= 'z';
+            nid[l - 1] = typed ? seg_exact_spelled(m, k + p, l, h, ids[l - 1], SEG_CANDS) : 0;
+            if (!nid[l - 1]) nid[l - 1] = seg_exact(m, k + p, l, ids[l - 1], SEG_CANDS);
+            pre[l - 1] = OP_NONE;
+            if (is_last && p + l == L) {
+                if (typed) pre[l - 1] = seg_prefix(m, k + p, l, h);
+                if (pre[l - 1] == OP_NONE) pre[l - 1] = seg_prefix(m, k + p, l, NULL);
+            }
         }
         for (int s = 0; s < ns[p]; s++) {
             seg_state h = st[p][s];
@@ -902,7 +939,7 @@ static int segment_runs(op_decoder *d, const op_model *m) {
         const char *k = d->keys + t->off;
         int L = t->type == TOK_WORD ? t->len : 0, ok = L >= 2 && L <= SEG_RUN && t->lit != '-';
         for (int j = 0; j < L && ok; j++)
-            ok = k[j] >= '2' && k[j] <= '9' && !d->lits[t->off + j] && !d->hints[t->off + j];
+            ok = k[j] >= '2' && k[j] <= '9' && !d->lits[t->off + j];
         if (ok) {                                   /* a dictionary word as typed stays whole */
             uint16_t id;
             ok = !seg_exact(m, k, L, &id, 1);
@@ -1677,7 +1714,7 @@ static uint64_t resume_fp(const op_model *m, const op_start *start, const op_loc
 int op_decode(op_decoder *d, const op_model *m, const char *keys, int beam,
               const op_start *start, const op_lock *locks, int n_locks) {
     if (!d || !m || !keys || beam < 1 || beam > OP_MAX_BEAM) return OP_ERR_ARG;
-    int r = tokenize(d, keys, start ? start->hint : NULL);
+    int r = tokenize(d, keys, start ? start->hint : NULL, m->param[OP_P_FLAGS] & FLAG_CJK);
     if (r) return r;
     d->layout = start && start->layout ? start->layout : DEFAULT_LAYOUT;
     d->user = start && start->user && start->user->bos == m->bos ? start->user : NULL;

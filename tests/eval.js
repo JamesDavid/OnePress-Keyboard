@@ -40,7 +40,8 @@ if (oovExact) args.splice(args.indexOf('--oov-exact'), 1);
 // Chinese (model flag 32): each test line is the words in characters, a tab, and their pinyin
 // (model/prep_zh.py). The pinyin is typed and the characters scored, word by word and by
 // character (edit distance over the sentence without its marks; not with --oov-exact).
-// --no-spaces: typed without 0 between words (the decoder splits them); a word is then right when
+// --no-spaces: typed without 0 between words or after a mark (the decoder splits the words; on a
+// keyboard 0 commits); a word is then right when
 // the output has it at the same place (characters before it), and a sentence when its text is.
 const noSpaces = args.includes('--no-spaces');
 if (noSpaces) args.splice(args.indexOf('--no-spaces'), 1);
@@ -50,7 +51,7 @@ if (m.params.flags & 32) {
   const cases = refs.map(l => { const [a, b] = l.split('\t'); return { ref: split(a), pin: split(b) }; });
   const keysOf = (w, oov) => oov ? w : [...w].map(c => D.wordKeys(c)).join('');
   const enc = c => c.pin.map((p, j) => /^[.,!?]$/.test(p) ? '#' : (j && !noSpaces && !/^[.,!?]$/.test(c.pin[j - 1]) ? '0' : '') +
-    keysOf(p, oovExact && !shown.has(c.ref[j]))).join('').replace(/#(?=[^#])/g, '#0');
+    keysOf(p, oovExact && !shown.has(c.ref[j]))).join('').replace(/#(?=[^#])/g, noSpaces ? '#' : '#0');
   const t0 = Date.now();
   const hyps = hypFile ? fs.readFileSync(hypFile, 'utf8').split('\n').slice(0, cases.length).map(split) : cases.map(c => {
     const r = D.decode(m, slip || double ? noisy(enc(c)) : enc(c), {}, beam, 5, { nn });
