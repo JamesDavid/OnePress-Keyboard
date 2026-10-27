@@ -21,19 +21,20 @@ browser, and a short tutorial starts on your first visit.
 - **Three model sizes** from 246 KB to 3.5 MB, for radios up to phones (the ESP32/Meshtastic and radio ones know CQ, QTH,
   QSO, tnx, fer, repeater, node and the like), and an optional neural
   network for phones and the web (6.3 MB, or 2.5 MB with almost the same gain).
-- **Fourteen languages:** English, Spanish, German, Portuguese, French, Italian, Dutch, Swedish,
-  Polish, Czech, Turkish, Russian, Greek and Arabic, each in the three sizes. Accents are typed on
-  their plain letter's key and filled in for you (á on 2, ł on 5); Russian, Greek and Arabic use
-  their usual phone keypads, and Arabic is shown right to left with ؟ and ،. German nouns are
-  capitalized, Spanish questions open with ¿, apostrophes work as each language uses them
-  (`l#homme` gives "l'homme", `tom#a` gives "Tom'a"), and `#` joins words with a hyphen
-  (`well#known` gives "well-known"). 96–98.7% of words right on held-out sentences, against
-  83–95% for a classic keypad; Arabic, whose keypad puts far more common words on the same keys,
-  81–82% against 66%.
-- **Chinese:** type toneless pinyin, one press per letter, and the sentence picks the
-  characters (`426` is hao, gao or gan: 好 号 高 干 感…). No spaces between words: the decoder finds
-  the words itself, and `0` commits the characters, as space does on Chinese keyboards. 88.7% of characters right with spaces (a classic pinyin keypad
-  that takes each word's commonest characters: 81.9%), 83.6% without; phone and ESP32 sizes.
+- **Fifteen languages:** English, Spanish, German, Portuguese, French, Italian, Dutch, Swedish,
+  Polish, Czech, Turkish, Russian, Greek, Arabic and Chinese, each in the three sizes (Chinese in
+  two). Accents are typed on their plain letter's key and filled in for you (á on 2, ł on 5);
+  Russian, Greek and Arabic use their usual phone keypads, and Arabic is shown right to left with
+  ؟ and ،. German nouns are capitalized, Spanish questions open with ¿, apostrophes work as each
+  language uses them (`l#homme` gives "l'homme", `tom#a` gives "Tom'a"), and `#` joins words with
+  a hyphen (`well#known` gives "well-known"). 96–98.7% of words right on held-out sentences,
+  against 83–95% for a classic keypad; Arabic, whose keypad puts far more common words on the
+  same keys, 81–82% against 66%.
+  - **Chinese:** type toneless pinyin, one press per letter, and the sentence picks the
+    characters (`426` is hao, gao or gan: 好 号 高 干 感…). No spaces between words: the decoder
+    finds the words itself, and `0` commits the characters, as space does on Chinese keyboards.
+    88.7% of characters right with spaces (a classic pinyin keypad that takes each word's
+    commonest characters: 81.9%), 84.2% without.
 - **Fix any word without deleting.** Move back to an earlier word and cycle its guesses; the
   rest of the sentence re-decodes around your choice. Arrow keys where a device has them (the
   UV-K1's UP / DOWN, ← → on a computer), or hold `*` for edit mode on a plain keypad.
