@@ -218,6 +218,22 @@ score every candidate given everything typed before it. It runs inside the same 
 arithmetic, so the C and JavaScript decoders still agree exactly. See [SPEC.md](SPEC.md) for the
 details.
 
+**The Neural checkbox** on the demo turns that network on. The word model judges each word by the
+one or two words before it; the network reads the whole message so far, so it can use context from
+further back. It helps most with punctuation, where a question often shows only in how the
+sentence began:
+
+| English texting | Words right | Punctuation right |
+|---|---|---|
+| Word model alone | 94.1% | 49.8% |
+| + network (`onepress-nn-s.bin`, 2.5 MB) | 94.9% | 52.7% |
+| + network (`onepress-nn.bin`, 6.3 MB) | 95.0% | 55.4% |
+
+That is about 14% fewer wrong words. The cost is the download and speed: decoding takes roughly 15
+times as long, which is fine on a phone or computer. It's English only so far. The checkbox shows
+with the Phone model; `onepress-nn-m.bin` (1.7 MB) does the same for the ESP32 model (94.4% of
+words against 94.05%). Radios and nRF52 boards go without.
+
 ## Repository
 
 | Path | What |
