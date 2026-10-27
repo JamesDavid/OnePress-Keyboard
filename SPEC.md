@@ -196,7 +196,7 @@ Decoding is cheap: on a desktop CPU a 212-press, four-sentence message costs und
 - **Neural:** the page fetches `onepress-nn.bin` (next to it on GitHub Pages, else `../model/`) and uses it with the Phone model; the Neural checkbox turns it off (remembered).
 - **Model names:** each model is named for the hardware it stands for (Phone / web, ESP32 / Meshtastic, nRF52 / radio), so people can try what each device would do.
 - **Number chips:** a number that can be a time shows 5.30 and 5:30.
-- **Tutorial:** seven steps, each checked against the display, started on the first visit and from the Tutorial link. During it only the tutorial card, display, keypad and buttons show (guesses only on the step that uses them).
+- **Tutorial:** eight steps (fixing an earlier word in edit mode is the fourth), each checked against the display, in English (it switches to the English phone model), started on the first visit and from the Tutorial link. During it only the tutorial card, display, keypad and buttons show (guesses only on the step that uses them).
 - **One screen:** keyboard and tutorial fit without scrolling down to 360×640 (spacing and key sizes follow the viewport height). `tests/fit.html` (serve the repo root, open it in a browser) checks every tutorial step at several sizes.
 
 ---

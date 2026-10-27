@@ -21,7 +21,7 @@ async function check([w, h]) {
   const bottomOf = id => d.getElementById(id).getBoundingClientRect().bottom;
   const out = [];
   d.getElementById('tutOpen').click();
-  for (let step = 0; step < 8; step++) {
+  for (let step = 0; step < 9; step++) {
     await new Promise(r => setTimeout(r, 50));
     const over = Math.round(Math.max(bottomOf('copy'), bottomOf('pad')) - win.innerHeight);
     out.push(`step ${step + 1}: ${over > 0 ? 'OVER by ' + over + 'px' : 'fits (' + -over + 'px spare)'}`);

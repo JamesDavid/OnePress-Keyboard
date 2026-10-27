@@ -103,9 +103,9 @@ h1 { font-family: var(--f-display); font-weight: 700; font-size: 1.35rem; letter
 .alts::-webkit-scrollbar { display: none; }
 .altrow { display: flex; align-items: center; gap: 6px; }
 .altrow .alts { flex: 1; min-width: 0; }
-.nav { flex-shrink: 0; width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--key-edge);
+.wnav { flex-shrink: 0; width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--key-edge);
   background: var(--key); color: var(--ink); font-size: 1.1rem; line-height: 1; cursor: pointer; padding: 0; }
-.nav:disabled { opacity: 0.35; cursor: default; }
+.wnav:disabled { opacity: 0.35; cursor: default; }
 .alts > * { flex-shrink: 0; white-space: nowrap; }
 .alts .label { font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-right: 2px; }
 .chip {
@@ -250,9 +250,9 @@ body { padding-block: clamp(8px, 2.2dvh, 20px) clamp(10px, 3dvh, 28px); }
   <div class="compare" id="compare" hidden aria-label="The same keys decoded by each model"></div>
 
   <div class="altrow">
-    <button type="button" class="nav" id="navPrev" aria-label="previous word">‹</button>
+    <button type="button" class="wnav" id="navPrev" aria-label="previous word">‹</button>
     <div class="alts" id="alts" aria-label="Other guesses for the selected word"></div>
-    <button type="button" class="nav" id="navNext" aria-label="next word">›</button>
+    <button type="button" class="wnav" id="navNext" aria-label="next word">›</button>
   </div>
 
   <div class="mode" role="group" aria-label="Keyboard">
@@ -1057,6 +1057,10 @@ __LANG_MENU__
       text: `Type ${k('4663')}, then press ${k('*')} for the next word with the same keys, or tap a guess below the display. Tap any word to change it.`,
       ok: 'Locked in. The rest of the sentence decodes around it.',
       check: t => t.keys.includes('4663') && Object.keys(t.locks).length > 0 },
+    { title: 'Fix an earlier word', alts: true,
+      text: `Type <b>go home now</b>: ${k('46')} ${k('0')} ${k('4663')} ${k('0')} ${k('669')}. Now make it "good": <b>hold</b> ${k('*')} to go back a word, press ${k('*')} for its guesses (${k('0')} ${k('#')} move), then hold ${k('*')} again.`,
+      ok: 'Fixed without deleting, and the words around it re-decoded too.',
+      check: t => !t.editing && t.slots > 1 && Object.keys(t.locks).some(j => +j < t.slots - 1) },
     { title: 'Punctuation',
       text: `Type <b>ok</b> (${k('6', '5')}) and press ${k('#')}: it picks . , ? or ! from the sentence. Between letters ${k('#')} is an apostrophe, and optional: dont gives don't.`,
       ok: 'Wrong mark? Press * for the next one.',
@@ -1081,6 +1085,7 @@ __LANG_MENU__
   function tutGo(i) {
     tutIdx = i; tutSent = false;
     keys = ''; locks = {}; sel = null; isExample = false;
+    if (editing) { editing = false; labelKeys(); }
     if (exact) toggleExact();
     $('tut').hidden = false;
     $('wrap').classList.add('tutorial');
@@ -1105,13 +1110,15 @@ __LANG_MENU__
   function tutCheck() {
     if (tutIdx < 0) return;
     const st = TUT[tutIdx], last = tutIdx === TUT.length - 1;
-    const done = st.check({ text: keys ? plainText() : '', keys, locks, exact, sent: tutSent });
+    const done = st.check({ text: keys ? plainText() : '', keys, locks, exact, sent: tutSent, editing,
+      slots: result ? result.slots.length : 0 });
     $('tutOk').textContent = done && st.ok ? '✓ ' + st.ok : '';
     const next = $('tutNext');
     next.textContent = last ? 'Finish' : done ? 'Next' : 'Skip';
     next.className = 'act' + (done ? ' primary' : '');
   }
-  $('tutOpen').addEventListener('click', () => tutGo(0));
+  // The tutorial's steps are English, so it switches to the English phone model if another language is picked.
+  $('tutOpen').addEventListener('click', async () => { if (lang() !== 'en') await useModel('l'); tutGo(0); });
   $('tutNext').addEventListener('click', () => tutIdx >= TUT.length - 1 ? tutEnd() : tutGo(tutIdx + 1));
   $('tutBack').addEventListener('click', () => tutGo(Math.max(0, tutIdx - 1)));
   $('tutClose').addEventListener('click', tutEnd);
