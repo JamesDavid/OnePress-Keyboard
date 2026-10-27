@@ -2,7 +2,9 @@
 // sentences one key at a time and checks every prefix: decode as typed (resuming) against a
 // decode from scratch, in JS, and the C decoder (fed the same prefixes, so it resumes too)
 // against JS. Also with the text before, QWERTY letters, learning between messages, a network.
-//   node tests/resume_test.js [--model onepress.bin] [--nn onepress-nn.bin] [--n 150] [--learn]
+//   node tests/resume_test.js [--model onepress.bin] [--nn onepress-nn.bin] [--n 150] [--learn] [--text file]
+// --text: messages from that file instead, three lines each (Chinese: the pinyin column of
+// corpora/zh/dev.txt with the spaces taken out, so the decoder splits the words).
 const fs = require('fs'), path = require('path'), { execFileSync } = require('child_process');
 const D = require(path.join(__dirname, '../web/decoder.js'));
 const args = process.argv.slice(2);
@@ -16,8 +18,12 @@ const nn = nnFile ? D.buildNN(fs.readFileSync(nnFile), m) : undefined;
 const nnFresh = nnFile ? D.buildNN(fs.readFileSync(nnFile), fresh) : undefined;
 
 // Messages with at least two sentences, from the chat and NUS dev sets.
-const msgs = [];
-for (const f of ['../model/corpora/chat/dev_chat.txt', '../model/corpora/nus/dev.txt']) {
+const msgs = [], textFile = opt('--text');
+if (textFile) {
+  const t = fs.readFileSync(textFile, 'utf8').split('\n').filter(Boolean);
+  for (let i = 0; i + 2 < t.length; i += 3) msgs.push(t.slice(i, i + 3).join(' '));
+}
+for (const f of textFile ? [] : ['../model/corpora/chat/dev_chat.txt', '../model/corpora/nus/dev.txt']) {
   const p = path.join(__dirname, f);
   if (fs.existsSync(p)) for (const s of fs.readFileSync(p, 'utf8').split('\n')) if (/[.!?] \w.*[.!?,]? \w/.test(s)) msgs.push(s);
 }

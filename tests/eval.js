@@ -15,6 +15,8 @@ const slip = +(opt('--slip') || 0), double = +(opt('--double') || 0);
 const beam = +(opt('--beam') || 8);              // beam width (8, as the apps use; radios use less)
 const params = opt('--params');                  // tuning: keypad slip costs "sub,dup" in nats
 if (params && D.slipParams) D.slipParams(...params.split(',').map(Number));
+const seg = opt('--seg');                        // tuning: word splitting "pen,beam,cands,maxlen" (beam 0: off)
+if (seg) D.segParams(...seg.split(',').map(Number));
 const KEYPAD_NEAR = { 2: '35', 3: '26', 4: '57', 5: '2468', 6: '359', 7: '48', 8: '579', 9: '68' };
 let seed = 777;
 const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x80000000; };
@@ -38,12 +40,16 @@ if (oovExact) args.splice(args.indexOf('--oov-exact'), 1);
 // Chinese (model flag 32): each test line is the words in characters, a tab, and their pinyin
 // (model/prep_zh.py). The pinyin is typed and the characters scored, word by word and by
 // character (edit distance over the sentence without its marks; not with --oov-exact).
+// --no-spaces: typed without 0 between words (the decoder splits them); a word is then right when
+// the output has it at the same place (characters before it), and a sentence when its text is.
+const noSpaces = args.includes('--no-spaces');
+if (noSpaces) args.splice(args.indexOf('--no-spaces'), 1);
 if (m.params.flags & 32) {
   const shown = new Set(m.display.filter(Boolean)), mark = { '。': '.', '，': ',', '？': '?', '！': '!' };
   const split = s => s.match(/[^\s.,!?]+|[.,!?]/g) || [];
   const cases = refs.map(l => { const [a, b] = l.split('\t'); return { ref: split(a), pin: split(b) }; });
   const keysOf = (w, oov) => oov ? w : [...w].map(c => D.wordKeys(c)).join('');
-  const enc = c => c.pin.map((p, j) => /^[.,!?]$/.test(p) ? '#' : (j && !/^[.,!?]$/.test(c.pin[j - 1]) ? '0' : '') +
+  const enc = c => c.pin.map((p, j) => /^[.,!?]$/.test(p) ? '#' : (j && !noSpaces && !/^[.,!?]$/.test(c.pin[j - 1]) ? '0' : '') +
     keysOf(p, oovExact && !shown.has(c.ref[j]))).join('').replace(/#(?=[^#])/g, '#0');
   const t0 = Date.now();
   const hyps = hypFile ? fs.readFileSync(hypFile, 'utf8').split('\n').slice(0, cases.length).map(split) : cases.map(c => {
@@ -64,12 +70,14 @@ if (m.params.flags & 32) {
   const st = { sent: 0, w: 0, wt: 0, a: 0, at: 0, p: 0, pt: 0, oov: 0, ch: 0, cht: 0 }, errs = new Map();
   cases.forEach((c, i) => {
     const b = hyps[i] || [];
-    if (c.ref.join(' ') === b.join(' ')) st.sent++;
+    if (noSpaces ? c.ref.join('') === b.join('') : c.ref.join(' ') === b.join(' ')) st.sent++;
+    const at = ws => { let n = 0; return ws.map(w => { const o = n; n += [...w].length; return o; }); };
+    const ra = at(c.ref), ha = at(b), byAt = new Map(b.map((w, j) => [ha[j] + '|' + w, true]));
     const chars = s => [...s.filter(x => !/^[.,!?]$/.test(x)).join('')];
     const rc = chars(c.ref);
     st.cht += rc.length; st.ch += Math.max(0, rc.length - dist(rc, chars(b)));
     c.ref.forEach((x, j) => {
-      const ok = x === b[j];
+      const ok = noSpaces ? byAt.has(ra[j] + '|' + x) : x === b[j];
       if (/^[.,!?]$/.test(x)) { st.pt++; st.p += ok; return; }
       if (oovExact && !shown.has(x)) { st.oov++; return; }
       st.wt++; st.w += ok;

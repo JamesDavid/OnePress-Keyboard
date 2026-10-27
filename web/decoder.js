@@ -822,12 +822,75 @@ function context(m, u, start) {
 // decoder does the same. lastScores: for each candidate of the last slot (index into its
 // cands), the best score of a full hypothesis ending in it (null if none), as a decode with that
 // candidate locked would score it (up to the beam), so the alternatives cost no extra decodes.
+// Chinese (FLAG_CJK) is typed without spaces between words, so each run of predictive letter
+// keys (no exact letters, taps or '#') of 2 to SEG_RUN presses is split into words first: the
+// best path through the words whose keys cover it exactly, scored by word pairs (from the start
+// of the sentence, or nothing after a space or number) and SEG_PEN per word (1/4 nat, so it
+// doesn't break words into single characters). The run's last piece may be the start of a longer
+// word while it's still being typed (its most frequent one, with the completion penalty). Each
+// position keeps its SEG_BEAM best paths, one per last word, inserted in order (p, path, length,
+// word id; the C decoder does the same): a path that ties keeps the one found first. The pieces
+// become word tokens of their own, decoded as usual; a run with no such path stays whole.
+const SEG_RUN = 128;
+let SEG_WHOLE = 1, SEG_BEAM = 8, SEG_MAXLEN = 16, SEG_CANDS = 16, SEG_PEN = -4;
+function segParams(pen, beam, cands, maxlen, whole = 1) { SEG_WHOLE = whole; SEG_PEN = pen; SEG_BEAM = beam; SEG_CANDS = cands; SEG_MAXLEN = maxlen; }  // tuning only
+function segmentRuns(m, toks) {
+  if (!(m.params.flags & FLAG_CJK) || !SEG_BEAM) return toks;
+  const out = [];
+  toks.forEach((t, i) => {
+    const k = t.keys, L = t.type === 'word' ? k.length : 0;
+    if (L < 2 || L > SEG_RUN || !/^[2-9]+$/.test(k) || t.lit.some(x => x !== null) || t.hint.some(x => x !== null) || t.hyphen ||
+        (SEG_WHOLE && exactMatches(m, k).length)) {
+      out.push(t); return;
+    }
+    let b = i - 1;
+    while (b >= 0 && toks[b].type === 'space') b--;
+    const p0 = b < 0 || toks[b].type === 'punct' ? m.bos : -1, isLast = i === toks.length - 1;
+    const st = Array.from({ length: L + 1 }, () => []);
+    st[0].push({ score: 0, prev: p0, t: -1, from: -1, fk: -1 });
+    const add = (q, e) => {
+      const a = st[q], d = a.findIndex(x => x.prev === e.prev && x.t === e.t);
+      if (d >= 0) { if (a[d].score >= e.score) return; a.splice(d, 1); }
+      let at = 0;
+      while (at < a.length && a[at].score >= e.score) at++;
+      if (at >= SEG_BEAM) return;
+      a.splice(at, 0, e);
+      if (a.length > SEG_BEAM) a.pop();
+    };
+    const pen = Math.round(SEG_PEN * m.scale / 4);
+    for (let p = 0; p < L; p++) {
+      if (!st[p].length) continue;
+      const ids = [], pre = [];
+      for (let l = 1; l <= SEG_MAXLEN && p + l <= L; l++) {
+        const sub = k.slice(p, p + l);
+        ids.push(exactMatches(m, sub).slice(0, SEG_CANDS));
+        pre.push(isLast && p + l === L ? prefixCandidates(m, sub, 1, (id, key) => key.length > sub.length) : []);
+      }
+      st[p].forEach((h, s) => {
+        for (let l = 1; l <= ids.length; l++) {
+          for (const id of ids[l - 1]) add(p + l, { score: h.score + lp3(m, h.t, h.prev, id) + pen, prev: id, t: triFind(m, h.prev, id), from: p, fk: s });
+          for (const id of pre[l - 1]) add(p + l, { score: h.score + lp3(m, h.t, h.prev, id) + m.params.completion + pen, prev: id, t: triFind(m, h.prev, id), from: p, fk: s });
+        }
+      });
+    }
+    if (!st[L].length) { out.push(t); return; }
+    const cuts = [];
+    for (let q = L, e = st[L][0]; e.from >= 0; q = e.from, e = st[q][e.fk]) cuts.unshift(e.from);
+    cuts.push(L);
+    for (let c = 0; c + 1 < cuts.length; c++) {
+      const a = cuts[c], z = cuts[c + 1];
+      out.push({ type: 'word', keys: k.slice(a, z), lit: t.lit.slice(a, z), hint: t.hint.slice(a, z) });
+    }
+  });
+  return out;
+}
+
 const lockKey = (locks, j) => JSON.stringify(Object.keys(locks).filter(k => +k <= j).sort().map(k => [k, locks[k].keys, locks[k].text, locks[k].id]));
 function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
   const P = m.params;
   const u = start.user && start.user.bos === m.bos ? start.user : null;
   const ctx = context(m, u, start);
-  const toks = splitElisions(joinLearned(tokenize(keys, start.hint || ''), u), m, u, layoutNear(start.layout));
+  const toks = segmentRuns(m, splitElisions(joinLearned(tokenize(keys, start.hint || ''), u), m, u, layoutNear(start.layout)));
   const slots = [];
   toks.forEach((t, i) => { if (t.type !== 'space') slots.push({ tok: t, tokIndex: i }); });
   const lastTokIsWord = toks.length && toks[toks.length - 1].type === 'word';
@@ -1216,5 +1279,5 @@ function learn(m, u, result, hyp, start = {}) {
   });
 }
 
-if (typeof module !== 'undefined') module.exports = { buildModel, decode, render, nextLetterProbs, exactMatches, wordKeys, tokenize, formatNumber,
+if (typeof module !== 'undefined') module.exports = { segParams, buildModel, decode, render, nextLetterProbs, exactMatches, wordKeys, tokenize, formatNumber,
   newUser, learn, saveUser, loadUser, qwertyParams, slipParams, fold, USER_UNI, USER_PAIR, userParams, recentParams, buildNN };

@@ -79,7 +79,9 @@ Version 1 is in: `model/prep_zh.py`, `build_model.py --lang zh`, `onepress-zh.bi
 `onepress-zh-m.bin` (20k), flag 32 in both decoders (parity), the page's 中文 models, and
 `tests/eval.js` / `tests/baseline.js` for Chinese. Held-out: 85.4% of words, 88.2% of characters
 (classic pinyin keypad 78.2% / 81.9%). No new model section was needed: a word is stored as its
-pinyin and shown as its characters. Next: step 5 (no spaces between words), then more text.
+pinyin and shown as its characters. Step 5 is in too: spaces are optional, the decoder splits
+words (83.6% of characters unspaced). Next: more text (see SPEC.md: the splits it misses are ones
+the word model can't tell apart).
 
 ### What's new compared with the other languages
 

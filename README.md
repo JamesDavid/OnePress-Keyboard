@@ -30,10 +30,10 @@ browser, and a short tutorial starts on your first visit.
   (`well#known` gives "well-known"). 96–98.7% of words right on held-out sentences, against
   83–95% for a classic keypad; Arabic, whose keypad puts far more common words on the same keys,
   81–82% against 66%.
-- **Chinese, first version:** type toneless pinyin, one press per letter with a space between
-  words, and the sentence picks the characters (`426` is hao, gao or gan: 好 号 高 干 感…). 85.6% of words right
-  against 78.2% for a classic pinyin keypad that takes each word's most common characters; phone
-  and ESP32 sizes. Next: no spaces needed (see [BACKLOG.md](BACKLOG.md)).
+- **Chinese:** type toneless pinyin, one press per letter, and the sentence picks the
+  characters (`426` is hao, gao or gan: 好 号 高 干 感…). Spaces between words are optional: the
+  decoder finds the words itself. 88.2% of characters right with spaces (a classic pinyin keypad
+  that takes each word's commonest characters: 81.9%), 83.6% without; phone and ESP32 sizes.
 - **Learns from you.** Names, slang and call signs you spell once are guessed from their keys
   after that, and your own word habits and punctuation get more likely. Recent messages count too.
 - **Capitals are automatic.** Sentence starts, names and brands (iPhone, McDonald's), the words

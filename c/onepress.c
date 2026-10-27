@@ -783,6 +783,142 @@ static int split_elisions(op_decoder *d, const op_model *m) {
     return OP_OK;
 }
 
+#ifndef OP_NO_CJK
+/* ---- Chinese: splitting a run of keys into words (see decoder.js segmentRuns) ---- */
+#define SEG_RUN 128             /* longest run split */
+#define SEG_BEAM 8              /* paths kept per position, one per (last word, context) */
+#define SEG_MAXLEN 16           /* longest word, in keys */
+#define SEG_CANDS 16            /* most frequent words tried per piece */
+#define SEG_PEN (-4)            /* per word, 1/4 nat */
+typedef struct { int32_t score; uint16_t prev, t; uint8_t from, fk; } seg_state;
+
+/* The n most frequent ids whose keys are exactly k[0..kn), ascending (decoder.js exactMatches). */
+static int seg_exact(const op_model *m, const char *k, int kn, uint16_t *ids, int n) {
+    int nb = 0, starts;
+    for (int strip = 0; strip < 2; strip++) {
+        OP_REF(uint16_t) ix = strip ? m->strip_idx : m->key_idx;
+        uint32_t ixn = strip ? m->n_strip : m->n_words;
+        for (uint32_t i = lower_bound(m, ix, ixn, strip, k, kn), c = 0; i < ixn && c < (uint32_t)n; i++, c++) {
+            if (key_cmp(m, AU16(ix, i), strip, k, kn, &starts) != 0) break;
+            uint16_t id = AU16(ix, i);
+            if (nb < n) ids[nb++] = id;
+            else if (id < ids[n - 1]) ids[n - 1] = id;
+            else continue;
+            for (int j = nb - 1; j > 0 && ids[j] < ids[j - 1]; j--) { uint16_t x = ids[j]; ids[j] = ids[j - 1]; ids[j - 1] = x; }
+        }
+    }
+    return nb;
+}
+/* The most frequent word whose keys start with k[0..kn) and are longer, or OP_NONE. */
+static uint16_t seg_prefix(const op_model *m, const char *k, int kn) {
+    uint16_t best = OP_NONE;
+    int starts;
+    for (int strip = 0; strip < 2; strip++) {
+        OP_REF(uint16_t) ix = strip ? m->strip_idx : m->key_idx;
+        uint32_t ixn = strip ? m->n_strip : m->n_words;
+        for (uint32_t i = lower_bound(m, ix, ixn, strip, k, kn); i < ixn; i++) {
+            int c = key_cmp(m, AU16(ix, i), strip, k, kn, &starts);
+            if (!starts) break;
+            if (c > 0 && AU16(ix, i) < best) best = AU16(ix, i);
+        }
+    }
+    return best;
+}
+static void seg_add(seg_state *a, uint8_t *n, seg_state e) {
+    int d = -1, at = 0;
+    for (int i = 0; i < *n; i++) if (a[i].prev == e.prev && a[i].t == e.t) d = i;
+    if (d >= 0) {
+        if (a[d].score >= e.score) return;
+        memmove(&a[d], &a[d + 1], (size_t)(*n - d - 1) * sizeof *a);
+        (*n)--;
+    }
+    while (at < *n && a[at].score >= e.score) at++;
+    if (at >= SEG_BEAM) return;
+    memmove(&a[at + 1], &a[at], (size_t)(*n - at - (*n == SEG_BEAM)) * sizeof *a);
+    a[at] = e;
+    if (*n < SEG_BEAM) (*n)++;
+}
+#if defined(__GNUC__)
+#define OP_NOINLINE __attribute__((noinline))
+#else
+#define OP_NOINLINE
+#endif
+/* Split token i (L predictive keys, k) into words; returns how many pieces (1: left whole). Its
+ * own function, never inlined, so its ~12 KB of state is on the stack only while it runs. */
+static OP_NOINLINE int segment_run(op_decoder *d, const op_model *m, int i, int L, uint16_t p0, int is_last) {
+    op_tok *t = &d->toks[i];
+    const char *k = d->keys + t->off;
+    int32_t pen = SEG_PEN * m->scale / 4;
+    seg_state st[SEG_RUN + 1][SEG_BEAM];
+    uint8_t ns[SEG_RUN + 1];
+    memset(ns, 0, (size_t)(L + 1));
+    st[0][0].score = 0; st[0][0].prev = p0;
+    st[0][0].t = OP_NONE; st[0][0].from = 0xFF; st[0][0].fk = 0xFF; ns[0] = 1;
+    for (int p = 0; p < L; p++) {
+        if (!ns[p]) continue;
+        uint16_t ids[SEG_MAXLEN][SEG_CANDS], pre[SEG_MAXLEN];
+        int nid[SEG_MAXLEN], maxl = L - p < SEG_MAXLEN ? L - p : SEG_MAXLEN;
+        for (int l = 1; l <= maxl; l++) {
+            nid[l - 1] = seg_exact(m, k + p, l, ids[l - 1], SEG_CANDS);
+            pre[l - 1] = is_last && p + l == L ? seg_prefix(m, k + p, l) : OP_NONE;
+        }
+        for (int s = 0; s < ns[p]; s++) {
+            seg_state h = st[p][s];
+            for (int l = 1; l <= maxl; l++) {
+                for (int c = 0; c <= nid[l - 1]; c++) {     /* the words, then the completion */
+                    uint16_t id = c < nid[l - 1] ? ids[l - 1][c] : pre[l - 1];
+                    if (id == OP_NONE) continue;
+                    seg_state e;
+                    e.score = h.score + lp3(m, h.t, h.prev, id) + pen + (c == nid[l - 1] ? m->param[OP_P_COMPLETION] : 0);
+                    e.prev = id; e.t = tri_find(m, h.prev, id); e.from = (uint8_t)p; e.fk = (uint8_t)s;
+                    seg_add(st[p + l], &ns[p + l], e);
+                }
+            }
+        }
+    }
+    if (!ns[L]) return 1;
+    uint8_t cut[SEG_RUN + 1];                       /* each piece's start, last piece first */
+    int nc = 0;
+    for (int q = L, s = 0; st[q][s].from != 0xFF;) {
+        int q2 = st[q][s].from;
+        cut[nc++] = (uint8_t)q2;
+        s = st[q][s].fk; q = q2;
+    }
+    if (nc <= 1) return 1;
+    memmove(&d->toks[i + nc], &d->toks[i + 1], (size_t)(d->n_toks - i - 1) * sizeof *d->toks);
+    uint16_t off = t->off;
+    for (int c = 0; c < nc; c++) {
+        int a = cut[nc - 1 - c], z = c + 1 < nc ? cut[nc - 2 - c] : L;
+        op_tok *pc = &d->toks[i + c];
+        pc->type = TOK_WORD; pc->lit = 0; pc->off = (uint16_t)(off + a); pc->len = (uint16_t)(z - a);
+    }
+    d->n_toks = (uint16_t)(d->n_toks + nc - 1);
+    return nc;
+}
+static int segment_runs(op_decoder *d, const op_model *m) {
+    if (!(m->param[OP_P_FLAGS] & FLAG_CJK)) return OP_OK;
+    for (int i = 0; i < d->n_toks; i++) {
+        const op_tok *t = &d->toks[i];
+        const char *k = d->keys + t->off;
+        int L = t->type == TOK_WORD ? t->len : 0, ok = L >= 2 && L <= SEG_RUN && t->lit != '-';
+        for (int j = 0; j < L && ok; j++)
+            ok = k[j] >= '2' && k[j] <= '9' && !d->lits[t->off + j] && !d->hints[t->off + j];
+        if (ok) {                                   /* a dictionary word as typed stays whole */
+            uint16_t id;
+            ok = !seg_exact(m, k, L, &id, 1);
+        }
+        if (!ok) continue;
+        int b = i - 1;
+        while (b >= 0 && d->toks[b].type == TOK_SPACE) b--;
+        uint16_t p0 = b < 0 || d->toks[b].type == TOK_PUNCT ? m->bos : OP_NONE;
+        i += segment_run(d, m, i, L, p0, i == d->n_toks - 1) - 1;
+    }
+    return OP_OK;
+}
+#else
+static int segment_runs(op_decoder *d, const op_model *m) { (void)d; (void)m; return OP_OK; }
+#endif
+
 static int punct_index(const op_model *m, char ch) {
     for (int i = 0; i < m->n_punct; i++) if (ACH(m->punct, i) == ch) return i;
     return 0;
@@ -1547,6 +1683,7 @@ int op_decode(op_decoder *d, const op_model *m, const char *keys, int beam,
     d->user = start && start->user && start->user->bos == m->bos ? start->user : NULL;
     if (d->user) join_learned(d);
     if ((r = split_elisions(d, m)) != OP_OK) return r;
+    if ((r = segment_runs(d, m)) != OP_OK) return r;
     d->n_slots = 0;
     for (int i = 0; i < d->n_toks; i++) {
         if (d->toks[i].type == TOK_SPACE) continue;
