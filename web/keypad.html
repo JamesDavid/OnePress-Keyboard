@@ -86,6 +86,7 @@ h1 { font-family: var(--f-display); font-weight: 700; font-size: 1.35rem; letter
 .out .w.locked { text-decoration: underline dotted; text-underline-offset: 4px; }
 .out .w.unk { color: var(--warn); font-style: italic; }
 .out .ghost { color: var(--ghost); }
+.out .w.comp { color: var(--ghost); }
 .out .caret { display: inline-block; width: 2px; height: 1.2em; background: var(--lcd-ink); vertical-align: -0.2em; margin-left: 1px; animation: blink 1.1s steps(1) infinite; }
 .out .placeholder { color: var(--ghost); font-size: 1.05rem; }
 @keyframes blink { 50% { opacity: 0; } }
@@ -315,8 +316,8 @@ body { padding-block: clamp(8px, 2.2dvh, 20px) clamp(10px, 3dvh, 28px); }
 <script type="application/octet-stream" id="model-ar" data-file="onepress-ar.bin" data-size="1668152" data-words="45000"></script>
 <script type="application/octet-stream" id="model-ar-m" data-file="onepress-ar-m.bin" data-size="626336" data-words="20000"></script>
 <script type="application/octet-stream" id="model-ar-s" data-file="onepress-ar-s.bin" data-size="146040" data-words="5000"></script>
-<script type="application/octet-stream" id="model-zh" data-file="onepress-zh.bin" data-size="2449256" data-words="45000"></script>
-<script type="application/octet-stream" id="model-zh-m" data-file="onepress-zh-m.bin" data-size="1454804" data-words="20000"></script>
+<script type="application/octet-stream" id="model-zh" data-file="onepress-zh.bin" data-size="2656164" data-words="45000"></script>
+<script type="application/octet-stream" id="model-zh-m" data-file="onepress-zh-m.bin" data-size="1624816" data-words="20000"></script>
 <script>
 // Keypad decoder: word unigram + bigram model, beam search over word slots.
 // Reads the KPD2 binary model (model/export_bin.py). Scores are integers (1/scale nats), so
@@ -1932,6 +1933,16 @@ if (typeof module !== 'undefined') module.exports = { segParams, buildModel, dec
     if (c) commitPrev = c.id >= 0 && c.id < m.n ? c.id : c.id >= m.n && c.id < m.bos ? (c.text === ',' ? c.id : m.bos) : -1;
     keys = ''; locks = {}; sel = null; update();
   }
+  // Chinese: the pinyin of the composition as decoded, syllables of each word together and words
+  // apart (wo'men'ming), as a Chinese keypad shows it above the characters.
+  function reading() {
+    let s = '', word = false;
+    result.slots.forEach((sl, j) => {
+      const c = sl.cands[best.path[j]];
+      if (sl.tok.type === 'word') { s += (word ? "'" : '') + c.text; word = true; } else { s += c.text; word = false; }
+    });
+    return s;
+  }
   function composedText() {
     if (!best) return '';
     return render(m, result, best).map(p => cjk() && p.partial ? p.partial : p.text).join('');
@@ -2045,6 +2056,9 @@ if (typeof module !== 'undefined') module.exports = { segParams, buildModel, dec
         const span = document.createElement('span');
         span.className = 'w' + (piece.slot === j0 ? ' sel' : '') + (locks[piece.slot] ? ' locked' : '') + (piece.unknown ? ' unk' : '');
         span.textContent = piece.text;
+        // Chinese: a word still being typed shows its characters (grayed, as a Chinese keyboard
+        // composes); its pinyin is on the line below
+        if (cjk() && piece.partial) { span.textContent = piece.partial; span.classList.add('comp'); ghostShown = true; out.appendChild(span); continue; }
         span.dataset.slot = piece.slot;
         span.addEventListener('click', () => { sel = piece.slot; renderAlts(); highlightSel(); });
         out.appendChild(span);
@@ -2058,7 +2072,7 @@ if (typeof module !== 'undefined') module.exports = { segParams, buildModel, dec
     }
     const caret = document.createElement('span'); caret.className = 'caret'; out.appendChild(caret);
     if (sel === null) out.scrollTop = out.scrollHeight;
-    $('keysShown').textContent = keys || ' ';
+    $('keysShown').textContent = cjk() && best ? reading() || ' ' : keys || ' ';
     $('exampleTag').textContent = exact ? 'ABC · exact spelling' : (isExample ? 'Example' : (keys ? keys.length + ' presses' : ''));
     renderAlts();
     const qn = $('qwNext');

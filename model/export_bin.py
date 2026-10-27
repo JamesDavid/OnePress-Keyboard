@@ -2,7 +2,7 @@
 
 Usage: python export_bin.py model.json onepress.bin [--vocab N] [--min-count C] [--ambig-only]
                            [--tri-min C] [--tri-contexts N] [--no-context-case] [--no-compounds]
-                           [--known-compounds ZIPF] [--compound-parts ZIPF] [--no-slips]
+                           [--known-compounds ZIPF] [--compound-parts ZIPF] [--no-slips] [--lambda-k K]
 
 Everything is little-endian, every section 4-byte aligned, and the decoder searches the
 file in place (from flash or a memory map), so nothing is parsed or allocated on load.
@@ -179,7 +179,7 @@ LANGS = {
     # Chinese marks a question at its end (吗 呢 吧), which the word pairs carry: no openers.
     "zh": ([], [], 32),
 }
-LAMBDA_K = 40   # lambda = c / (c + LAMBDA_K), Witten-Bell style
+LAMBDA_K = 40   # lambda = c / (c + LAMBDA_K), Witten-Bell style; --lambda-k (Chinese: 320)
 TRI_K = int(__import__("os").environ.get("TRI_K", 40))      # the same for three-word contexts
 
 from chartable import key_of      # the decoders' keys, accented Latin, Greek and Cyrillic included
@@ -307,8 +307,10 @@ def main():
                     help="with --vocab, also keep the words listed in FILE (data/radio.txt: # starts a comment)")
     ap.add_argument("--compound-parts", type=float, default=None, metavar="ZIPF",
                     help="with --vocab, also keep the words that make up known compounds down to this zipf frequency")
+    ap.add_argument("--lambda-k", type=int, default=LAMBDA_K,
+                    help="word pair smoothing: lambda = c / (c + K); larger trusts the pairs less (Chinese: 320)")
     a = ap.parse_args()
-    no_compounds, no_slips, known_zipf = a.no_compounds, a.no_slips, a.known_compounds      # (a is reused below)
+    no_compounds, no_slips, known_zipf, lambda_k = a.no_compounds, a.no_slips, a.known_compounds, a.lambda_k  # (a is reused below)
     M0 = json.load(open(a.model_json, encoding="utf-8"))
     extra = compound_parts(M0["words"], M0["logp"], a.vocab, M0.get("lang", "en"), a.compound_parts) \
         if a.compound_parts is not None and a.vocab else ()
@@ -360,7 +362,7 @@ def main():
             # Interpolated P(next | r) for the stored pairs; every other next token gets
             # bow * P(next), with bow chosen so the row still sums to one. Without pruning
             # that is exactly 1 - lambda.
-            lam = c / (c + LAMBDA_K)
+            lam = c / (c + lambda_k)
             p_sum = u_sum = 0.0
             for a, cnt in sorted(zip(arr[0::2], arr[1::2])):
                 p = lam * cnt / c + (1 - lam) * uni[a]

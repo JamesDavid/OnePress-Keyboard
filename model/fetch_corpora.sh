@@ -41,3 +41,11 @@ done
 mkdir -p corpora/zh
 curl -sSfL -o corpora/zh/cmn_sentences.tsv.bz2 "https://downloads.tatoeba.org/exports/per_language/cmn/cmn_sentences.tsv.bz2"
 "${PYTHON:-$(command -v python || command -v python3)}" prep_zh.py corpora/zh/cmn_sentences.tsv.bz2 corpora/zh
+# Common Voice's Mandarin sentences (CC0, github.com/common-voice/common-voice server/data): only the
+# conversational ones; its Wikipedia sentences made the model worse on dev.
+mkdir -p corpora/zh/cv
+for f in zh-CN/cn.txt zh-CN/sentence-collector.txt zh-TW/chatlogs.txt zh-TW/lms.txt zh-TW/sentence-collector.txt \
+         zh-TW/setences.txt zh-TW/taipei_city_gov.txt; do
+  curl -sSfL -o "corpora/zh/cv/$(echo $f | tr / _)" "https://raw.githubusercontent.com/common-voice/common-voice/main/server/data/$f"
+done
+"${PYTHON:-$(command -v python || command -v python3)}" prep_zh.py --extra corpora/zh/train_cv_chat.txt corpora/zh/cv/*.txt

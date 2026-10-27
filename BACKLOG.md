@@ -80,8 +80,9 @@ Version 1 is in: `model/prep_zh.py`, `build_model.py --lang zh`, `onepress-zh.bi
 `tests/eval.js` / `tests/baseline.js` for Chinese. Held-out: 85.4% of words, 88.2% of characters
 (classic pinyin keypad 78.2% / 81.9%). No new model section was needed: a word is stored as its
 pinyin and shown as its characters. Step 5 is in too: spaces are optional, the decoder splits
-words (83.6% of characters unspaced). Next: more text (see SPEC.md: the splits it misses are ones
-the word model can't tell apart).
+words (84.2% of characters unspaced). Common Voice's conversational sentences are in (+0.1), its
+Wikipedia ones hurt; smoothing the pairs more gave +0.5. Next: more conversational text, if any
+with clean terms turns up; variant spellings in the test (甚么/什么, 妳/你).
 
 ### What's new compared with the other languages
 

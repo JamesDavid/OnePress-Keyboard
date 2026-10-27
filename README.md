@@ -32,7 +32,7 @@ browser, and a short tutorial starts on your first visit.
   81–82% against 66%.
 - **Chinese:** type toneless pinyin, one press per letter, and the sentence picks the
   characters (`426` is hao, gao or gan: 好 号 高 干 感…). No spaces between words: the decoder finds
-  the words itself, and `0` commits the characters, as space does on Chinese keyboards. 88.2% of characters right with spaces (a classic pinyin keypad
+  the words itself, and `0` commits the characters, as space does on Chinese keyboards. 88.7% of characters right with spaces (a classic pinyin keypad
   that takes each word's commonest characters: 81.9%), 83.6% without; phone and ESP32 sizes.
 - **Learns from you.** Names, slang and call signs you spell once are guessed from their keys
   after that, and your own word habits and punctuation get more likely. Recent messages count too.
@@ -126,8 +126,8 @@ against `tests/baseline.js`):
 - OnePress gets 96.1–98.7% of words right, against 83–95% for a classic keypad.
 - Arabic is much harder: its keypad puts far more common words on the same keys, and words are
   written without short vowels. It gets 81–82%, against 66%.
-- Chinese, typed as pinyin with a space between words: 85.6% of words and 88.2% of characters
-  right, against 78.2% and 81.9% one word at a time. Many of the misses are 他 / 她 / 它, all
+- Chinese, typed as pinyin with a space between words: 86.0% of words and 88.7% of characters
+  right, against 77.7% and 81.9% one word at a time; 84.2% of characters typed without spaces. Many of the misses are 他 / 她 / 它, all
   "ta".
 - The full table is in [SPEC.md](SPEC.md).
 

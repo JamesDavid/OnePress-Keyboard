@@ -10,10 +10,13 @@ LANGS="${*:-es de pt fr it nl sv pl cs tr ru el ar zh}"
 for c in $LANGS; do
   [ -f corpora/$c/train.txt ] || { echo "no corpora/$c/train.txt (run fetch_corpora.sh)"; continue; }
   if [ $c = zh ]; then
-    # Chinese: a small corpus, so every pair seen once is kept (as Arabic); words are pinyin
-    "$PY" build_model.py corpora model-zh.json - - corpora/zh/train.txt:1 --lang zh --pairs-seen 1
-    "$PY" export_bin.py model-zh.json onepress-zh.bin --ambig-only --min-count 1 --tri-min 2 --no-compounds
-    "$PY" export_bin.py model-zh.json onepress-zh-m.bin --vocab 20000 --ambig-only --min-count 1 --tri-min 2 --no-compounds
+    # Chinese: a small corpus, so every pair seen once is kept (as Arabic) and pairs are smoothed
+    # more (--lambda-k 320: +0.4 points of characters on dev spaced, +0.6 unspaced); words are pinyin.
+    # Plus Common Voice's conversational Mandarin sentences (train_cv_chat.txt, prep_zh.py --extra).
+    cv=""; [ -f corpora/zh/train_cv_chat.txt ] && cv="corpora/zh/train_cv_chat.txt:1"
+    "$PY" build_model.py corpora model-zh.json - - corpora/zh/train.txt:1 $cv --lang zh --pairs-seen 1
+    "$PY" export_bin.py model-zh.json onepress-zh.bin --ambig-only --min-count 1 --tri-min 2 --no-compounds --lambda-k 320
+    "$PY" export_bin.py model-zh.json onepress-zh-m.bin --vocab 20000 --ambig-only --min-count 1 --tri-min 2 --no-compounds --lambda-k 320
     continue
   fi
   # Arabic: keys far more ambiguous than the others' and little text, so it keeps every pair

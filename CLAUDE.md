@@ -38,8 +38,8 @@ neural network helps on phones and the web.
   `--learn`, `--nn model/onepress-nn-s.bin`, `--model model/onepress-es.bin`) for anything touching decode.
 - Other languages (es de pt fr it nl sv pl cs tr ru el ar zh; `model/build_langs.sh`, letters from `model/chartable.py`;
   Chinese is pinyin words shown as characters, `model/prep_zh.py`, test lines "characters<TAB>pinyin", now
-  85.42% of words / 88.17% of characters, classic keypad 78.15%; without spaces (`--no-spaces`, the
-  decoder splits words) 83.58% of characters; parity and `resume_test.js --text` on the pinyin column
+  88.66% of characters / 85.74% of words, classic keypad 81.87% / 77.73%; without spaces (`--no-spaces`,
+  the decoder splits words) 84.22% of characters; `export_bin.py --lambda-k 320`; parity and `resume_test.js --text` on the pinyin column
   of `corpora/zh/dev.txt`, with and without its spaces; small C builds can pass `-DOP_NO_CJK`): `node tests/eval.js model/corpora/es/test.txt
   --oov-exact --model model/onepress-es.bin`; `tests/baseline.js` gives the classic keypad. Parity:
   `node tests/parity.js --model model/onepress-es.bin --text model/corpora/es/dev.txt`.

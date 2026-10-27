@@ -40,9 +40,10 @@ if (oovExact) args.splice(args.indexOf('--oov-exact'), 1);
 // Chinese (model flag 32): each test line is the words in characters, a tab, and their pinyin
 // (model/prep_zh.py). The pinyin is typed and the characters scored, word by word and by
 // character (edit distance over the sentence without its marks; not with --oov-exact).
+// A word is right when the output has it where it starts (the characters before it: a word the
+// model lacks may come out as several), a sentence when its text is.
 // --no-spaces: typed without 0 between words or after a mark (the decoder splits the words; on a
-// keyboard 0 commits); a word is then right when
-// the output has it at the same place (characters before it), and a sentence when its text is.
+// keyboard 0 commits).
 const noSpaces = args.includes('--no-spaces');
 if (noSpaces) args.splice(args.indexOf('--no-spaces'), 1);
 if (m.params.flags & 32) {
@@ -71,14 +72,14 @@ if (m.params.flags & 32) {
   const st = { sent: 0, w: 0, wt: 0, a: 0, at: 0, p: 0, pt: 0, oov: 0, ch: 0, cht: 0 }, errs = new Map();
   cases.forEach((c, i) => {
     const b = hyps[i] || [];
-    if (noSpaces ? c.ref.join('') === b.join('') : c.ref.join(' ') === b.join(' ')) st.sent++;
+    if (c.ref.join('') === b.join('')) st.sent++;
     const at = ws => { let n = 0; return ws.map(w => { const o = n; n += [...w].length; return o; }); };
     const ra = at(c.ref), ha = at(b), byAt = new Map(b.map((w, j) => [ha[j] + '|' + w, true]));
     const chars = s => [...s.filter(x => !/^[.,!?]$/.test(x)).join('')];
     const rc = chars(c.ref);
     st.cht += rc.length; st.ch += Math.max(0, rc.length - dist(rc, chars(b)));
     c.ref.forEach((x, j) => {
-      const ok = noSpaces ? byAt.has(ra[j] + '|' + x) : x === b[j];
+      const ok = byAt.has(ra[j] + '|' + x);
       if (/^[.,!?]$/.test(x)) { st.pt++; st.p += ok; return; }
       if (oovExact && !shown.has(x)) { st.oov++; return; }
       st.wt++; st.w += ok;

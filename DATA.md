@@ -26,6 +26,7 @@ The corpora are not stored here; `model/fetch_corpora.sh` downloads them.
 | Movie Review Data, Bo Pang and Lillian Lee (via NLTK) | word pairs and triples, neural model | CC BY 4.0 |
 | Names Corpus v1.3, Mark Kantrowitz, additions by Bill Ross (via NLTK) | first names in the vocabulary | Free to use with credit; names from it are in the model's vocabulary, so its README is included as [`model/data/NAMES-README.txt`](model/data/NAMES-README.txt) |
 | [Tatoeba](https://tatoeba.org) sentences in Spanish, German, Portuguese, French, Italian, Dutch, Swedish, Polish, Czech, Turkish, Russian, Greek, Arabic and Mandarin Chinese | those languages' models: word pairs and triples, casing (train split); their test splits are the evaluation | [CC BY 2.0 FR](https://creativecommons.org/licenses/by/2.0/fr/) |
+| [Common Voice](https://github.com/common-voice/common-voice) Mandarin sentences (`server/data/zh-CN`, `zh-TW`: chat logs and sentence collector, not its Wikipedia sentences) | the Chinese models' word pairs and triples (train only; any dev or test sentence left out) | [CC0 1.0](https://github.com/common-voice/common-voice/blob/main/server/data/LICENSE) |
 | [pypinyin](https://github.com/mozillazg/python-pinyin) and its pinyin data; [jieba](https://github.com/fxsjy/jieba) with wordfreq's dictionary | the Chinese words' pinyin (their keys); splitting Chinese text into words | MIT |
 | `model/data/messages.txt`, `model/data/proper.txt` | everyday messages, brand and place names | Written for this project; same license as the code |
 | `model/data/radio.txt`, `model/data/radio_messages.txt`, `tests/radio_test.txt` | amateur radio and mesh words and exchanges (the radio model; its sanity test) | Written for this project; same license as the code |
@@ -45,7 +46,7 @@ Include this, or equivalent, wherever you ship the model files:
 > Data (Bo Pang and Lillian Lee, CC BY 4.0); the Names Corpus (© 1991 Mark Kantrowitz,
 > additions by Bill Ross); and Project Gutenberg texts. The models for other languages
 > (onepress-<lang>*.bin) also use sentences from Tatoeba
-> (tatoeba.org, CC BY 2.0 FR).
+> (tatoeba.org, CC BY 2.0 FR); the Chinese ones also Common Voice sentences (CC0).
 
 NUS SMS Corpus citation: Tao Chen and Min-Yen Kan (2013). Creating a Live, Public Short
 Message Service Corpus: The NUS SMS Corpus. *Language Resources and Evaluation*, 47(2):299–355.

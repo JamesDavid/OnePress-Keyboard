@@ -1,6 +1,7 @@
 """Tatoeba Mandarin sentences, in Simplified characters, split into words, for the Chinese model.
 
 Usage: python prep_zh.py corpora/zh/cmn_sentences.tsv.bz2 corpora/zh
+       python prep_zh.py --extra corpora/zh/train_cv.txt corpora/zh/cv/*.txt
 
 Needs jieba and pypinyin (pip install jieba pypinyin, both MIT). Tatoeba (tatoeba.org, CC BY 2.0
 FR) mixes Simplified and Traditional; wordfreq's table makes everything Simplified. Keeps
@@ -13,13 +14,18 @@ test.txt add a tab and the pinyin a person would type for each word, toneless wi
 ("women mingtian qu beijing ba."). That pinyin is read from the whole sentence (pypinyin), so
 a character read differently in context (长大 zhang, 银行 hang) is typed that way. Split by
 sentence id as prep_tatoeba.py: 1 in 20 to test.txt, 1 in 20 to dev.txt, the rest to train.txt.
+
+--extra: more training text, one sentence per line (Common Voice's Mandarin sentences, CC0),
+cleaned and split the same way into one file, without any sentence of dev.txt or test.txt (in
+the output's folder; run the Tatoeba step first).
 """
 import bz2, hashlib, os, re, sys
 from pypinyin import lazy_pinyin
 from wordfreq import tokenize
 from wordfreq.chinese import simplify_chinese
 
-src, out = sys.argv[1], sys.argv[2]
+EXTRA = sys.argv[1] == "--extra"
+src, out = (None, sys.argv[2]) if EXTRA else (sys.argv[1], sys.argv[2])
 HAN = "㐀-䶿一-鿿"
 MARKS = {"，": ",", "。": ".", "？": "?", "！": "!", "、": ",", "；": ",", "：": ",",
          ",": ",", ".": ".", "?": "?", "!": "!"}
@@ -55,6 +61,22 @@ def clean(t):
             return None
         pin.append(p)
     return (" ".join(w + m for w, m in zip(words, marks)), " ".join(p + m for p, m in zip(pin, marks)))
+
+if EXTRA:
+    held = set()
+    for name in ("dev", "test"):
+        for line in open(os.path.join(os.path.dirname(out), name + ".txt"), encoding="utf-8"):
+            held.add(line.split("\t")[0].replace(" ", ""))
+    rows, seen = [], set()
+    for path in sys.argv[3:]:
+        for line in open(path, encoding="utf-8"):
+            s = clean(line.strip())
+            if s and s[0] not in seen and s[0].replace(" ", "") not in held:
+                seen.add(s[0])
+                rows.append(s[0])
+    open(out, "w", encoding="utf-8", newline="\n").write("\n".join(rows) + "\n")
+    print(f"{len(rows)} sentences in {out}")
+    sys.exit()
 
 splits = {"train": [], "dev": [], "test": []}
 seen = set()
