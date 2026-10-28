@@ -31,6 +31,10 @@ for (const f of ['test.txt', 'dev.txt']) {
   if (fs.existsSync(p)) for (const s of fs.readFileSync(p, 'utf8').split('\n')) if (s) inputs.push(enc(s));
 }
 inputs.push(enc("Can you pick up the kids after school?"), enc("We're going to McDonald's tonight!"), '');
+// addresses (# for the dots) and handles (# before a word: @name, ## #tag)
+for (const s of ['Email me at first.last.gmail.com.', 'Send it to john.gmail.com or info.bbc.co.uk', 'Go to google.com',
+  'Check www.bbc.co.uk', 'Follow .john and ..tbt', 'Hey .sarah are you coming?'])
+  for (let i = 1; i <= enc(s).length; i++) inputs.push(enc(s).slice(0, i));
 // --text file: its sentences too (e.g. corpora/es/dev.txt for a Spanish model), accents included,
 // some with the text before and QWERTY letters (plain), and some with every third word spelled
 // out exactly in its own letters (Cyrillic, Greek, accented: as that language's multi-tap gives).

@@ -65,7 +65,7 @@ one character per press; on delete, remove the last character. Never store '1' o
 |---|---|
 | Keys 2-9 (predictive) | `'2'`-`'9'` |
 | Space (key 0) | `'0'` |
-| `#` (punctuation; the model picks `. , ? !`; between letters it is an apostrophe) | `'#'` |
+| `#` (punctuation; the model picks `. , ? !`; between letters it is an apostrophe, and in an address a dot: `first#last#gmail#com` is first.last@gmail.com; before a word at the start or after a space, `@name`, and `##` before one `#tag`) | `'#'` |
 | A held number key (the digit itself) | `'A'`-`'J'` for 0-9 (`'A'` + digit) |
 | Exact (multi-tap) mode: a letter | `'a'`-`'z'`, or `'\''` |
 | Exact mode: punctuation | `'.'`, `','`, `'?'`, `'!'`, `':'` |

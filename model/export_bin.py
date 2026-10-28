@@ -106,20 +106,26 @@ def compound_parts(words, logp, vocab, lang, zipf):
 # exclamation with ¿ / ¡ (Spanish), 4 shows the question mark as ; (Greek), 8 puts a narrow no-break
 # space before ? ! : (French), 16 shows ? and , as Arabic ؟ ، , 32 is Chinese: no spaces between
 # words, the marks shown full width (，。？！), and a word being typed shown as its pinyin so far.
+# cS (optional, 0 in older files): a comma after a clause of only QUESTION_SKIP words ("k, no rush").
 PARAMS = ["qQ", "qN", "dQ", "cF", "dB", "cB", "eB", "apostrophe", "completion", "literal", "unknown",
-          "slipSub", "slipDup", "flags"]
+          "slipSub", "slipDup", "flags", "cS"]
 DEFAULTS = {"qQ": 2.5, "qN": -1.5, "dQ": -1.5, "cF": -3, "dB": 0, "cB": 0, "eB": 0,
             "apostrophe": math.log(0.5), "completion": math.log(0.5), "literal": -14, "unknown": -25,
-            "slipSub": -12, "slipDup": -8}
+            "slipSub": -12, "slipDup": -8, "cS": 1}
 QUESTION_STARTERS = ['what', 'where', 'when', 'why', 'who', 'whom', 'whose', 'which', 'how',
     'can', 'could', 'would', 'should', 'will', 'shall', 'do', 'does', 'did', 'is', 'are', 'was', 'were', 'am',
     "isn't", "aren't", "don't", "doesn't", "didn't", "can't", "won't", "wouldn't", "shouldn't", "couldn't",
     'have', 'has', 'may', 'might', 'want', 'wanna', 'need', 'got', 'any', 'anyone', 'anybody', 'anything',
-    'ready', 'free', 'you', 'u']
+    'ready', 'free', 'you', 'u',
+    "how's", "what's", "where's", "when's", "who's", "why's", 'hows', 'whats', 'wheres', 'wat', 'wut',
+    'r', 'ur', 'hav', 'wana', 'shld', 'cn', 'wld',
+    # openers of questions at least 40% of the time in the training text (question_words.py), reviewed
+    'right', 'really', 'correct', 'wonder', 'huh', 'ever', "wasn't", 'wasnt', 'isnt', 'didnt', 'y', 'hw']
 # Greetings and fillers before the real opener: "hello how are you" is still a question.
 QUESTION_SKIP = ['hello', 'hi', 'hey', 'hiya', 'yo', 'ok', 'okay', 'oh', 'well', 'so', 'and', 'but',
     'also', 'anyway', 'btw', 'dear', 'dude', 'babe', 'guys', 'lol', 'haha', 'hmm', 'um', 'uh', 'ah',
-    'yeah', 'sorry', 'thanks', 'wow']
+    'yeah', 'sorry', 'thanks', 'wow', 'k', 'kk', 'aight', 'alright', 'nah', 'nope', 'yep', 'yup', 'yes',
+    'no', 'sure', 'cool', 'hahaha', 'lmao', 'omg', 'man', 'bro', 'dang', 'damn', 'oops', 'thx', 'ya', 'yea']
 # Per language (model.json "lang", from build_model.py --lang): question openers, words skipped
 # before them, and the flags param.
 LANGS = {

@@ -55,7 +55,7 @@ const SECTIONS = ['wordText', 'wordOff', 'keyIdx', 'stripIdx', 'dispId', 'dispOf
   'qSkip', 'triKey', 'triStart', 'triBow', 'triNext', 'triLp', 'capKey', 'altId', 'altOff', 'altText', 'capNextKey', 'capKeepKey',
   'cmpHead', 'cmpTail', 'cmpKnown', 'cmpBloom'];
 const PARAMS = ['qQ', 'qN', 'dQ', 'cF', 'dB', 'cB', 'eB', 'apostrophe', 'completion', 'literal', 'unknown',
-  'slipSub', 'slipDup', 'flags'];    // optional: older files stop at 'unknown' (defaults below)
+  'slipSub', 'slipDup', 'flags', 'cS'];    // optional: older files stop at 'unknown' (defaults below)
 // params.flags: FLAG_I capitalizes "i" (English), FLAG_INVERTED opens a question or exclamation
 // with ¿ / ¡ (Spanish), FLAG_GREEK_Q shows the question mark as ; (Greek), FLAG_FR_SPACE puts a
 // narrow no-break space before ? ! : (French), FLAG_ARABIC shows ? and , as ؟ and ، (Arabic),
@@ -104,7 +104,7 @@ function buildModel(bytes) {
   const fullKeys = words.map(wordKeys);
   const raw = at('params', Int16Array), params = {};
   PARAMS.forEach((k, i) => { params[k] = raw[i]; });
-  const OPTIONAL = { slipSub: -12 * scale, slipDup: -8 * scale, flags: FLAG_I };
+  const OPTIONAL = { slipSub: -12 * scale, slipDup: -8 * scale, flags: FLAG_I, cS: 0 };
   for (let i = raw.length; i < PARAMS.length; i++) params[PARAMS[i]] = OPTIONAL[PARAMS[i]];
   return {
     words, display, fullKeys, n, bos, scale, params,
@@ -263,8 +263,15 @@ function tokenize(keys, hint = '', cjk = false) {
           lit: [...last.keys], hint: [...last.keys].map(() => null) };
       }
       const cur = toks[toks.length - 1];
-      if (cur && cur.type === 'word') { cur.keys += keyOf(ch); cur.lit.push(litOf(ch)); cur.hint.push(hintAt(i)); }
-      else toks.push({ type: 'word', keys: keyOf(ch), lit: [litOf(ch)], hint: [hintAt(i)] });
+      if (cur && cur.type === 'word') { cur.keys += keyOf(ch); cur.lit.push(litOf(ch)); cur.hint.push(hintAt(i)); continue; }
+      // A predictive '#' at the start or after a space, right before a letter, makes a handle:
+      // @name; two make a hashtag: #tag.
+      const word = { type: 'word', keys: keyOf(ch), lit: [litOf(ch)], hint: [hintAt(i)] };
+      const mark = k => { const t = toks[toks.length - k]; return t && t.type === 'punct' && !t.lit && keys[i - k] === '#'; };
+      const open = k => { const t = toks[toks.length - k]; return !t || t.type === 'space'; };
+      if (!cjk && mark(1) && mark(2) && open(3)) { toks.splice(-2, 2); word.pre = '#'; }
+      else if (!cjk && mark(1) && open(2)) { toks.pop(); word.pre = '@'; }
+      toks.push(word);
     }
   }
   return toks;
@@ -341,6 +348,7 @@ function joinLearned(toks, u) {
         keys: run.map(t => t.type === 'word' ? t.keys : [...t.keys].map(d => String.fromCharCode(65 + +d)).join('')).join(''),
         lit: [].concat(...run.map(t => t.type === 'word' ? t.lit : [...t.keys])),
         hint: [].concat(...run.map(t => t.type === 'word' ? t.hint : [...t.keys].map(() => null))),
+        pre: run[0].pre,
       };
       const keys = userTyped(tok.keys);
       if (u.words.some(w => userMatch(w, tok, keys, j === toks.length))) { out.push(tok); i = j; continue; }
@@ -483,10 +491,11 @@ function splitElisions(toks, m, u, near) {
   const ending = t => m.elided && exactMatches(m, t.keys).some(id => isEnding(m.words[id]) && litMatch(m, t, id, t.keys));
   const word = t => t.keys.length > 0 && exactMatches(m, t.keys).some(id => m.fullKeys[id] === t.keys && litMatch(m, t, id, t.keys));
   const part = (t, a, b) => ({ type: 'word', keys: t.keys.slice(a, b), lit: t.lit.slice(a, b), hint: t.hint.slice(a, b),
-    hyphen: a === 0 ? t.hyphen : undefined });
+    hyphen: a === 0 ? t.hyphen : undefined, pre: a === 0 ? t.pre : undefined });
   const out = [];
   for (let cur of toks) {
     while (cur.type === 'word') {
+      if (addressOf(m, u, cur, near)) break;
       const p = cur.keys.indexOf('#');
       if (p < 0 || p === cur.keys.length - 1) break;
       if (p === 0) {                // an ending split off, and another # after it: -t of -t-il
@@ -533,6 +542,8 @@ function slotCandidates(m, tok, isLast, u, near) {
     if (tok.lit) return [{ text: tok.lit, id: m.n + m.punct.indexOf(tok.lit), exact: true }];
     return m.punct.map((p, i) => ({ text: p, id: m.n + i }));
   }
+  const addr = addressOf(m, u, tok, near);
+  if (addr) return addr.map((text, r) => ({ text, id: -1, address: true, penalty: r ? ADDRESS_ALT * m.scale : 0 }));
   const hasLit = tok.lit.some(x => x !== null);
   const allLit = tok.lit.every(x => x !== null);
   const qw = isQwerty(tok);
@@ -664,6 +675,64 @@ function compounds(m, tok) {
   for (let i = COMPOUND_PART; i <= n - 2 * COMPOUND_PART; i++)
     for (let j = i + COMPOUND_PART; j <= n - COMPOUND_PART; j++) split([i, j, n]);
   return best;
+}
+
+// An email address or web address typed with '#' for the dots: first#last#gmail#com is
+// first.last@gmail.com, google#com google.com, www#bbc#co#uk www.bbc.co.uk. A word token is one
+// when no word (dictionary or learned, or on a letter keyboard one the taps fit) fits it whole, it has two or more pieces split by
+// predictive '#', the last piece is an ADDRESS_ENDS ending for its keys (spelled, if its letters are
+// typed exactly or tapped: a slip in "you're" isn't you.de), and every other piece has
+// a text: its letters if each is typed exactly or tapped (QWERTY), else the first ADDRESS_WORDS
+// word for its keys (ADDRESS_SECOND first for the piece before a two-letter ending, after another
+// piece: bbc.co.uk), else the most frequent
+// dictionary word (no apostrophe). The '@' goes before
+// the domain (the piece before the ending, or before co.uk and the like) when a piece comes before
+// it and the first isn't www. Its candidates: with the '@' (if any), then all dots
+// (ADDRESS_ALT nats less). Scored as a word typed exactly (params.literal); the C decoder
+// recomputes the text from the token when rendering.
+const ADDRESS_ENDS = ['com', 'org', 'net', 'edu', 'gov', 'io', 'co', 'us', 'uk', 'ca', 'de', 'info', 'app', 'ai',
+  'fr', 'au', 'nz', 'ie', 'jp', 'tv', 'biz'];
+const ADDRESS_WORDS = ['www', 'gmail', 'yahoo', 'hotmail', 'outlook', 'icloud', 'aol', 'protonmail', 'proton',
+  'mail', 'live', 'msn', 'comcast'];
+const ADDRESS_SECOND = ['co', 'com', 'ac', 'org', 'net', 'gov', 'edu'];   // name@bbc.co.uk
+const ADDRESS_PIECES = 8, ADDRESS_ALT = -2;
+function addressOf(m, u, tok, near) {
+  if (tok.type !== 'word' || tok.pre || tok.hyphen || (m.params.flags & FLAG_CJK)) return null;
+  const k = tok.keys;
+  if (!/^[2-9]+(#[2-9]+)+$/.test(k) || [...k].some((c, i) => c === '#' && tok.lit[i] !== null)) return null;
+  if (exactMatches(m, k).some(id => litMatch(m, tok, id, k))) return null;
+  if (u && u.words.some(w => userMatch(w, tok, userTyped(k), false))) return null;
+  if (isQwerty(tok) && qwertyCandidates(m, tok, false, near)[0].length) return null;   // a word the taps fit
+  const parts = k.split('#');
+  if (parts.length > ADDRESS_PIECES) return null;
+  const texts = [];
+  let a = 0;
+  for (let p = 0; p < parts.length; p++) {
+    const b = a + parts[p].length, piece = { lit: tok.lit.slice(a, b) }, hint = tok.hint.slice(a, b);
+    const fits = w => wordKeys(w) === parts[p] && litMatchText(piece, w, parts[p]);
+    const typed = piece.lit.every((l, i) => l !== null || hint[i] !== null) ? piece.lit.map((l, i) => l !== null ? l : hint[i]).join('') : null;
+    let w;
+    if (p === parts.length - 1) w = typed !== null ? ADDRESS_ENDS.find(x => x === typed) : ADDRESS_ENDS.find(fits);
+    else if (typed !== null) w = typed;
+    else {
+      w = (p === parts.length - 2 && p > 0 && parts[p + 1].length === 2 && ADDRESS_SECOND.find(fits)) || ADDRESS_WORDS.find(fits);
+      if (!w) {
+        const ix = m.indexes[0];
+        let best = -1;
+        for (let i = lowerBound(ix, parts[p]); i < ix.keys.length && ix.keys[i] === parts[p]; i++)
+          if ((best < 0 || ix.ids[i] < best) && litMatch(m, piece, ix.ids[i], parts[p])) best = ix.ids[i];
+        if (best >= 0) w = m.words[best];
+      }
+    }
+    if (!w) return null;
+    texts.push(w);
+    a = b + 1;
+  }
+  const n = texts.length;
+  const d = n >= 3 && texts[n - 1].length === 2 && ADDRESS_SECOND.includes(texts[n - 2]) ? n - 3 : n - 2;
+  const dots = texts.join('.');
+  if (d < 1 || texts[0] === 'www') return [dots];
+  return [texts.slice(0, d).join('.') + '@' + texts.slice(d).join('.'), dots];
 }
 
 // ---- Neural word model (optional): a small GRU over the word model's vocabulary ----
@@ -939,11 +1008,13 @@ function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
     for (const h of beam) {
       for (let ci = 0; ci < s.cands.length; ci++) {
         const c = s.cands[ci];
-        let step = c.id < 0 ? (c.number ? 0 : c.literal ? P.literal : P.unknown) : tokenScore(m, u, h.prev, c.id, h.t) + (c.penalty || 0) +
+        // a handle's word (@name) is a name: the words around it say little
+        let step = c.id < 0 ? (c.number ? 0 : c.literal ? P.literal : c.address ? P.literal + c.penalty : P.unknown) :
+          (s.tok.pre ? tokenScore(m, u, -1, c.id, -1) : tokenScore(m, u, h.prev, c.id, h.t)) + (c.penalty || 0) +
           (ctx.recent.has(c.id) && (c.id > m.bos || m.uni[c.id] < RECENT_MAX_UNI * m.scale) ? Math.round(RECENT_BONUS * m.scale) : 0);
         if (c.time) step += m.scale * ((m.timeBefore.has(h.prev) ? TIME_PREV : -TIME_ALONE) - (timeKind(s.tok.keys) === '.' ? TIME_LITERAL : 0));
         if (nn) step += ((c.id >= m.n && c.id < m.bos ? nn.punctWeight : nn.weight) * nnScore(nn, h.ns.p, nnTok(c.id))) >> 8;
-        let prev = c.timeable ? AFTER_DECIMAL : c.number ? AFTER_NUMBER : c.id < 0 ? -1 : c.id;
+        let prev = c.timeable ? AFTER_DECIMAL : c.number ? AFTER_NUMBER : c.id < 0 || s.tok.pre ? -1 : c.id;
         let first = h.first, cf = h.cf;
         if (c.id >= m.n && c.id < m.bos) {
           // Punctuation: a word-pair model can't see how the sentence began,
@@ -951,7 +1022,8 @@ function decode(m, keys, locks = {}, beamWidth = 8, nBest = 5, start = {}) {
           const q = [first, cf].some(f => f !== null && m.qStart.has(f));
           if (c.text === '?') step += q ? P.qQ : P.qN;
           else if (c.text === '.') step += P.dB + (q ? P.dQ : 0);
-          else if (c.text === ',') step += P.cB + (isFinal ? P.cF : 0);
+          else if (c.text === ',') step += P.cB + (isFinal ? P.cF : 0) +
+            (cf === null && h.prev >= 0 && h.prev < m.n ? P.cS : 0);   // after only "k", "haha", ... (qSkip)
           else if (c.text === '!') step += P.eB;
           if (c.text !== ',') { prev = m.bos; first = null; }
           cf = null;
@@ -1071,9 +1143,9 @@ function render(m, result, hyp, start = {}) {
       if (CALL_SIGN.test(full.toLowerCase())) text = text.toUpperCase();
       const joined = t.hyphen ? '-' : '';         // the second word of a hyphenated pair
       if ((m.params.flags & FLAG_I) && (text === 'i' || text.startsWith("i'"))) text = 'I' + text.slice(1);
-      // keep brand styling like iPhone / eBay at the start of a sentence
-      if (capNext && !/^[a-z][A-Z]/.test(text)) text = capFirst(text);
-      text = joined + text;
+      // keep brand styling like iPhone / eBay at the start of a sentence; addresses and handles as typed
+      if (capNext && !/^[a-z][A-Z]/.test(text) && !c.address && !t.pre) text = capFirst(text);
+      text = joined + (t.pre || '') + text;
       if ((capNext || markNext) && (m.params.flags & FLAG_INVERTED)) {
         // "Hola, ¿qué tal?": a greeting or filler followed by a comma passes the mark on.
         let k = i + 1;
@@ -1084,7 +1156,7 @@ function render(m, result, hyp, start = {}) {
       }
       if (c.partial) partial = CALL_SIGN.test(full.toLowerCase()) ? full.toUpperCase() : full;
       capNext = false;
-      prev = c.id >= 0 && c.id < m.n && !c.partial ? c.id : -1;
+      prev = c.id >= 0 && c.id < m.n && !c.partial && !t.pre ? c.id : -1;
     } else {
       capNext = /^[.!?]$/.test(text) && !cjk;
       if (capNext) markNext = false;

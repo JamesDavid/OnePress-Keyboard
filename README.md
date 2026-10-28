@@ -64,11 +64,12 @@ browser, and a short tutorial starts on your first visit.
 |---|---|---|
 | `2`–`9` | a letter on that key | the digit |
 | `0` | space (Chinese: commit) | the digit 0 |
-| `#` | punctuation (the model picks `. , ? !`); between letters, an apostrophe | exact spelling on/off |
+| `#` | punctuation (the model picks `. , ? !`); between letters, an apostrophe; before a word, `@name` (`##` for `#tag`) | exact spelling on/off |
 | `*` | take the gray completion of the word being typed, else the next guess for the selected word | edit mode on/off |
 | `1` | delete | the digit 1 |
 
-Apostrophes are optional ("dont" gives "don't").
+Apostrophes are optional ("dont" gives "don't"). Addresses take `#` for the dots: `first#last#gmail#com`
+gives first.last@gmail.com and `google#com` google.com.
 
 **Edit mode** fixes an earlier word on a keypad with no arrow keys. Hold `*`: the word before the
 last is selected. `0` and `#` move back and forward a word, and `*` cycles its guesses, best first
@@ -92,8 +93,8 @@ The scripts in `tests/` reproduce every number.
 |---|---|---|---|---|
 | Multi-tap (press 7 four times for "s") | **2.15**, plus a pause every ~10 letters | 100% | 100% | typed |
 | Classic predictive keypad (one word at a time) | 1 | 89.1% | 95.2% | 19% |
-| **OnePress** (`onepress.bin`) | 1 | **94.1%** | **98.6%** | **49.8%** |
-| **OnePress** + neural network | 1 | **95.0%** | **99.0%** | **55.4%** |
+| **OnePress** (`onepress.bin`) | 1 | **94.2%** | **98.6%** | **53.7%** |
+| **OnePress** + neural network | 1 | **95.0%** | **99.0%** | **57.6%** |
 
 **Compared with multi-tap:**
 - Multi-tap is always right, but it costs more than twice the presses.
@@ -116,11 +117,11 @@ one picks each word alone, by how common it is. OnePress makes far fewer mistake
 
 | Model | Size | Texting: words | Texting: punctuation | Chat: words | Chat: punctuation | For |
 |---|---|---|---|---|---|---|
-| `onepress.bin` + `onepress-nn.bin` | 3.5 MB + 6.3 MB | **95.0%** | **55.4%** | **99.0%** | **70.9%** | phones, web |
-| `onepress.bin` + `onepress-nn-s.bin` | 3.5 MB + 2.5 MB | 94.9% | 52.7% | 98.9% | 70.2% | phones, web |
-| `onepress.bin` (45k words) | 3.5 MB | 94.1% | 49.8% | 98.6% | 67.7% | phones, web |
-| `onepress-m.bin` + `onepress-nn-m.bin` | 1.5 MB + 1.7 MB | 94.4% | 51.0% | 98.8% | 69.2% | ESP32 with flash to spare |
-| `onepress-m.bin` (29k words, plus radio words) | 1.5 MB | 94.1% | 47.2% | 98.5% | 65.2% | ESP32, Meshtastic |
+| `onepress.bin` + `onepress-nn.bin` | 3.5 MB + 6.3 MB | **95.0%** | **57.6%** | **99.0%** | **71.0%** | phones, web |
+| `onepress.bin` + `onepress-nn-s.bin` | 3.5 MB + 2.5 MB | 94.9% | 55.1% | 98.9% | 70.3% | phones, web |
+| `onepress.bin` (45k words) | 3.5 MB | 94.2% | 53.7% | 98.6% | 68.0% | phones, web |
+| `onepress-m.bin` + `onepress-nn-m.bin` | 1.5 MB + 1.7 MB | 94.4% | 53.6% | 98.8% | 69.5% | ESP32 with flash to spare |
+| `onepress-m.bin` (29k words, plus radio words) | 1.5 MB | 94.0% | 51.3% | 98.5% | 65.8% | ESP32, Meshtastic |
 | `onepress-r.bin` (13k words, plus radio words) | 491 KB | 92.0% | 47.8% | 98.4% | 65.1% | UV-K1 radios |
 | `onepress-s.bin` (5k words, plus radio words) | 246 KB | 89.0% | 46.7% | 98.5% | 64.9% | radios, nRF52 |
 | A classic one-word-at-a-time keypad | | 89.1% | 19% | 95.2% | 49% | |
@@ -142,7 +143,7 @@ against `tests/baseline.js`):
 - The full table is in [SPEC.md](SPEC.md).
 
 **With learning:** replaying each person's messages in order (`node tests/learn_eval.js`, all 84
-test users), words go from 90.2% to 93.1% and punctuation from 58.6% to 66.8%.
+test users), words go from 90.2% to 93.1% and punctuation from 58.8% to 67.3%.
 
 ### On a letter keyboard (QWERTY and others)
 
@@ -157,7 +158,7 @@ taps go to three methods:
 
 | Letters on a neighboring key | Raw | Classic autocorrect | **OnePress** |
 |---|---|---|---|
-| Texting, 0% | 100% | 99.97% | 99.66% |
+| Texting, 0% | 100% | 99.97% | 99.65% |
 | Texting, 3% | 87.4% | 97.2% | **98.7%** |
 | Texting, 10% | 67.4% | 92.3% | **96.8%** |
 | Chat, 0% | 100% | 99.81% | 99.41% |
@@ -225,9 +226,9 @@ sentence began:
 
 | English texting | Words right | Punctuation right |
 |---|---|---|
-| Word model alone | 94.1% | 49.8% |
-| + network (`onepress-nn-s.bin`, 2.5 MB) | 94.9% | 52.7% |
-| + network (`onepress-nn.bin`, 6.3 MB) | 95.0% | 55.4% |
+| Word model alone | 94.2% | 53.7% |
+| + network (`onepress-nn-s.bin`, 2.5 MB) | 94.9% | 55.1% |
+| + network (`onepress-nn.bin`, 6.3 MB) | 95.0% | 57.6% |
 
 That is about 14% fewer wrong words. The cost is the download and speed: decoding takes roughly 15
 times as long, which is fine on a phone or computer. It's English only so far. The checkbox shows

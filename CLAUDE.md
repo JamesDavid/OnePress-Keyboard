@@ -16,24 +16,24 @@ neural network helps on phones and the web.
 
   | Model | Words | Size | Words acc. | Ambiguous acc. | Punctuation | Target |
   |---|---|---|---|---|---|---|
-  | `onepress.bin` + `onepress-nn.bin` | 45k | 3.53 MB + 6.3 MB | 94.98% | 93.26% | 55.4% | phones, web |
-  | `onepress.bin` + `onepress-nn-s.bin` | 45k | 3.53 MB + 2.5 MB | 94.86% | 93.11% | 52.7% | phones, web |
-  | `onepress.bin` | 45k | 3.53 MB | 94.14% | 92.12% | 49.8% | phones, web |
-  | `onepress-m.bin` + `onepress-nn-m.bin` | 29k | 1.54 MB + 1.67 MB | 94.38% | 92.98% | 51.0% | ESP32 |
-  | `onepress-m.bin` (+ radio words) | 29k | 1.54 MB | 94.05% | 92.54% | 47.2% | ESP32 Meshtastic |
-  | `onepress-r.bin` (+ radio words) | 13k | 491 KB | 91.98% | 90.26% | 47.8% | UV-K1 radios |
-  | `onepress-s.bin` (+ radio words) | 5k | 246 KB | 89.00% | 91.23% | 46.7% | radios, nRF52 |
+  | `onepress.bin` + `onepress-nn.bin` | 45k | 3.53 MB + 6.3 MB | 94.98% | 93.26% | 57.6% | phones, web |
+  | `onepress.bin` + `onepress-nn-s.bin` | 45k | 3.53 MB + 2.5 MB | 94.86% | 93.11% | 55.1% | phones, web |
+  | `onepress.bin` | 45k | 3.53 MB | 94.16% | 92.14% | 53.7% | phones, web |
+  | `onepress-m.bin` + `onepress-nn-m.bin` | 29k | 1.54 MB + 1.67 MB | 94.41% | 93.02% | 53.6% | ESP32 |
+  | `onepress-m.bin` (+ radio words) | 29k | 1.54 MB | 94.03% | 92.51% | 51.3% | ESP32 Meshtastic |
+  | `onepress-r.bin` (+ radio words) | 13k | 491 KB | 91.97% | 90.24% | 51.0% | UV-K1 radios |
+  | `onepress-s.bin` (+ radio words) | 5k | 246 KB | 88.99% | 91.21% | 50.0% | radios, nRF52 |
 
   `node tests/eval.js --nn model/onepress-nn.bin` for the network; `--slip 0.03` / `--double 0.03` for
   presses on a neighboring key / pressed twice (phone model now 87.2% / 88.9%).
 - Letter keyboards (`start.hint`, `start.layout`): `node tests/qwerty_eval.js [test.txt] [--miss 0.1]
   [--layout rows]` types each test message on the layout with that share of letters on a
-  neighboring key; parity with `--text ... --layout rows`. English now: 99.66% words right at 0%,
-  98.73% at 3%, 96.75% at 10%; other languages in SPEC.md.
+  neighboring key; parity with `--text ... --layout rows`. English now: 99.65% words right at 0%,
+  98.72% at 3%, 96.75% at 10%; other languages in SPEC.md.
 - Learning from the user (SPEC.md §3): `node tests/learn_eval.js [users_test.tsv] [--before 3]`
   replays each NUS user's messages in order. Tune on `users_dev.tsv`. Current, test users:
-  predicted words 90.23% → 93.12%, punctuation 58.6% → 66.8% (US/Canada: 94.18% → 95.27%,
-  49.5% → 62.7%).
+  predicted words 90.23% → 93.11%, punctuation 58.8% → 67.3% (US/Canada: 94.19% → 95.26%,
+  52.8% → 64.2%).
 - Resuming after a finished sentence must change nothing: `node tests/resume_test.js` (also
   `--learn`, `--nn model/onepress-nn-s.bin`, `--model model/onepress-es.bin`) for anything touching decode.
 - Other languages (es de pt fr it nl sv pl cs tr ru el ar zh; `model/build_langs.sh`, letters from `model/chartable.py`;
