@@ -9,6 +9,11 @@ the letters, so `66 0 69 0 929 0 4663` becomes "On my way home".
 **[Try the demo →](https://jamesdavid.github.io/OnePress-Keyboard/)** It runs entirely in your
 browser, and a short tutorial starts on your first visit.
 
+**Watch the tutorial** (3 minutes, narrated): typing, guesses, fixing a word, punctuation,
+numbers, exact spelling, handles and addresses. Made from the demo page by [`docs/video`](docs/video).
+
+https://github.com/user-attachments/assets/df219c5f-70f8-4e37-8a10-f710744633b8
+
 - **Whole-sentence context.** Each new word can fix the ones before it: `4663` alone is "good",
   after "on my way" it's "home". A finished sentence stays put once you start the next one.
 - **On a radio.** The [OnePress firmware](https://github.com/JamesDavid/uv-k1-k5v3-firmware-custom/tree/onepress) for the Quansheng UV-K1 / UV-K5 V3 types
