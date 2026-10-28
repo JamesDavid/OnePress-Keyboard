@@ -616,6 +616,8 @@ static char time_kind(const char *k, int kn) {
 typedef struct { uint16_t id; uint8_t kind; int32_t pen; } cand;
 
 /* ---- email and web addresses (decoder.js addressOf) ---- */
+#define ADDRESS_ALT (-2)        /* nats: the all-dots reading after the one with '@' */
+#ifndef OP_NO_ADDRESS
 static const char *const ADDRESS_ENDS[] = { "com", "org", "net", "edu", "gov", "io", "co", "us", "uk", "ca", "de",
     "info", "app", "ai", "fr", "au", "nz", "ie", "jp", "tv", "biz" };
 static const char *const ADDRESS_WORDS[] = { "www", "gmail", "yahoo", "hotmail", "outlook", "icloud", "aol",
@@ -623,7 +625,6 @@ static const char *const ADDRESS_WORDS[] = { "www", "gmail", "yahoo", "hotmail",
 static const char *const ADDRESS_SECOND[] = { "co", "com", "ac", "org", "net", "gov", "edu" };   /* name@bbc.co.uk */
 #define N_OF(a) ((int)(sizeof a / sizeof a[0]))
 #define ADDRESS_PIECES 8
-#define ADDRESS_ALT (-2)        /* nats: the all-dots reading after the one with '@' */
 /* A piece's text: a word of the lists above (s), else a dictionary word (id), else the letters
  * typed exactly or tapped, keys [a, b) of the token. */
 typedef struct { const char *s; uint16_t id, a, b; } addr_piece;
@@ -733,6 +734,12 @@ static int address_of(const op_decoder *d, const op_model *m, const op_tok *t, i
     }
     return n;
 }
+#else
+static int address_of(const op_decoder *d, const op_model *m, const op_tok *t, int r, char *out) {
+    (void)d; (void)m; (void)t; (void)r; (void)out;
+    return 0;
+}
+#endif
 
 /* ---- candidates ---- */
 

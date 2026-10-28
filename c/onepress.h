@@ -54,7 +54,9 @@ void op_ext_read(uint32_t addr, void *dst, uint32_t n);
 #define OP_MAX_BEAM 16          /* largest beam op_decode accepts; 4-8 is plenty */
 #endif
 /* -DOP_NO_CJK leaves out splitting Chinese runs into words (about 12 KB of stack while it runs,
- * Chinese models only); without it a Chinese model decodes only with spaces between words. */
+ * Chinese models only); without it a Chinese model decodes only with spaces between words.
+ * -DOP_NO_ADDRESS leaves out reading first#last#gmail#com as an email or web address (about 1 KB
+ * of code); such keys then decode as words (first-last-gmail-com). */
 #define OP_MAX_EXACT 40         /* dictionary words considered per slot */
 #define OP_MAX_COMPLETIONS 12   /* extra prefix completions for the word being typed */
 #ifndef OP_USER_WORDS
