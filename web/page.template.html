@@ -137,6 +137,9 @@ h1 { font-family: var(--f-display); font-weight: 700; font-size: 1.35rem; letter
 .qk:active, .qk.down { background: var(--key-press); }
 .qk.fn:active, .qk.fn.down { background: var(--key); }
 .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+/* The UV-K1 / UV-K5 keypad: MENU, UP, DOWN, EXIT down the left of the digits. */
+.radio { grid-template-columns: 0.8fr repeat(3, 1fr); }
+.radio .k.side .d { font-size: 0.95rem; font-weight: 700; letter-spacing: 0.04em; }
 .k {
   font: inherit; color: var(--ink); background: var(--key); border: 1px solid var(--key-edge); border-radius: 16px;
   padding: 10px 4px 9px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 1px;
@@ -188,6 +191,7 @@ body { padding-block: clamp(8px, 2.2dvh, 20px) clamp(10px, 3dvh, 28px); }
 .chip { padding: clamp(3px, 0.7dvh, 6px) 13px; }
 .mode button { padding: clamp(3px, 0.9dvh, 7px); }
 .pad { gap: clamp(5px, 1.2dvh, 10px); }
+.radio .k.side .d { font-size: clamp(0.8rem, 2.2dvh, 0.95rem); }
 .k { padding: clamp(2px, 1dvh, 10px) 4px clamp(2px, 0.9dvh, 9px); }
 .k .d { font-size: clamp(1.05rem, 3.1dvh, 1.6rem); }
 .qk { height: clamp(34px, 5.6dvh, 46px); }
@@ -258,8 +262,10 @@ body { padding-block: clamp(8px, 2.2dvh, 20px) clamp(10px, 3dvh, 28px); }
   <div class="mode" role="group" aria-label="Keyboard">
     <button type="button" id="modePad" aria-pressed="true">Phone keypad</button>
     <button type="button" id="modeQw" aria-pressed="false">QWERTY</button>
+    <button type="button" id="modeRadio" aria-pressed="false">UV-K1 radio</button>
   </div>
   <div class="pad" id="pad"></div>
+  <div class="pad radio" id="radio" hidden></div>
   <div class="qw" id="qw" hidden></div>
 
   <div class="row">
@@ -274,6 +280,7 @@ body { padding-block: clamp(8px, 2.2dvh, 20px) clamp(10px, 3dvh, 28px); }
     <p>Capitals are automatic: sentence starts, I, names, places, brands and apps with their usual capitalization (iPhone, McDonald's, YouTube), the words around a word ("in May" but "I may", "Will Smith"), and call signs (KE7AQA). For a word it learned from you, tap it and <b>Aa</b> to capitalize it from then on.</p>
     <p>A number that could be a time offers both: 5 # 30 is 5.30 on its own and 5:30 after at, by or until, or with am or pm after it. Tap it to switch.</p>
     <p><b>Send</b> copies the text, clears it and learns from it: the words you use and the words you use together get more likely, and a word you spelled exactly, or typed on QWERTY when no word matched, is guessed from its keys next time. That covers punctuation too. The next message also starts with your last few in mind, so words you just used are likelier. Once you start a new sentence, the one before it stays as it is. What it learns stays in this browser, kept for each model separately. <b>Forget</b> clears it.</p>
+    <p><b>UV-K1 radio</b> is the keypad of the Quansheng UV-K1 and UV-K5 running the OnePress radio firmware, with the model it runs (13,000 words, with radio terms such as CQ, QTH and 73). There <b>1</b> is punctuation, <b>EXIT</b> deletes (held: words), <b>▲ ▼</b> select the word before or after for <b>*</b> to fix, <b>F</b> is exact spelling, and <b>MENU</b> sends.</p>
     <p><b>Tutorial</b> (next to the title) walks through all of this in a few steps.</p>
     <p>Tap any word to see other words with the same keys. Picking one locks it, and the rest of the sentence re-decodes around it. Without touching: <b>‹ ›</b> beside the guesses (← → on a computer keyboard) move to an earlier word, <b>*</b> (↓, and ↑ for the one before) cycles its guesses, and typing goes back to the end.</p>
     <p>The QWERTY keyboard sends only each letter's keypad number (shown in the corner), so the model decodes it exactly as if you'd used the keypad. When no word fits, it keeps the letters you tapped. Keys grow and shrink in place with how likely each letter is to come next. A computer keyboard works the same way, and Tab finishes the word.</p>
@@ -286,6 +293,7 @@ body { padding-block: clamp(8px, 2.2dvh, 20px) clamp(10px, 3dvh, 28px); }
 <script type="application/octet-stream" id="model-l" data-file="onepress.bin" data-size="__SIZE_L__" data-words="__WORDS_L__">__MODEL_L__</script>
 <script type="application/octet-stream" id="model-m" data-file="onepress-m.bin" data-size="__SIZE_M__" data-words="__WORDS_M__">__MODEL_M__</script>
 <script type="application/octet-stream" id="model-s" data-file="onepress-s.bin" data-size="__SIZE_S__" data-words="__WORDS_S__">__MODEL_S__</script>
+<script type="application/octet-stream" id="model-r" data-file="onepress-r.bin" data-size="__SIZE_R__" data-words="__WORDS_R__"></script>
 __LANG_SCRIPTS__
 <script>
 __DECODER__
@@ -391,6 +399,29 @@ __DECODER__
     else holdable(b, () => press(d), () => pressLiteral(String.fromCharCode(65 + +d)));   // hold: the digit itself ('A'-'J')
     pad.appendChild(b);
   }
+  // The UV-K1 keypad, as the radio's OnePress app has it: 1 is punctuation (no # key), EXIT
+  // deletes, UP / DOWN select a word for * to fix, F is exact spelling, MENU sends.
+  const RADIO = [['MENU', 'send'], ['1', ".,'?! · hold"], ['2', 'abc'], ['3', 'def'],
+                 ['▲', 'word ◀'], ['4', 'ghi'], ['5', 'jkl'], ['6', 'mno'],
+                 ['▼', 'word ▶'], ['7', 'pqrs'], ['8', 'tuv'], ['9', 'wxyz'],
+                 ['EXIT', 'delete'], ['*', 'next'], ['0', 'space'], ['F', 'abc']];
+  for (const [d, l] of RADIO) {
+    const b = document.createElement('button'), num = /^[0-9]$/.test(d);
+    b.type = 'button'; b.className = 'k' + (/^[2-9]$/.test(d) ? '' : ' fn') + (num || d === '*' || d === 'F' ? '' : ' side');
+    b.dataset.rk = d;
+    if (num) b.dataset.key = d;
+    b.setAttribute('aria-label', d + ' ' + l + (num ? '; hold for the digit ' + d : ''));
+    b.innerHTML = `<span class="d">${d}</span><span class="l">${l}</span>`;
+    const digit = () => pressLiteral(String.fromCharCode(65 + +d));   // hold: the digit itself ('A'-'J')
+    if (d === '1') holdable(b, () => press('#'), digit);
+    else if (num) holdable(b, () => press(d), digit);
+    else if (d === '*') b.addEventListener('click', () => (ghostShown && sel === null && !editing ? autocomplete() : press('*')));
+    else if (d === 'F') b.addEventListener('click', toggleExact);
+    else if (d === 'EXIT') deleteKey(b);
+    else if (d === 'MENU') b.addEventListener('click', () => $('copy').click());
+    else b.addEventListener('click', () => moveSel(d === '▲' ? -1 : 1));
+    $('radio').appendChild(b);
+  }
 
   // The letter keyboard of each language (its usual national layout): letter rows, '|' between
   // them. The decoder gets the same rows (start.layout) to know which keys neighbor each other.
@@ -457,17 +488,18 @@ __DECODER__
     }
     sizeKeys();
   }
+  const MODES = { keypad: 'modePad', qwerty: 'modeQw', radio: 'modeRadio' };
   function setMode(mode) {
-    const isQw = mode === 'qwerty';
-    $('pad').hidden = isQw; qw.hidden = !isQw;
-    if (isQw) sizeKeys();
-    $('modePad').setAttribute('aria-pressed', String(!isQw));
-    $('modeQw').setAttribute('aria-pressed', String(isQw));
+    $('pad').hidden = mode !== 'keypad'; qw.hidden = mode !== 'qwerty'; $('radio').hidden = mode !== 'radio';
+    if (mode === 'qwerty') sizeKeys();
+    for (const md in MODES) $(MODES[md]).setAttribute('aria-pressed', String(md === mode));
     try { localStorage.setItem('kbMode', mode); } catch (e) {}
   }
   $('modePad').addEventListener('click', () => setMode('keypad'));
   $('modeQw').addEventListener('click', () => setMode('qwerty'));
-  try { if (localStorage.getItem('kbMode') === 'qwerty') setMode('qwerty'); } catch (e) {}
+  // The radio keypad comes with the radio's model, unless another language is picked.
+  $('modeRadio').addEventListener('click', () => { setMode('radio'); if (lang() === 'en' && modelId !== 'custom') useModel('r'); });
+  try { const md = localStorage.getItem('kbMode'); if (MODES[md]) setMode(md); } catch (e) {}
 
 
   // ---- Tap vs hold (420 ms): next / finish word, # / exact mode, digit keys / the digit ----
@@ -561,6 +593,9 @@ __DECODER__
     const a = alphabet();
     for (const [d, l] of PAD) {
       const el = document.querySelector(`#pad [data-key="${d}"] .l`);
+      const rl = document.querySelector(`#radio [data-key="${d}"] .l`);
+      if (rl && /[2-9]/.test(d)) rl.textContent = a && a[d] ? a[d] : l;
+      if (rl && d === '0') rl.textContent = cjk() ? 'commit' : l;
       if (el && /[2-9]/.test(d)) el.textContent = a && a[d] ? a[d] : l;
       if (el && d === '0') el.textContent = editing ? '◀ word' : cjk() ? 'commit' : l;
       if (el && d === '#') el.textContent = editing ? 'word ▶' : l;
@@ -783,7 +818,7 @@ __DECODER__
     }
     const caret = document.createElement('span'); caret.className = 'caret'; out.appendChild(caret);
     if (sel === null) out.scrollTop = out.scrollHeight;
-    $('keysShown').textContent = cjk() && best ? reading() || ' ' : keys || ' ';
+    $('keysShown').textContent = cjk() && best ? reading() || ' ' : ($('radio').hidden ? keys : keys.replace(/#/g, '1')) || ' ';   // the radio's punctuation key is 1
     $('exampleTag').textContent = editing ? 'Edit: 0 ◀ # ▶ * guess' : exact ? 'ABC · exact spelling' : (isExample ? 'Example' : (keys ? keys.length + ' presses' : ''));
     renderAlts();
     const qn = $('qwNext');
@@ -802,6 +837,7 @@ __DECODER__
     { id: 'l', name: 'Phone', device: 'Phone / web', el: 'model-l', lang: 'en' },
     { id: 'm', name: 'ESP32', device: 'ESP32 / Meshtastic', el: 'model-m', lang: 'en' },
     { id: 's', name: 'Radio', device: 'nRF52 / radio', el: 'model-s', lang: 'en' },
+    { id: 'r', name: 'UV-K1', device: 'UV-K1 radio', el: 'model-r', lang: 'en' },
     /* other languages, in three sizes each (written by web/build_page.py) */
 __LANG_MENU__
   ];
@@ -1143,6 +1179,11 @@ __LANG_MENU__
   function flash(k, letter) {
     if (!k) return;
     const qwOn = !$('qw').hidden;
+    if (!$('radio').hidden) {      // the radio has 1 for punctuation and EXIT for delete
+      const b = document.querySelector(`#radio [data-rk="${CSS.escape(k === '#' ? '1' : k === '1' ? 'EXIT' : k)}"]`);
+      if (b) { b.classList.add('down'); setTimeout(() => b.classList.remove('down'), 110); }
+      return;
+    }
     const sel = qwOn
       ? (letter && letter !== ' ' ? `[data-qk="${CSS.escape(letter)}"]` : `[data-qk="${CSS.escape(k === '1' ? 'del' : k === '0' ? 'space' : k)}"]`)
       : `[data-key="${CSS.escape(k)}"]`;
