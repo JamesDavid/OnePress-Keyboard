@@ -137,8 +137,8 @@ h1 { font-family: var(--f-display); font-weight: 700; font-size: 1.35rem; letter
 .qk:active, .qk.down { background: var(--key-press); }
 .qk.fn:active, .qk.fn.down { background: var(--key); }
 .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-/* The UV-K1 / UV-K5 keypad: MENU, UP, DOWN, EXIT down the left of the digits. */
-.radio { grid-template-columns: 0.8fr repeat(3, 1fr); }
+/* The UV-K1 keypad: MENU, UP, DOWN, EXIT across the top, *, 0 and # (F) down the right. */
+.radio { grid-template-columns: repeat(4, 1fr); }
 .radio .k.side .d { font-size: 0.95rem; font-weight: 700; letter-spacing: 0.04em; }
 .k {
   font: inherit; color: var(--ink); background: var(--key); border: 1px solid var(--key-edge); border-radius: 16px;
@@ -280,7 +280,7 @@ body { padding-block: clamp(8px, 2.2dvh, 20px) clamp(10px, 3dvh, 28px); }
     <p>Capitals are automatic: sentence starts, I, names, places, brands and apps with their usual capitalization (iPhone, McDonald's, YouTube), the words around a word ("in May" but "I may", "Will Smith"), and call signs (KE7AQA). For a word it learned from you, tap it and <b>Aa</b> to capitalize it from then on.</p>
     <p>A number that could be a time offers both: 5 # 30 is 5.30 on its own and 5:30 after at, by or until, or with am or pm after it. Tap it to switch.</p>
     <p><b>Send</b> copies the text, clears it and learns from it: the words you use and the words you use together get more likely, and a word you spelled exactly, or typed on QWERTY when no word matched, is guessed from its keys next time. That covers punctuation too. The next message also starts with your last few in mind, so words you just used are likelier. Once you start a new sentence, the one before it stays as it is. What it learns stays in this browser, kept for each model separately. <b>Forget</b> clears it.</p>
-    <p><b>UV-K1 radio</b> is the keypad of the Quansheng UV-K1 and UV-K5 running the OnePress radio firmware, with the model it runs (13,000 words, with radio terms such as CQ, QTH and 73). There <b>1</b> is punctuation, <b>EXIT</b> deletes (held: words), <b>▲ ▼</b> select the word before or after for <b>*</b> to fix, <b>F</b> is exact spelling, and <b>MENU</b> sends.</p>
+    <p><b>UV-K1 radio</b> is the keypad of the Quansheng UV-K1 and UV-K5 running the OnePress radio firmware, with the model it runs (13,000 words, with radio terms such as CQ, QTH and 73). There <b>1</b> is punctuation, <b>EXIT</b> deletes (held: words), <b>&lt; &gt;</b> select the word before or after for <b>*</b> to fix, <b>#</b> (F) is exact spelling, and <b>MENU</b> sends.</p>
     <p><b>Tutorial</b> (next to the title) walks through all of this in a few steps.</p>
     <p>Tap any word to see other words with the same keys. Picking one locks it, and the rest of the sentence re-decodes around it. Without touching: <b>‹ ›</b> beside the guesses (← → on a computer keyboard) move to an earlier word, <b>*</b> (↓, and ↑ for the one before) cycles its guesses, and typing goes back to the end.</p>
     <p>The QWERTY keyboard sends only each letter's keypad number (shown in the corner), so the model decodes it exactly as if you'd used the keypad. When no word fits, it keeps the letters you tapped. Keys grow and shrink in place with how likely each letter is to come next. A computer keyboard works the same way, and Tab finishes the word.</p>
@@ -1804,26 +1804,26 @@ if (typeof module !== 'undefined') module.exports = { segParams, buildModel, dec
     pad.appendChild(b);
   }
   // The UV-K1 keypad, as the radio's OnePress app has it: 1 is punctuation (no # key), EXIT
-  // deletes, UP / DOWN select a word for * to fix, F is exact spelling, MENU sends.
-  const RADIO = [['MENU', 'send'], ['1', ".,'?! · hold"], ['2', 'abc'], ['3', 'def'],
-                 ['▲', 'word ◀'], ['4', 'ghi'], ['5', 'jkl'], ['6', 'mno'],
-                 ['▼', 'word ▶'], ['7', 'pqrs'], ['8', 'tuv'], ['9', 'wxyz'],
-                 ['EXIT', 'delete'], ['*', 'next'], ['0', 'space'], ['F', 'abc']];
+  // deletes, UP / DOWN (< >) select a word for * to fix, # (F) is exact spelling, MENU sends.
+  const RADIO = [['MENU', 'send'], ['<', 'word ◀'], ['>', 'word ▶'], ['EXIT', 'delete'],
+                 ['1', ".,?!' · hold"], ['2', 'abc'], ['3', 'def'], ['*', 'next'],
+                 ['4', 'ghi'], ['5', 'jkl'], ['6', 'mno'], ['0', 'space'],
+                 ['7', 'pqrs'], ['8', 'tuv'], ['9', 'wxyz'], ['#', 'F · abc']];
   for (const [d, l] of RADIO) {
     const b = document.createElement('button'), num = /^[0-9]$/.test(d);
-    b.type = 'button'; b.className = 'k' + (/^[2-9]$/.test(d) ? '' : ' fn') + (num || d === '*' || d === 'F' ? '' : ' side');
+    b.type = 'button'; b.className = 'k' + (/^[2-9]$/.test(d) ? '' : ' fn') + (d.length > 1 ? ' side' : '');
     b.dataset.rk = d;
     if (num) b.dataset.key = d;
     b.setAttribute('aria-label', d + ' ' + l + (num ? '; hold for the digit ' + d : ''));
-    b.innerHTML = `<span class="d">${d}</span><span class="l">${l}</span>`;
+    b.innerHTML = `<span class="d">${d.replace('<', '&lt;').replace('>', '&gt;')}</span><span class="l">${l}</span>`;
     const digit = () => pressLiteral(String.fromCharCode(65 + +d));   // hold: the digit itself ('A'-'J')
     if (d === '1') holdable(b, () => press('#'), digit);
     else if (num) holdable(b, () => press(d), digit);
     else if (d === '*') b.addEventListener('click', () => (ghostShown && sel === null && !editing ? autocomplete() : press('*')));
-    else if (d === 'F') b.addEventListener('click', toggleExact);
+    else if (d === '#') b.addEventListener('click', toggleExact);
     else if (d === 'EXIT') deleteKey(b);
     else if (d === 'MENU') b.addEventListener('click', () => $('copy').click());
-    else b.addEventListener('click', () => moveSel(d === '▲' ? -1 : 1));
+    else b.addEventListener('click', () => moveSel(d === '<' ? -1 : 1));
     $('radio').appendChild(b);
   }
 
